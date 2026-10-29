@@ -1,0 +1,91 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "Groups.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "title": "UI-3 群組與 Tag",
+      "w": 1440,
+      "x": 1520,
+      "y": 1380
+    },
+    "Ledger.dc.html": {
+      "expand": "fill",
+      "h": 1520,
+      "title": "UI-6 帳本",
+      "w": 1440,
+      "x": 1520,
+      "y": 2600
+    },
+    "Main.dc.html": {
+      "expand": "fill",
+      "h": 1000,
+      "title": "UI-1 總覽",
+      "w": 1440,
+      "x": 0,
+      "y": 0
+    },
+    "Mcp.dc.html": {
+      "expand": "fill",
+      "h": 960,
+      "title": "UI-5 MCP 設定",
+      "w": 1440,
+      "x": 0,
+      "y": 2600
+    },
+    "Members.dc.html": {
+      "expand": "fill",
+      "h": 1100,
+      "title": "UI-2 成員",
+      "w": 1440,
+      "x": 0,
+      "y": 1380
+    },
+    "Routes.dc.html": {
+      "expand": "fill",
+      "h": 1260,
+      "title": "UI-4 Route（拖曳排序）",
+      "w": 1440,
+      "x": 1520,
+      "y": 0
+    },
+    "Settings.dc.html": {
+      "expand": "fill",
+      "h": 1240,
+      "title": "UI-7 設定",
+      "w": 1440,
+      "x": 0,
+      "y": 3680
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-10-29T05:45:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "t1": {
+      "kind": "title1",
+      "maxW": 2960,
+      "text": "Spillway · 7 個畫面（範例資料）",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Routes.dc.html",
+    "Members.dc.html",
+    "Groups.dc.html",
+    "Mcp.dc.html",
+    "Ledger.dc.html",
+    "Settings.dc.html"
+  ],
+  "pages": [],
+  "title": "Spillway — UI Layout"
+}

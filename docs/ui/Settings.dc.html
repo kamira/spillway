@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>設定</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0;background:#F5F6F8;color:#15171C;font-family:'Noto Sans TC',system-ui,sans-serif;font-size:14px;line-height:1.5}
+a{color:#2450D8}a:hover{color:#1A3BA6}
+.shell{display:flex;flex-wrap:wrap;min-height:100vh}
+.nav{flex:1 1 220px;background:#15171C;padding:20px 12px;display:flex;flex-direction:column;gap:4px;box-sizing:border-box}
+.nav a{display:flex;align-items:center;color:#C9CDD6;text-decoration:none;padding:0 12px;border-radius:8px;min-height:44px}
+.nav a:hover{background:#262A33;color:#FFFFFF}
+.nav a.on{background:#2450D8;color:#FFFFFF}
+.brand{font-weight:700;font-size:16px;color:#FFFFFF;padding:8px 12px 16px}
+.main{flex:999 1 560px;min-width:0;padding:28px 32px 48px;box-sizing:border-box;display:flex;flex-direction:column;gap:20px}
+h1{margin:0;font-size:24px}h2{margin:0;font-size:16px}
+.sub{color:#5B616E;margin:4px 0 0}
+.card{background:#FFFFFF;border:1px solid #E2E5EA;border-radius:12px;padding:20px;box-sizing:border-box}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 16px;border-radius:8px;border:1px solid #CDD2DA;background:#FFFFFF;color:#15171C;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
+.btn.primary{background:#2450D8;border-color:#2450D8;color:#FFFFFF}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px}
+.muted{color:#5B616E}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.f{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600}
+input[type=text],input[type=number]{font:inherit;font-weight:400;min-height:44px;padding:0 12px;border:1px solid #CDD2DA;border-radius:8px;background:#FFFFFF;color:#15171C;box-sizing:border-box}
+.steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.steps li{border:1px solid #E2E5EA;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:6px}
+.num{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;font-size:13px;font-weight:700}
+.done .num{background:#1A6B43;color:#FFFFFF}
+.cur{border-color:#2450D8 !important;box-shadow:0 0 0 2px #E8EEFC}
+.cur .num{background:#2450D8;color:#FFFFFF}
+.todo .num{background:#EEF0F3;color:#3F4A5C}
+.drop{border:2px dashed #B8C2D6;border-radius:12px;padding:22px;text-align:center;color:#3F4A5C;background:#FAFBFC}
+.radio{display:flex;align-items:center;gap:8px;min-height:44px;font-weight:400}
+.radio input{width:18px;height:18px}
+</style>
+</helmet>
+<div class="shell">
+<nav class="nav" aria-label="主選單">
+<div class="brand">Spillway <span style="font-weight:400;color:#A3A9B5;font-size:12px">溢流閘</span></div>
+<a href="Main.dc.html">總覽</a>
+<a href="Members.dc.html">成員</a>
+<a href="Groups.dc.html">群組與 Tag</a>
+<a href="Routes.dc.html">Route</a>
+<a href="Mcp.dc.html">MCP 設定</a>
+<a href="Ledger.dc.html">帳本</a>
+<a class="on" href="Settings.dc.html" aria-current="page">設定</a>
+<div style="margin-top:auto;padding:12px;font-size:12px;color:#A3A9B5" class="mono">127.0.0.1:8787</div>
+</nav>
+<main class="main">
+<div>
+<h1>設定</h1>
+<p class="sub">資料庫一開始是空的；照下列四步完成第一次呼叫，或直接匯入既有的 YAML。</p>
+</div>
+
+<section class="card" aria-labelledby="setup-h" style="display:flex;flex-direction:column;gap:14px">
+<h2 id="setup-h">首次設定</h2>
+<ol class="steps">
+<li class="done"><span class="num" aria-hidden="true">✓</span><strong>1 產生存取 token</strong><span class="muted" style="font-size:13px">已完成</span></li>
+<li class="cur"><span class="num" aria-hidden="true">2</span><strong>2 加入第一個成員</strong><span class="muted" style="font-size:13px">API、Local 或訂閱 CLI</span><a class="btn primary" href="Members.dc.html" style="margin-top:6px">加入成員</a></li>
+<li class="todo"><span class="num" aria-hidden="true">3</span><strong>3 建立 route</strong><span class="muted" style="font-size:13px">指定群組或 tag</span></li>
+<li class="todo"><span class="num" aria-hidden="true">4</span><strong>4 測試呼叫</strong><span class="muted" style="font-size:13px">送出一次 dry-run 與一次實際呼叫</span></li>
+</ol>
+</section>
+
+<div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start">
+<section class="card" aria-labelledby="io-h" style="flex:999 1 480px;min-width:0;display:flex;flex-direction:column;gap:14px">
+<h2 id="io-h">匯入與匯出</h2>
+<div class="drop">把 <span class="mono">spillway.yaml</span> 拖曳到這裡，或 <label for="file" style="color:#2450D8;text-decoration:underline;cursor:pointer">選擇檔案</label><input id="file" type="file" accept=".yaml,.yml" style="position:absolute;left:-9999px"></div>
+<fieldset style="border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:2px">
+<legend class="muted" style="font-size:13px;font-weight:600;padding:0 0 4px">匯入模式</legend>
+<label class="radio"><input type="radio" name="mode" checked>merge：以 id 或名稱合併更新</label>
+<label class="radio"><input type="radio" name="mode">replace：清空設定後寫入（帳本保留）</label>
+</fieldset>
+<div class="row" style="justify-content:space-between">
+<span class="muted" style="font-size:13px">匯出檔只含憑證參照，不含任何金鑰。</span>
+<div class="row"><button class="btn" type="button">匯出 YAML</button><button class="btn primary" type="button">匯入</button></div>
+</div>
+</section>
+
+<div style="flex:1 1 360px;min-width:0;display:flex;flex-direction:column;gap:20px">
+<section class="card" aria-labelledby="ctx-h" style="display:flex;flex-direction:column;gap:12px">
+<h2 id="ctx-h">Context 記錄</h2>
+<label class="row" style="gap:10px;min-height:44px"><input type="checkbox" checked style="width:18px;height:18px">預設記錄每次呼叫的請求與回應內容</label>
+<div class="row" style="gap:14px">
+<label class="f" style="flex:1 1 120px">保存天數<input type="number" value="7" min="0"></label>
+<label class="f" style="flex:1 1 120px">單筆上限（KB）<input type="number" value="256"></label>
+</div>
+<p class="muted" style="margin:0;font-size:13px">保存天數設為 0 表示不保存內容。寫入前會遮罩疑似金鑰的字串；route 可個別覆寫是否記錄。</p>
+<div class="row" style="justify-content:space-between"><span style="font-size:13px">目前 1,206 筆 · 18.4 MB</span><button class="btn primary" type="button">儲存</button></div>
+</section>
+
+<section class="card" aria-labelledby="tok-h" style="display:flex;flex-direction:column;gap:12px">
+<h2 id="tok-h">存取 token</h2>
+<div class="mono" style="background:#F0F2F5;border-radius:8px;padding:12px">spillway_••••••••••••3f9a</div>
+<p class="muted" style="margin:0;font-size:13px">設定為環境變數 <span class="mono">SPILLWAY_TOKEN</span> 後，MCP 設定即可引用。重新產生後舊 token 立即失效。</p>
+<div class="row"><button class="btn" type="button">複製</button><button class="btn" type="button">重新產生</button></div>
+</section>
+
+<section class="card" aria-labelledby="srv-h" style="display:flex;flex-direction:column;gap:12px">
+<h2 id="srv-h">伺服器</h2>
+<div class="row" style="gap:14px">
+<label class="f" style="flex:1 1 160px">綁定位址<input type="text" value="127.0.0.1" class="mono"></label>
+<label class="f" style="flex:0 1 120px">埠號<input type="number" value="8787"></label>
+</div>
+<p class="muted" style="margin:0;font-size:13px">改為非本機位址時，所有端點都必須帶 token。</p>
+<div class="row" style="justify-content:flex-end"><button class="btn primary" type="button">儲存並重新啟動</button></div>
+</section>
+</div>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>MCP 設定</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0;background:#F5F6F8;color:#15171C;font-family:'Noto Sans TC',system-ui,sans-serif;font-size:14px;line-height:1.5}
+a{color:#2450D8}a:hover{color:#1A3BA6}
+.shell{display:flex;flex-wrap:wrap;min-height:100vh}
+.nav{flex:1 1 220px;background:#15171C;padding:20px 12px;display:flex;flex-direction:column;gap:4px;box-sizing:border-box}
+.nav a{display:flex;align-items:center;color:#C9CDD6;text-decoration:none;padding:0 12px;border-radius:8px;min-height:44px}
+.nav a:hover{background:#262A33;color:#FFFFFF}
+.nav a.on{background:#2450D8;color:#FFFFFF}
+.brand{font-weight:700;font-size:16px;color:#FFFFFF;padding:8px 12px 16px}
+.main{flex:999 1 560px;min-width:0;padding:28px 32px 48px;box-sizing:border-box;display:flex;flex-direction:column;gap:20px}
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{margin:0;font-size:24px}h2{margin:0;font-size:16px}
+.sub{color:#5B616E;margin:4px 0 0}
+.card{background:#FFFFFF;border:1px solid #E2E5EA;border-radius:12px;padding:20px;box-sizing:border-box}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 16px;border-radius:8px;border:1px solid #CDD2DA;background:#FFFFFF;color:#15171C;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
+.btn.primary{background:#2450D8;border-color:#2450D8;color:#FFFFFF}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px}
+.muted{color:#5B616E}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+select{font:inherit;min-height:44px;padding:0 12px;border:1px solid #CDD2DA;border-radius:8px;background:#FFFFFF;color:#15171C}
+.tabs{display:flex;gap:4px;border-bottom:1px solid #E2E5EA;flex-wrap:wrap}
+.tabs button{border:0;background:transparent;font:inherit;min-height:44px;padding:0 14px;cursor:pointer;color:#5B616E;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button.on{color:#15171C;font-weight:600;border-bottom-color:#2450D8}
+pre{margin:0;background:#15171C;color:#E7E9EE;border-radius:10px;padding:18px;overflow-x:auto;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px;line-height:1.7}
+dl{margin:0;display:grid;grid-template-columns:140px 1fr;gap:10px 16px}
+dt{color:#5B616E;font-size:13px;font-weight:600}dd{margin:0}
+.switch{display:flex;align-items:center;gap:10px;min-height:44px}
+.switch input{width:40px;height:22px}
+ul.plain{list-style:none;margin:0;padding:0}
+ul.plain li{padding:10px 0;border-bottom:1px solid #EEF0F3}
+</style>
+</helmet>
+<div class="shell">
+<nav class="nav" aria-label="主選單">
+<div class="brand">Spillway <span style="font-weight:400;color:#A3A9B5;font-size:12px">溢流閘</span></div>
+<a href="Main.dc.html">總覽</a>
+<a href="Members.dc.html">成員</a>
+<a href="Groups.dc.html">群組與 Tag</a>
+<a href="Routes.dc.html">Route</a>
+<a class="on" href="Mcp.dc.html" aria-current="page">MCP 設定</a>
+<a href="Ledger.dc.html">帳本</a>
+<a href="Settings.dc.html">設定</a>
+<div style="margin-top:auto;padding:12px;font-size:12px;color:#A3A9B5" class="mono">127.0.0.1:8787</div>
+</nav>
+<main class="main">
+<div class="head">
+<div>
+<h1>MCP 設定</h1>
+<p class="sub">選擇群組與 AI 工具，取得可直接貼上的設定；每個群組只暴露自己的 route。</p>
+</div>
+<div class="row">
+<label for="grp" class="muted" style="font-size:13px;font-weight:600">群組</label>
+<select id="grp"><option>coding</option><option>cheap</option><option>private</option><option>all（全部 route）</option></select>
+</div>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start">
+<section class="card" aria-labelledby="cfg-h" style="flex:999 1 600px;min-width:0;display:flex;flex-direction:column;gap:16px">
+<h2 id="cfg-h">設定內容</h2>
+<div class="tabs" role="tablist" aria-label="AI 工具">
+<button type="button" role="tab" class="on" aria-selected="true">Claude Code</button>
+<button type="button" role="tab" aria-selected="false">Codex</button>
+<button type="button" role="tab" aria-selected="false">Cursor</button>
+<button type="button" role="tab" aria-selected="false">Gemini CLI</button>
+<button type="button" role="tab" aria-selected="false">通用 stdio</button>
+</div>
+<pre>claude mcp add --transport http spillway-coding \
+  http://127.0.0.1:8787/mcp/coding \
+  --header "Authorization: Bearer ${SPILLWAY_TOKEN}"</pre>
+<dl>
+<dt>放置位置</dt><dd>在終端機執行；或寫入專案的 <span class="mono">.mcp.json</span></dd>
+<dt>需要的環境變數</dt><dd><span class="mono">SPILLWAY_TOKEN</span> <span class="muted">（於「設定」頁取得）</span></dd>
+<dt>端點</dt><dd class="mono">http://127.0.0.1:8787/mcp/coding</dd>
+</dl>
+<div class="switch"><input id="embed" type="checkbox"><label for="embed">內嵌 token（輸出明文，不建議）</label></div>
+<div role="note" style="background:#FDF0E1;border:1px solid #F1C99B;color:#7A3706;border-radius:10px;padding:10px 14px;font-size:13px">開啟後設定檔會包含 token 明文，請勿提交到版本控制或分享。</div>
+<div class="row" style="justify-content:flex-end;gap:12px"><button class="btn" type="button">下載檔案</button><button class="btn primary" type="button">複製</button></div>
+</section>
+
+<aside style="flex:1 1 300px;min-width:0;display:flex;flex-direction:column;gap:16px">
+<section class="card" aria-labelledby="tools-h" style="display:flex;flex-direction:column;gap:10px">
+<h2 id="tools-h">此端點提供的 tool</h2>
+<ul class="plain">
+<li><div class="mono" style="font-weight:500">ask</div><div class="muted" style="font-size:13px">route 可選：<span class="mono">review</span>；effort 選填</div></li>
+<li><div class="mono" style="font-weight:500">list_routes</div><div class="muted" style="font-size:13px">route 與各 slot 的成員順序</div></li>
+<li style="border-bottom:0"><div class="mono" style="font-weight:500">quota_status</div><div class="muted" style="font-size:13px">群組內各成員的剩餘額度與冷卻</div></li>
+</ul>
+</section>
+<section class="card" aria-labelledby="guard-h" style="display:flex;flex-direction:column;gap:8px">
+<h2 id="guard-h">遞迴防護</h2>
+<p style="margin:0;font-size:13px">閘道啟動的 CLI 子行程不載入本端點；若仍收到來自子行程的呼叫，會回傳 <span class="mono">recursion_blocked</span>。</p>
+</section>
+</aside>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":960}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

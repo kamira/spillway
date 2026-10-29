@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>帳本</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0;background:#F5F6F8;color:#15171C;font-family:'Noto Sans TC',system-ui,sans-serif;font-size:14px;line-height:1.5}
+a{color:#2450D8}a:hover{color:#1A3BA6}
+.shell{display:flex;flex-wrap:wrap;min-height:100vh}
+.nav{flex:1 1 220px;background:#15171C;padding:20px 12px;display:flex;flex-direction:column;gap:4px;box-sizing:border-box}
+.nav a{display:flex;align-items:center;color:#C9CDD6;text-decoration:none;padding:0 12px;border-radius:8px;min-height:44px}
+.nav a:hover{background:#262A33;color:#FFFFFF}
+.nav a.on{background:#2450D8;color:#FFFFFF}
+.brand{font-weight:700;font-size:16px;color:#FFFFFF;padding:8px 12px 16px}
+.main{flex:999 1 560px;min-width:0;padding:28px 32px 48px;box-sizing:border-box;display:flex;flex-direction:column;gap:20px}
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{margin:0;font-size:24px}
+.sub{color:#5B616E;margin:4px 0 0}
+.card{background:#FFFFFF;border:1px solid #E2E5EA;border-radius:12px;padding:20px;box-sizing:border-box}
+.badge{display:inline-flex;align-items:center;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.b-ok{background:#E5F3EC;color:#1A6B43}.b-warn{background:#FDF0E1;color:#9A4508}.b-err{background:#FBE9E9;color:#A32020}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 16px;border-radius:8px;border:1px solid #CDD2DA;background:#FFFFFF;color:#15171C;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
+.btn.primary{background:#2450D8;border-color:#2450D8;color:#FFFFFF}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:12px;color:#5B616E;font-weight:600;padding:10px 12px;border-bottom:1px solid #E2E5EA;white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid #EEF0F3;vertical-align:middle;white-space:nowrap}
+td.num,th.num{text-align:right}
+.scroll{overflow-x:auto}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px}
+.muted{color:#5B616E}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.f{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600}
+select{font:inherit;font-weight:400;min-height:44px;padding:0 12px;border:1px solid #CDD2DA;border-radius:8px;background:#FFFFFF;color:#15171C}
+</style>
+</helmet>
+<div class="shell">
+<nav class="nav" aria-label="主選單">
+<div class="brand">Spillway <span style="font-weight:400;color:#A3A9B5;font-size:12px">溢流閘</span></div>
+<a href="Main.dc.html">總覽</a>
+<a href="Members.dc.html">成員</a>
+<a href="Groups.dc.html">群組與 Tag</a>
+<a href="Routes.dc.html">Route</a>
+<a href="Mcp.dc.html">MCP 設定</a>
+<a class="on" href="Ledger.dc.html" aria-current="page">帳本</a>
+<a href="Settings.dc.html">設定</a>
+<div style="margin-top:auto;padding:12px;font-size:12px;color:#A3A9B5" class="mono">127.0.0.1:8787</div>
+</nav>
+<main class="main">
+<div class="head">
+<div>
+<h1>帳本</h1>
+<p class="sub">每次嘗試一列，含 fallback。點選任一列可查看該次的請求與回應內容（保存 7 天）。</p>
+</div>
+<button class="btn" type="button">匯出 CSV</button>
+</div>
+
+<section class="card row" aria-label="篩選" style="align-items:flex-end;gap:14px">
+<label class="f">期間<select><option>今日</option><option>本週</option><option>本月</option></select></label>
+<label class="f">Route<select><option>全部</option><option>review</option><option>quick</option></select></label>
+<label class="f">成員<select><option>全部</option><option>claude-sub</option><option>codex-sub</option><option>anthropic-api</option><option>deepseek-api</option><option>qwen-local</option></select></label>
+<label class="f">狀態<select><option>全部</option><option>ok</option><option>quota_exhausted</option><option>rate_limited</option><option>skipped_precheck</option><option>error</option></select></label>
+<button class="btn primary" type="button">套用</button>
+</section>
+
+<section class="card" aria-label="帳本紀錄" style="padding:8px 0">
+<div class="scroll">
+<table>
+<thead><tr><th>時間</th><th>Route</th><th>成員</th><th class="num">Slot</th><th>Effort</th><th class="num">預估 入 / 出 P90</th><th class="num">實際 入 / 出</th><th class="num">預估花費 P90</th><th class="num">實際花費</th><th>狀態</th><th class="num">延遲</th><th class="num">Fallback 深度</th></tr></thead>
+<tbody>
+<tr style="background:#F2F5FD"><td class="mono">14:02:11</td><td class="mono">review</td><td class="mono">claude-sub</td><td class="num">1</td><td>high</td><td class="num">3,050 / 2,000</td><td class="num">3,120 / 842</td><td class="num">$0.0368</td><td class="num">$0.0214</td><td><span class="badge b-ok">ok</span></td><td class="num">18.4 s</td><td class="num">0</td></tr>
+<tr><td class="mono">13:58:40</td><td class="mono">review</td><td class="mono">claude-sub</td><td class="num">1</td><td>high</td><td class="num">2,880 / 2,000</td><td class="num">2,904 / 1,210</td><td class="num">$0.0386</td><td class="num">$0.0268</td><td><span class="badge b-ok">ok</span></td><td class="num">21.0 s</td><td class="num">1</td></tr>
+<tr><td class="mono">13:58:39</td><td class="mono">review</td><td class="mono">codex-sub</td><td class="num">1</td><td>medium</td><td class="num">2,880 / 2,000</td><td class="num">— / —</td><td class="num">—</td><td class="num">—</td><td><span class="badge b-warn">rate_limited</span></td><td class="num">1.2 s</td><td class="num">0</td></tr>
+<tr><td class="mono">12:41:05</td><td class="mono">quick</td><td class="mono">deepseek-api</td><td class="num">1</td><td>medium</td><td class="num">1,460 / 900</td><td class="num">1,480 / 395</td><td class="num">$0.0014</td><td class="num">$0.0009</td><td><span class="badge b-ok">ok</span></td><td class="num">4.6 s</td><td class="num">0</td></tr>
+<tr><td class="mono">11:20:17</td><td class="mono">quick</td><td class="mono">anthropic-api</td><td class="num">1</td><td>medium</td><td class="num">1,590 / 900</td><td class="num">1,602 / 410</td><td class="num">$0.0183</td><td class="num">$0.0110</td><td><span class="badge b-ok">ok</span></td><td class="num">6.3 s</td><td class="num">1</td></tr>
+<tr><td class="mono">11:19:47</td><td class="mono">quick</td><td class="mono">deepseek-api</td><td class="num">1</td><td>medium</td><td class="num">1,590 / 900</td><td class="num">— / —</td><td class="num">$0.0015</td><td class="num">—</td><td><span class="badge b-err">error</span></td><td class="num">30.0 s</td><td class="num">0</td></tr>
+<tr><td class="mono">10:40:02</td><td class="mono">review</td><td class="mono">anthropic-api</td><td class="num">2</td><td>medium</td><td class="num">4,800 / 2,000</td><td class="num">— / —</td><td class="num">$0.0444</td><td class="num">—</td><td><span class="badge b-warn">skipped_precheck</span></td><td class="num">0 s</td><td class="num">1</td></tr>
+<tr><td class="mono">10:02:33</td><td class="mono">local/qwen-local</td><td class="mono">qwen-local</td><td class="num">—</td><td>—</td><td class="num">810 / 500</td><td class="num">820 / 214</td><td class="num">$0</td><td class="num">$0</td><td><span class="badge b-ok">ok</span></td><td class="num">9.8 s</td><td class="num">0</td></tr>
+</tbody>
+</table>
+</div>
+<div class="row" style="justify-content:space-between;padding:12px 16px 4px">
+<span class="muted" style="font-size:13px">第 1 頁，共 8 列</span>
+<div class="row"><button class="btn" type="button" disabled>上一頁</button><button class="btn" type="button" disabled>下一頁</button></div>
+</div>
+</section>
+
+<section class="card" aria-labelledby="detail-h" style="display:flex;flex-direction:column;gap:14px">
+<div class="row" style="justify-content:space-between">
+<h2 id="detail-h" style="margin:0;font-size:16px">紀錄內容 · <span class="mono">14:02:11</span> · <span class="mono">claude-sub</span></h2>
+<div class="row" style="gap:8px"><span class="badge b-ok">未截斷</span><span class="badge b-warn">已遮罩 1 處</span><span class="muted" style="font-size:12px">保存至 11/5 14:02</span></div>
+</div>
+<div role="tablist" aria-label="內容" style="display:flex;gap:4px;border-bottom:1px solid #E2E5EA">
+<button type="button" role="tab" aria-selected="true" style="border:0;background:transparent;font:inherit;font-weight:600;min-height:44px;padding:0 14px;border-bottom:2px solid #2450D8;margin-bottom:-1px;cursor:pointer;color:#15171C">請求</button>
+<button type="button" role="tab" aria-selected="false" style="border:0;background:transparent;font:inherit;min-height:44px;padding:0 14px;cursor:pointer;color:#5B616E">回應</button>
+</div>
+<pre style="margin:0;background:#15171C;color:#E7E9EE;border-radius:10px;padding:18px;overflow-x:auto;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px;line-height:1.7;max-height:280px">[System]
+你是程式碼審查者，只回報問題與修正建議。
+
+[User]
+請審查以下 diff：
+--- a/gateway/router.py
++++ b/gateway/router.py
+@@ def pick(...)
+-    key = "sk-••••••••"   ← 已遮罩
++    key = os.environ["SPILLWAY_KEY"]
+…</pre>
+<div class="row" style="justify-content:space-between">
+<span class="muted" style="font-size:13px">CLI 成員只記錄送入的 prompt 與最終結果，不含工具呼叫過程。</span>
+<div class="row"><button class="btn" type="button">複製</button><button class="btn" type="button">下載 JSON</button></div>
+</div>
+</section>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

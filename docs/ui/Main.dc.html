@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>總覽</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0;background:#F5F6F8;color:#15171C;font-family:'Noto Sans TC',system-ui,sans-serif;font-size:14px;line-height:1.5}
+a{color:#2450D8}a:hover{color:#1A3BA6}
+.shell{display:flex;flex-wrap:wrap;min-height:100vh}
+.nav{flex:1 1 220px;background:#15171C;padding:20px 12px;display:flex;flex-direction:column;gap:4px;box-sizing:border-box}
+.nav a{display:flex;align-items:center;color:#C9CDD6;text-decoration:none;padding:0 12px;border-radius:8px;min-height:44px}
+.nav a:hover{background:#262A33;color:#FFFFFF}
+.nav a.on{background:#2450D8;color:#FFFFFF}
+.brand{font-weight:700;font-size:16px;color:#FFFFFF;padding:8px 12px 16px}
+.main{flex:999 1 560px;min-width:0;padding:28px 32px 48px;box-sizing:border-box;display:flex;flex-direction:column;gap:20px}
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{margin:0;font-size:24px}h2{margin:0;font-size:16px}
+.sub{color:#5B616E;margin:4px 0 0}
+.card{background:#FFFFFF;border:1px solid #E2E5EA;border-radius:12px;padding:20px;box-sizing:border-box}
+.badge{display:inline-flex;align-items:center;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.b-cli{background:#E8EEFC;color:#1F43B8}.b-api{background:#EEF0F3;color:#3F4A5C}.b-local{background:#E5F3EC;color:#1A6B43}.b-warn{background:#FDF0E1;color:#9A4508}.b-ok{background:#E5F3EC;color:#1A6B43}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 16px;border-radius:8px;border:1px solid #CDD2DA;background:#FFFFFF;color:#15171C;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
+.btn.sm{min-height:36px;padding:0 12px;font-size:13px}
+.btn.primary{background:#2450D8;border-color:#2450D8;color:#FFFFFF}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:12px;color:#5B616E;font-weight:600;padding:10px 12px;border-bottom:1px solid #E2E5EA;white-space:nowrap}
+td{padding:12px;border-bottom:1px solid #EEF0F3;vertical-align:middle}
+.scroll{overflow-x:auto}
+.bar{height:8px;background:#EEF0F3;border-radius:999px;overflow:hidden}
+.bar i{display:block;height:100%;background:#2450D8;border-radius:999px}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px}
+.muted{color:#5B616E}
+select{font:inherit;min-height:44px;padding:0 12px;border:1px solid #CDD2DA;border-radius:8px;background:#FFFFFF;color:#15171C}
+</style>
+</helmet>
+<div class="shell">
+<nav class="nav" aria-label="主選單">
+<div class="brand">Spillway <span style="font-weight:400;color:#A3A9B5;font-size:12px">溢流閘</span></div>
+<a class="on" href="Main.dc.html" aria-current="page">總覽</a>
+<a href="Members.dc.html">成員</a>
+<a href="Groups.dc.html">群組與 Tag</a>
+<a href="Routes.dc.html">Route</a>
+<a href="Mcp.dc.html">MCP 設定</a>
+<a href="Ledger.dc.html">帳本</a>
+<a href="Settings.dc.html">設定</a>
+<div style="margin-top:auto;padding:12px;font-size:12px;color:#A3A9B5" class="mono">127.0.0.1:8787</div>
+</nav>
+<main class="main">
+<div class="head">
+<div>
+<h1>總覽</h1>
+<p class="sub">本期額度與各成員狀態，路由前會先排除冷卻中與額度用完的成員。</p>
+</div>
+<div style="display:flex;gap:12px;align-items:center">
+<label for="period" class="muted" style="font-size:13px">期間</label>
+<select id="period"><option>本月（10/1 起）</option><option>本週</option><option>今日</option></select>
+</div>
+</div>
+
+<section aria-label="本期摘要" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px">
+<div class="card" style="display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;justify-content:space-between;align-items:center"><span class="muted" style="font-size:13px;font-weight:600">訂閱 credit</span><span class="badge b-cli">訂閱 CLI</span></div>
+<div style="font-size:28px;font-weight:700">$63.20 <span class="muted" style="font-size: 14px; font-weight: 400">&nbsp;/ $100</span></div>
+<div class="bar" role="img" aria-label="已使用 37%"><i style="width:37%"></i></div>
+<div class="muted" style="font-size:12px">Claude Agent SDK credit · 11/1 重置</div>
+<div style="font-size:13px">預估可用 35 天 <span class="muted">（依近 7 天日均 $1.80，會先遇到重置）</span></div>
+</div>
+<div class="card" style="display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;justify-content:space-between;align-items:center"><span class="muted" style="font-size:13px;font-weight:600">API 花費</span><span class="badge b-api">API</span></div>
+<div style="font-size:28px;font-weight:700">$14.20 <span class="muted" style="font-size: 14px; font-weight: 400">/ $40&nbsp;</span></div>
+<div class="bar" role="img" aria-label="已使用 36%"><i style="width:36%;background:#3F4A5C"></i></div>
+<div class="muted" style="font-size:12px">2 個 API 成員合計</div>
+<div style="font-size:13px">預估可用 18 天 <span class="muted">（依近 7 天日均 $1.40）</span></div>
+</div>
+<div class="card" style="display:flex;flex-direction:column;gap:10px">
+<span class="muted" style="font-size:13px;font-weight:600">冷卻中成員</span>
+<div style="font-size:28px;font-weight:700">1</div>
+<div style="font-size:13px"><span class="mono">codex-sub</span> · 限流，至 14:12</div>
+</div>
+<div class="card" style="display:flex;flex-direction:column;gap:10px">
+<span class="muted" style="font-size:13px;font-weight:600">近 24 小時請求</span>
+<div style="font-size:28px;font-weight:700">128</div>
+<div style="font-size:13px">其中 6 次經 fallback 完成</div>
+</div>
+</section>
+
+<section class="card" aria-labelledby="members-h" style="display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+<h2 id="members-h">成員額度</h2>
+<a class="btn sm" href="Members.dc.html">管理成員</a>
+</div>
+<div class="scroll">
+<table>
+<thead><tr><th>成員</th><th>類型</th><th>額度類型</th><th style="min-width:200px">本期使用</th><th>剩餘</th><th>預估可用</th><th>狀態</th><th><span style="position:absolute;left:-9999px">操作</span></th></tr></thead>
+<tbody>
+<tr><td class="mono">claude-sub</td><td><span class="badge b-cli">訂閱 CLI</span></td><td>credit_pool · 每月 1 日</td><td><div style="display:flex;align-items:center;gap:10px"><div class="bar" style="flex:1"><i style="width:37%"></i></div><span style="font-size:13px;white-space:nowrap">$36.80 / $100</span></div></td><td>$63.20</td><td>35 天</td><td><span class="badge b-ok">正常</span></td><td></td></tr>
+<tr><td class="mono">codex-sub</td><td><span class="badge b-cli">訂閱 CLI</span></td><td>none · 依上游訊號</td><td class="muted">不計金額</td><td class="muted">—</td><td class="muted">—</td><td><span class="badge b-warn">冷卻至 14:12（限流）</span></td><td><button class="btn sm" type="button">清除冷卻</button></td></tr>
+<tr><td class="mono">anthropic-api</td><td><span class="badge b-api">API</span></td><td>usd · 每月</td><td><div style="display:flex;align-items:center;gap:10px"><div class="bar" style="flex:1"><i style="width:31%;background:#3F4A5C"></i></div><span style="font-size:13px;white-space:nowrap">$9.40 / $30</span></div></td><td>$20.60</td><td>16 天</td><td><span class="badge b-ok">正常</span></td><td></td></tr>
+<tr><td class="mono">deepseek-api</td><td><span class="badge b-api">API</span></td><td>usd · 每月</td><td><div style="display:flex;align-items:center;gap:10px"><div class="bar" style="flex:1"><i style="width:48%;background:#3F4A5C"></i></div><span style="font-size:13px;white-space:nowrap">$4.80 / $10</span></div></td><td>$5.20</td><td>9 天</td><td><span class="badge b-ok">正常</span></td><td></td></tr>
+<tr><td class="mono">qwen-local</td><td><span class="badge b-local">Local</span></td><td>—</td><td class="muted">不計額度</td><td class="muted">—</td><td class="muted">—</td><td><span class="badge b-ok">健康</span></td><td></td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<div style="display:flex;flex-wrap:wrap;gap:16px">
+<section class="card" aria-labelledby="tier-h" style="flex:1 1 380px;display:flex;flex-direction:column;gap:14px">
+<h2 id="tier-h">近 24 小時由哪一層處理</h2>
+<div style="display:grid;grid-template-columns:80px 1fr 64px;gap:10px;align-items:center">
+<span class="badge b-cli" style="justify-self:start">訂閱 CLI</span><div class="bar" style="height:12px"><i style="width:72%"></i></div><span style="text-align:right">92 次</span>
+<span class="badge b-api" style="justify-self:start">API</span><div class="bar" style="height:12px"><i style="width:23%;background:#3F4A5C"></i></div><span style="text-align:right">30 次</span>
+<span class="badge b-local" style="justify-self:start">Local</span><div class="bar" style="height:12px"><i style="width:5%;background:#1A6B43"></i></div><span style="text-align:right">6 次</span>
+</div>
+</section>
+<section class="card" aria-labelledby="fb-h" style="flex:1 1 380px;display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;justify-content:space-between;align-items:center"><h2 id="fb-h">最近的 fallback</h2><a href="Ledger.dc.html" style="font-size:13px">看帳本</a></div>
+<ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px">
+<li><span class="mono">13:58</span> route <span class="mono">review</span>：codex-sub 限流 → claude-sub 完成</li>
+<li><span class="mono">11:20</span> route <span class="mono">quick</span>：deepseek-api 逾時 → anthropic-api 完成</li>
+<li><span class="mono">09:05</span> route <span class="mono">review</span>：Slot 1、2 皆不可用 → qwen-local 完成</li>
+</ol>
+</section>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

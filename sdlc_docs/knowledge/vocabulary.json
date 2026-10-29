@@ -1,0 +1,45 @@
+{
+  "_doc": "受控 tag → 別名。新 tag 先在此登記再用(lint 擋未註冊 tag)。",
+  "review": [
+    "審議",
+    "審查",
+    "審議席",
+    "review panel",
+    "seat",
+    "verdict",
+    "裁決"
+  ],
+  "security": [
+    "安全",
+    "安全審議",
+    "權限",
+    "secret",
+    "api key",
+    "token"
+  ],
+  "governance": [
+    "治理",
+    "帳本",
+    "ledger",
+    "CHG",
+    "ACC"
+  ],
+  "adapter": [
+    "adapter",
+    "供應商",
+    "provider",
+    "模組",
+    "module",
+    "models.yaml",
+    "可用模型"
+  ],
+  "ui": [
+    "web",
+    "後台",
+    "畫面",
+    "選單",
+    "dropdown",
+    "UI-2",
+    "UI-4"
+  ]
+}
