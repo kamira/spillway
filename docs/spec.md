@@ -2,6 +2,8 @@
 
 2026-10-29 · Weiss Lin
 
+修訂：2026-10-29 CHG-20261029-01（adapter 模組化、可用模型清單、後台選單、模組唯一或多個）
+
 ## 1 範圍與名詞定義
 
 本規格定義單人使用的 LLM 路由閘道之資料模型、路由規則、介面與驗收標準；目的、選型與風險見企劃書。
@@ -27,6 +29,9 @@
 | 優先級（slot） | Route 內的一個順位，由使用者拖曳決定；不同 slot 依序嘗試，同一 slot 內的雲端成員依優先權重（high、medium、low 三級）負載平衡 |
 | Effort | 統一等級 `none`、`low`、`medium`、`high`、`max` |
 | 額度類型 | `usd`（美元預算）、`credit_pool`（訂閱附贈額度池）、`none` |
+| Adapter 模組 | 一種 AI、一種接入方式一個模組（例：Claude 訂閱 CLI 與 Anthropic API 是兩個模組）；自帶 manifest 與可用模型清單，啟動時自動發現（7.6） |
+| 可用模型清單 | 模組宣告的可選模型與各模型的能力預設，供後台選單使用（7.6.4） |
+| Cardinality | 模組宣告同一 `provider` 可建立的成員數：`single`（至多 1 個）或 `multiple`（不限） |
 
 ## 2 資料模型
 
@@ -40,7 +45,7 @@
 
 2.1.3 憑證不可寫入資料庫；`credential_ref` 只存 `env:變數名` 或 `keyring:服務:帳號`。
 
-2.1.4 同一 `provider` 的 `cli` 成員至多 1 筆（由部分唯一索引強制）。
+2.1.4 同一 `provider` 的成員數由處理該 `provider` 的模組所宣告的 cardinality 決定：`single` 至多 1 筆，`multiple` 不限；系統必須於建立成員與匯入設定時，在同一交易內檢查（7.6.5）。
 
 2.1.5 `usage_ledger` 不可存入 prompt 或回應內容；內容只可存於 `usage_payloads`（2.4）。
 
@@ -72,7 +77,6 @@ CREATE TABLE deployments (
   capabilities   TEXT NOT NULL DEFAULT '{}',   -- JSON {ctx, tools, vision, efforts[]}
   enabled        INTEGER NOT NULL DEFAULT 1
 );
-CREATE UNIQUE INDEX ux_cli_provider ON deployments(provider) WHERE kind = 'cli';
 
 CREATE TABLE deployment_tags (
   deployment_id TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
@@ -342,7 +346,7 @@ routes:
 
 ### 5.3 上游訊號判定
 
-5.3.1 判定規則必須存於成員 `params.signals`，可於 UI 修改；下表為預設值。
+5.3.1 判定規則必須存於成員 `params.signals`，可於 UI 修改；未設定時使用模組 manifest 的 `default_signals`（7.6.2）。下表為內建模組的預設值。
 
 | 成員 | 額度用完 | 限流 |
 | --- | --- | --- |
@@ -384,7 +388,9 @@ routes:
 
 ### 6.3 預設對應表
 
-| 內部等級 | api / local（LiteLLM） | codex-cli | claude-cli |
+各內部等級對應的上游參數由模組 manifest 的 `effort_map` 宣告（7.6.2）；下表為內建模組的宣告值。
+
+| 內部等級 | anthropic_api、openai_api、litellm 模組 | codex-cli | claude-cli |
 | --- | --- | --- | --- |
 | `none` | 不傳 `reasoning_effort` | `minimal` | 依 `params.effort_args` |
 | `low` | `low` | `low` | 依 `params.effort_args` |
@@ -398,7 +404,7 @@ routes:
 
 ## 7 Adapter 規格
 
-每種上游以一個 adapter 實作同一介面，路由器不可依賴任何 adapter 的內部細節。
+每種 AI 的每種接入方式以一個 adapter 模組實作同一介面（7.6），路由器不可依賴任何 adapter 的內部細節。
 
 ### 7.1 介面
 
@@ -418,11 +424,13 @@ class CallResult:
     error: str | None
 ```
 
-7.1.1 Adapter 以 `provider` 註冊；未註冊的 `provider` 依 `kind` 使用 LiteLLM adapter（`api`、`local`）。
+7.1.1 系統啟動時必須自動發現全部 adapter 模組，並依 manifest 的 `providers` 註冊；沒有任何模組宣告的 `provider`，依 `kind` 使用通用 `litellm` 模組（`api`、`local`）。
 
-7.1.2 新增供應商只可新增 adapter 檔案與註冊一行，不可修改路由器。
+7.1.2 新增一種 AI 或一種接入方式，只可新增一個 adapter 模組資料夾，不可修改路由器或任何既有檔案。
 
-### 7.2 LiteLLM adapter（api、local）
+### 7.2 LiteLLM 呼叫（anthropic_api、openai_api、litellm 模組）
+
+LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1–7.2.3 適用於使用它的模組。
 
 7.2.1 模型字串必須為 `<provider>/<model>`；`params.api_base` 存在時傳入。
 
@@ -457,6 +465,47 @@ class CallResult:
 7.5.1 `system`、`user`、`assistant` 訊息必須依序串成純文字，每段以 `[System]`、`[User]`、`[Assistant]` 標頭開頭。
 
 7.5.2 含 tools 或圖片的請求不可送往 CLI 成員（由 4.2.2 的 capabilities 篩除）。
+
+### 7.6 Adapter 模組
+
+7.6.1 每個模組必須是 `adapters/<module>/` 下的一個子套件，包含 `__init__.py`（匯出 `MANIFEST` 與 `create()`）、`adapter.py`、`models.yaml`、`README.md`。
+
+7.6.2 `MANIFEST` 必須宣告下列欄位：
+
+| 欄位 | 內容 |
+| --- | --- |
+| `providers` | 此模組處理的 `provider` 值 |
+| `kinds` | 支援的 `kind` |
+| `access` | `subscription-cli`、`api`、`local` |
+| `cardinality` | `single` 或 `multiple` |
+| `effort_map` | 五個內部等級各自對應的上游值；不傳時為 null |
+| `default_signals` | 額度用完與限流的判定規則（5.3.1） |
+| `default_capabilities` | 能力預設 |
+| `default_params` | 參數預設，例如 `timeout`、`effort_args` |
+| `requires` | 需要的執行檔或環境變數 |
+| `contract_version` | 模組契約版本，第一版為 1 |
+
+7.6.3 模組只可引用共用契約（Adapter 介面、`CallResult`、`AdapterManifest`、子行程執行器、LiteLLM 呼叫），不可引用路由、資料庫、HTTP 或 MCP 程式。
+
+7.6.4 可用模型清單：`models.yaml` 每筆必須含 `id`、`label`、`capabilities`（`ctx`、`tools`、`vision`、`efforts`）；`efforts` 只可含 6 節的五個等級。模組可另提供 `list_models()` 於執行期查詢上游，結果與 `models.yaml` 合併，同 `id` 以 `models.yaml` 的能力為準；查詢失敗時只回傳 `models.yaml` 並附原因。可用模型清單不寫入資料庫，也不寫入匯出檔。
+
+7.6.5 Cardinality：`provider` 屬於 `single` 模組且已有 1 個成員時，建立或匯入第二個成員必須整筆失敗，回傳 HTTP 409，錯誤碼 `provider_single`。
+
+7.6.6 同一 `provider` 被兩個模組宣告時，系統必須拒絕啟動並列出兩個模組。
+
+7.6.7 模組載入失敗（無法 import、manifest 不合法、`contract_version` 不支援）時，該模組不註冊；使用其 `provider` 的成員於候選篩選時視為不可用（原因 `adapter_unavailable`），其他模組照常運作。
+
+7.6.8 每個模組必須通過共用合約測試：manifest 欄位完整且合法、`effort_map` 五個等級皆有定義、`models.yaml` 可解析，以及 `call` 對成功、額度用完、限流、錯誤四種上游輸出回傳對應的 `status`。
+
+7.6.9 內建模組：
+
+| 模組 | provider | access | cardinality |
+| --- | --- | --- | --- |
+| `claude_cli` | `claude-cli` | `subscription-cli` | `single` |
+| `codex_cli` | `codex-cli` | `subscription-cli` | `single` |
+| `anthropic_api` | `anthropic` | `api` | `multiple` |
+| `openai_api` | `openai` | `api` | `multiple` |
+| `litellm` | 其他未被宣告的 `api`、`local` provider | `api`、`local` | `multiple` |
 
 ## 8 MCP 介面與設定輸出
 
@@ -584,6 +633,14 @@ bearer_token_env_var = "SPILLWAY_TOKEN"
 | GET / PUT | `/api/settings/context` | `record_context_default`、`context_retention_days`、`context_max_bytes` |
 | POST | `/api/estimate` | 以請求 body 回傳各候選成員的預估 token 與花費，不呼叫上游 |
 
+9.2.2 Adapter 模組端點：
+
+| 方法 | 路徑 | 用途 |
+| --- | --- | --- |
+| GET | `/api/adapters` | 列出已發現的模組：`providers`、`kinds`、`access`、`cardinality`、現有成員數、是否可用與原因、可用模型清單（7.6.4）；供 UI-2、UI-4 選單使用 |
+
+9.2.3 `POST /api/deployments` 與 `POST /api/config/import` 違反 7.6.5 時回傳 HTTP 409，錯誤碼 `provider_single`。
+
 ### 9.3 拖曳儲存格式
 
 ```json
@@ -609,9 +666,9 @@ Web UI 共 7 個畫面，左側固定導覽；各畫面 layout 見 [UI layout �
 | 編號 | 畫面 | 用途 | 主要操作 |
 | --- | --- | --- | --- |
 | UI-1 | 總覽 | 各成員剩餘額度、預估可用天數、冷卻狀態、近 24 小時請求 | 清除冷卻、跳至成員 |
-| UI-2 | 成員 | 成員清單與編輯（類型、模型、能力、額度、tag、憑證參照） | 新增、測試呼叫、啟用切換 |
+| UI-2 | 成員 | 成員清單與編輯（類型、供應商、模型以選單選取；能力、額度、tag、憑證參照） | 新增、測試呼叫、啟用切換 |
 | UI-3 | 群組與 Tag | 以 all、any、none 編輯選擇器，即時預覽符合的成員 | 新增群組、編輯 tag |
-| UI-4 | Route | Route 清單；編輯頁以拖曳調整 slot 與成員順序，逐成員設定 effort 與優先權重（高、中、低）；route 層級勾選「預估額度檢查」與「記錄 context」 | 拖曳、還原預設、dry-run |
+| UI-4 | Route | Route 清單；編輯頁以拖曳調整 slot 與成員順序，逐成員以選單設定 effort 與優先權重（高、中、低）；route 層級勾選「預估額度檢查」與「記錄 context」 | 拖曳、還原預設、dry-run |
 | UI-5 | MCP 設定 | 選群組與工具，顯示設定內容與放置路徑 | 複製、下載、內嵌 token 切換 |
 | UI-6 | 帳本 | 每次嘗試的紀錄，含預估與實際 token、花費；點選列開啟請求與回應內容 | 篩選、匯出 CSV |
 | UI-7 | 設定 | 首次設定精靈、YAML 匯入匯出、存取 token、埠號、context 記錄預設與保存天數 | 匯入、匯出、重新產生 token |
@@ -625,6 +682,20 @@ Web UI 共 7 個畫面，左側固定導覽；各畫面 layout 見 [UI layout �
 10.1.3 未儲存的變更必須標示於畫面頂端，離開頁面前提示。
 
 10.1.4 每個 slot 必須顯示內部成員的類型標籤與剩餘額度，讓使用者在拖曳時看得到可用狀態。
+
+### 10.2 選單規則（UI-2、UI-4）
+
+10.2.1 選單內容必須取自 `GET /api/adapters`（9.2.2），不可寫死在畫面中。
+
+10.2.2 UI-2 建立與編輯成員時，必須依序以連動選單選取類型（`kind`）、供應商（`provider`）、模型（`model`）：供應商選單只列支援所選類型的模組；模型選單只列該模組的可用模型清單，以 `label` 顯示、以 `id` 寫入。
+
+10.2.3 選定模型後，系統必須以該模型的 `capabilities` 帶入能力欄位；使用者仍可修改。
+
+10.2.4 不可用的模組（7.6.7）必須在供應商選單中停用並顯示原因；`single` 模組已有成員時亦須停用，並註明「已有 1 個，僅限 1 個」。
+
+10.2.5 模型選單最後一項為「其他（手動輸入）」，選取後可輸入模型 `id`，能力欄位須手動填寫。
+
+10.2.6 UI-4 的 effort 選單只可列出該成員 `capabilities.efforts` 所含等級與「不指定」；優先權重選單為高、中、低。
 
 ## 11 非功能需求
 
@@ -655,7 +726,7 @@ Web UI 共 7 個畫面，左側固定導覽；各畫面 layout 見 [UI layout �
 | AC-9 | G6 | 群組 `coding` 已建立 | 將 UI-5 輸出套用到 Claude Code、Codex、Cursor、Gemini CLI | 四者皆能列出並呼叫 `ask` |
 | AC-10 | G7 | 已有完整設定 | 匯出後於空資料庫匯入 | 成員、群組、route、拖曳順序一致；匯出檔無憑證 |
 | AC-11 | 8.1.6 | claude-sub 的 CLI 設定了本閘道 MCP | 經 MCP 呼叫 route `review` | 子行程內的再次呼叫被拒，錯誤碼 `recursion_blocked` |
-| AC-12 | 2.1.4 | 已有 claude-cli 成員 | 再新增一個 claude-cli 成員 | 建立失敗並顯示原因 |
+| AC-12 | 2.1.4 | 已有 claude-cli 成員 | 再新增一個 claude-cli 成員 | 建立失敗，HTTP 409，錯誤碼 `provider_single`，並顯示原因 |
 
 ### 12.1 Context 記錄與預估
 
@@ -667,3 +738,11 @@ Web UI 共 7 個畫面，左側固定導覽；各畫面 layout 見 [UI layout �
 | AC-16 | 4.2.5 | route 勾選預估檢查；claude-sub 剩餘 $0.01；請求預估 P90 為 $0.05 | 送出請求 | claude-sub 記為 `skipped_precheck`，由下一個成員處理 |
 | AC-17 | 4.2.6 | route 未勾選；claude-sub 接近用完 | 持續送出請求至上游回報用完，再推進至重置點 | 用完後跳過並冷卻；重置後自動恢復被選用 |
 | AC-18 | 5.4.3 | 某 route 與成員已有 50 筆 `ok` 紀錄 | 執行 dry-run | 顯示的 P50、P90 與帳本計算值一致 |
+
+### 12.2 Adapter 模組與選單
+
+| 編號 | 對應 | 前置條件 | 操作 | 預期結果 |
+| --- | --- | --- | --- | --- |
+| AC-19 | 7.1.2、7.6 | 內建模組皆可用 | 新增一個符合 7.6.1 的測試模組資料夾（宣告新 `provider`），不修改任何既有檔案，重新啟動 | `GET /api/adapters` 列出該模組；以該 `provider` 建立的成員可被路由呼叫；合約測試對它通過 |
+| AC-20 | 7.6.4、10.2 | 內建模組皆可用 | 於 UI-2 依序選類型 `cli`、供應商 `claude-cli`、任一模型 | 供應商選單只列 `cli` 模組；模型選單與 `claude_cli` 的 `models.yaml` 一致；能力欄位帶入該模型的值 |
+| AC-21 | 7.6.7 | 有一個 `__init__.py` 無法 import 的模組 | 啟動系統並開啟 UI-2 | 系統正常啟動；該模組於供應商選單停用並顯示原因；其成員候選篩選原因為 `adapter_unavailable` |

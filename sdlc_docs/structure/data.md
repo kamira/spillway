@@ -38,7 +38,7 @@ erDiagram
 
 ## 索引 / 約束
 
-- ~~`ux_cli_provider`~~:spec 2.1.4 的部分唯一索引**不建立**。改由應用層依模組 `cardinality` 檢查(design D15);`claude_cli`、`codex_cli` 宣告 single,AC-12 仍成立。**待同步規格書 2.1.4**。
+- 同 `provider` 的成員數:依 spec 2.1.4,由模組 `cardinality` 決定,應用層在同一交易內檢查(design D15、spec 7.6.5);不建立部分唯一索引。`claude_cli`、`codex_cli` 宣告 single,AC-12 仍成立。
 - `ix_ledger_dep_ts`:本期花費加總與 P50/P90 統計(NFR-1、NFR-2)。
 - `ix_payloads_ts`:每小時清理(NFR-5)。
 - 連線後 `PRAGMA journal_mode=WAL`、`PRAGMA foreign_keys=ON`(spec 2.1.1)。

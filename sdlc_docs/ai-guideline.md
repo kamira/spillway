@@ -3,7 +3,7 @@
 - 專案:spillway
 - 分支(Branch):main
 - 帳本落點(Ledger root):`sdlc_docs/` ← `docs/` 已存放專案自己的企劃書、規格書與 UI 設計稿,帳本不寫入該目錄
-- 版本:v1.2
+- 版本:v1.3
 - 日期:2026-10-29(UTC+0)
 - 狀態:已確認(2026-10-29,使用者)
 - Skill:ai-sdlc v1.67
@@ -65,7 +65,7 @@
 | FR-8 | 額度計算:四種 window、各類型花費來源、上游訊號判定(可設定)、手動清除冷卻 | 5.1–5.3 | M2(cli 部分 M3) | P0 |
 | FR-9 | Token 與花費預估,並露出於 dry-run、帳本、header、MCP | 5.4 | M2(MCP 部分 M3) | P1 |
 | FR-10 | Effort 統一五級、來源優先序、降級、各 adapter 對應 | 6 | M2(cli 部分 M3) | P0 |
-| FR-11 | Adapter 模組化:一種 AI 一個子套件(manifest + 可用模型清單),啟動時自動發現;新增 AI 不修改任何既有檔案;共用合約測試 | 7.1(收緊 7.1.2);structure/design.md D11 | M2 | P0 |
+| FR-11 | Adapter 模組化:一種 AI 一個子套件(manifest + 可用模型清單),啟動時自動發現;新增 AI 不修改任何既有檔案;共用合約測試 | 7.1、7.6.1–7.6.3、7.6.6–7.6.8;design D11 | M2 | P0 |
 | FR-12 | LiteLLM adapter(api、local) | 7.2 | M2 | P0 |
 | FR-13 | OpenAI 相容 HTTP API 與管理 API(含 dry-run、estimate、ledger、order) | 9 | M2 | P0 |
 | FR-14 | Context 記錄:全域/route 開關、截斷、金鑰遮罩、每小時清理、保存天數 | 2.4 | M2 | P1 |
@@ -77,9 +77,9 @@
 | FR-20 | Web UI 7 個畫面(UI-1–UI-7)與拖曳規則 | 10 | M4 | P0 |
 | FR-21 | YAML 設定匯入(merge/replace、單一交易)與匯出(不含憑證、不含 payload) | 3 | M4 | P0 |
 | FR-22 | 首次設定精靈 | 10(UI-7) | M4 | P1 |
-| FR-23 | 每個 adapter 模組可設定可用模型清單(`models.yaml`,local 可另查上游);能力預設跟著模型走 | 規格書外新增;design D12 | M2 | P0 |
-| FR-24 | 後台以連動選單選取 kind → provider → model,effort 選單只列模型支援的等級;資料來自 `GET /api/adapters`;保留「其他(手動輸入)」 | 規格書外新增;design D13 | M2(端點)、M4(畫面) | P0 |
-| FR-25 | 訂閱制 CLI 與 API 為不同模組;模組宣告 `cardinality`(single/multiple),建立成員與匯入時強制;內建模組 claude_cli、codex_cli(single)、anthropic_api、openai_api、litellm(multiple) | 取代 spec 2.1.4 的索引;design D14、D15 | M2(api 與 litellm)、M3(CLI) | P0 |
+| FR-23 | 每個 adapter 模組可設定可用模型清單(`models.yaml`,local 可另查上游);能力預設跟著模型走 | 7.6.4;design D12 | M2 | P0 |
+| FR-24 | 後台以連動選單選取 kind → provider → model,effort 選單只列模型支援的等級;資料來自 `GET /api/adapters`;保留「其他(手動輸入)」 | 9.2.2、10.2;design D13 | M2(端點)、M4(畫面) | P0 |
+| FR-25 | 訂閱制 CLI 與 API 為不同模組;模組宣告 `cardinality`(single/multiple),建立成員與匯入時強制;內建模組 claude_cli、codex_cli(single)、anthropic_api、openai_api、litellm(multiple) | 2.1.4、7.6.5、7.6.9、9.2.3;design D14、D15 | M2(api 與 litellm)、M3(CLI) | P0 |
 
 ## 5. 非功能需求
 
@@ -109,9 +109,9 @@
 
 以規格書第 12 節為準,依里程碑分組:
 
-- [ ] M2 閘門:AC-3、AC-4、AC-5、AC-7、AC-13、AC-14、AC-15、AC-18 通過;NFR-1、NFR-2、NFR-3、NFR-5 量測達標。4.2.5、4.2.6 的邏輯先以 api 成員驗證。
+- [ ] M2 閘門:AC-3、AC-4、AC-5、AC-7、AC-13、AC-14、AC-15、AC-18、AC-19 通過;NFR-1、NFR-2、NFR-3、NFR-5 量測達標。4.2.5、4.2.6 的邏輯先以 api 成員驗證。
 - [ ] M3 閘門:AC-1、AC-2、AC-9、AC-11、AC-12、AC-16、AC-17 通過(前置條件皆用到 claude-sub);NFR-6 量測達標。
-- [ ] M4 閘門:AC-6、AC-8、AC-10 通過;NFR-4 對資料庫、匯出檔、日誌三者搜尋命中數為 0。
+- [ ] M4 閘門:AC-6、AC-8、AC-10、AC-20、AC-21 通過;NFR-4 對資料庫、匯出檔、日誌三者搜尋命中數為 0。
 - [ ] 全部:每個閘門在 macOS 通過,並附擁有者的真實冒煙結果(Q1);Linux、Windows 標「未涵蓋」(Q2)。
 
 ## 7.1 變更歷程
@@ -121,12 +121,12 @@
 | v1.0 | 2026-10-29 | 使用者確認 |
 | v1.1 | 2026-10-29 | 結構設計時使用者追加:FR-11 改為 adapter 模組化;新增 FR-23 可用模型清單、FR-24 後台選單 |
 | v1.2 | 2026-10-29 | 使用者追加:訂閱 CLI 與 API 為不同模組;模組宣告唯一或多個(FR-25) |
+| v1.3 | 2026-10-29 | CHG-20261029-01:FR-11、FR-23–25 已寫入規格書,改引條文編號;AC-19 列入 M2、AC-20–21 列入 M4 |
 
 ## 8. AI 開發約定
 
 - 治理帳本:`sdlc_docs/`(changes/、acceptance/、structure/、knowledge/);入口為 root `AGENTS.md`。
 - 需求依據:實作與驗收引用 `docs/spec.md` 的條文編號;規格書不在 CHG 外被修改。
-- 待同步規格書:FR-11(7.1.2 收緊)、FR-25(2.1.4 索引改為模組宣告)、FR-23、FR-24(新端點 `GET /api/adapters`、UI-2/UI-4 選單)尚未寫進 `docs/spec.md`,由第一筆 CHG 一併修訂。
 - Adapter 模組化:新增一種 AI 只新增 `src/spillway/adapters/<module>/`,不改既有檔案(knowledge DIR-3)。
 - 每個里程碑拆成一筆或多筆 CHG;每個 commit 訊息帶 CHG 編號。
 - 審議機制:最簡化——審議席只給程式碼位置與意見,由獨立審議席統整權衡(knowledge DIR-1)。
