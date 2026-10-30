@@ -13,7 +13,7 @@ import pytest
 
 from spillway.clock import FakeClock
 
-pytest_plugins = ["tests.fakes.conftest"]
+pytest_plugins = ["tests.fakes.plugin"]
 
 REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
