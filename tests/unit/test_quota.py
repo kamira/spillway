@@ -231,14 +231,6 @@ def test_is_cooling_reads_store_not_stale_dep(db, qs: QuotaService) -> None:
     assert qs.is_cooling(dep, now)
 
 
-def test_mark_without_budget_row_returns_none(db, qs: QuotaService) -> None:
-    dep = _save(db, None)
-    now = T(2026, 10, 30, 12)
-    assert qs.mark(dep, "rate_limited", now) is None
-    assert repo.get_budget(db, "a1") is None
-    assert not qs.is_cooling(dep, now)
-
-
 # ---------------------------------------------------------------- L2:帳本與 budgets 列
 
 
@@ -301,3 +293,20 @@ def test_connection_factory_injection(db, clock: FakeClock) -> None:
     assert calls
     # 工廠回傳的連線不由 QuotaService 關閉
     db.execute("SELECT 1")
+
+
+def test_mark_without_budget_row_still_cools_and_stays_unlimited(db, qs: QuotaService) -> None:
+    # 4.5.2:沒有 budgets 列的成員收到 429 仍要冷卻;補的列為 type=none,仍視為無上限(決策 6)
+    dep = _save(db, None)
+    now = T(2026, 10, 30, 12, 0, 0)
+    until = qs.mark(dep, "rate_limited", now)
+    assert until == now + timedelta(seconds=60)
+    assert qs.is_cooling(dep, now)
+    assert qs.remaining(dep, now) == math.inf and qs.ratio(dep, now) == 1
+    assert not qs.is_cooling(dep, now + timedelta(seconds=61))
+
+
+def test_mark_other_status_without_budget_row_creates_nothing(db, qs: QuotaService) -> None:
+    dep = _save(db, None)
+    assert qs.mark(dep, "error", T(2026, 10, 30, 12)) is None
+    assert repo.get_budget(db, dep.id) is None

@@ -154,12 +154,16 @@ class QuotaService:
 
         `quota_exhausted` 設為下一重置點(5.3.2;window none 為現在 + 1 小時),
         `rate_limited` 設為現在 + 60 秒;其他 status 不動,回傳目前值。
-        成員沒有 budgets 列時無處記錄,不建立列,回傳 None。
+        成員沒有 budgets 列時,冷卻仍須生效(4.5.2):建立 `type=none`、`window=none` 的列
+        只為記錄冷卻;依決策 6 這等同「無上限」,不改變額度判斷(施工審議代決)。
         """
         now = self._now(now)
         budget = self._budget(dep)
         if budget is None:
-            return None
+            if status not in ("quota_exhausted", "rate_limited"):
+                return None
+            budget = Budget(type="none", limit_amount=None, window="none")
+            repo.save_budget(self._conn(), dep.id, budget)
         if status == "quota_exhausted":
             until = self.next_reset(budget, now)
         elif status == "rate_limited":
