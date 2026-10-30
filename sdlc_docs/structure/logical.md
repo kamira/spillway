@@ -22,7 +22,8 @@
 | 應用層 | `mcpconf`(M4) | 依群組與工具產生 MCP 設定(模板) | `store` | FR-19 |
 | 整合層 | `adapters.base` | `Adapter` 介面、`AdapterContext`、`AdapterManifest`、自動發現的註冊表、上游訊號歸類 `classify`、effort 上游值轉換 `effort_to_upstream`、共用 LiteLLM 呼叫 `litellm_call`、`CliRunner`〔M3〕(含 CLI 並行上限) | `credentials`、`clock` | FR-11、FR-17 |
 | 整合層 | `adapters.<module>` | 一種 AI、一種接入方式一個模組:訂閱 CLI(claude_cli、codex_cli;M3)、API(anthropic_api、openai_api)、通用後備(litellm);各宣告唯一或多個;各帶 manifest(effort 對應、訊號預設、能力預設)與可用模型清單 | 只依 `adapters.base` | FR-12、FR-15、FR-16、FR-23 |
-| 基礎層 | `store` | SQLite 連線(WAL、外鍵)、schema 建立與版本、各表存取 | — | FR-1 |
+| 基礎層 | `domain` | 跨層共用的值物件:`Deployment`、`Budget`、`ChatRequest`、`CallResult`(CHG-20261030-02 審查修正;`adapters.base` 轉匯出) | — | FR-1、FR-11 |
+| 基礎層 | `store` | SQLite 連線(WAL、外鍵)、schema 建立與版本、各表存取 | `domain`、`clock` | FR-1 |
 | 基礎層 | `credentials` | 解析 `credential_ref`(`env:`、`keyring:`) | — | FR-1、NFR-4 |
 | 基礎層 | `redact` | 疑似金鑰遮罩規則 | `credentials` | FR-14、NFR-4 |
 | 基礎層 | `clock` / `rng` | 可注入的時間與亂數來源 | — | AC-4、AC-14、AC-17、NFR-5 |

@@ -38,3 +38,11 @@ def test_iso_roundtrip_to_seconds():
     s = to_iso(dt)
     assert s == "2026-10-30T12:00:05Z"
     assert from_iso(s) == dt.replace(microsecond=0)
+
+
+def test_naive_time_is_rejected_everywhere():
+    c = FakeClock()
+    with pytest.raises(ValueError):
+        c.set(datetime(2026, 1, 1, 12))
+    with pytest.raises(ValueError):
+        to_iso(datetime(2026, 1, 1, 12))

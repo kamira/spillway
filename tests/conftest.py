@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import os
+
+# 必須在任何 import litellm 之前:用本地價格表,不在 import 時連網抓(Global Constraints)
+os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 import tempfile
 from pathlib import Path
 

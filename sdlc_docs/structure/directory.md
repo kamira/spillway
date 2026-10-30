@@ -19,6 +19,7 @@ spillway/
 │   ├── app.py                   # FastAPI 組裝、lifespan(背景清理工作)
 │   ├── settings.py              # 資料目錄、埠號、綁定常數(M2 不依賴 store);token(M3)
 │   ├── clock.py                 # Clock、Rng
+│   ├── domain.py                # 跨層值物件 Deployment、Budget、ChatRequest、CallResult(adapters.base 轉匯出)
 │   ├── store/
 │   │   ├── db.py                # 連線、PRAGMA、migration(user_version)
 │   │   ├── schema.sql           # 與 spec 2.3 一致

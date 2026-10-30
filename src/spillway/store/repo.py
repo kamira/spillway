@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from spillway.adapters.base.types import Budget, Deployment
+from spillway.domain import Budget, Deployment
 from spillway.clock import from_iso, to_iso
 from spillway.store.db import transaction
 

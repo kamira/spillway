@@ -35,7 +35,7 @@ class FakeClock:
         return self._now
 
     def set(self, when: datetime) -> None:
-        self._now = when.astimezone(timezone.utc)
+        self._now = _require_aware(when).astimezone(timezone.utc)
 
 
 class Rng(Protocol):
@@ -65,9 +65,16 @@ class SeqRng:
         return v
 
 
+def _require_aware(dt: datetime) -> datetime:
+    # naive 時間會被 astimezone 當成本機時區靜默換算,一律拒絕
+    if dt.tzinfo is None:
+        raise ValueError("需要帶時區的時間")
+    return dt
+
+
 def to_iso(dt: datetime) -> str:
     """UTC ISO 8601,精度到秒(spec 2.1.2)。"""
-    return dt.astimezone(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _require_aware(dt).astimezone(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def from_iso(s: str) -> datetime:
