@@ -28,8 +28,69 @@ def test_sk_requires_at_least_four_chars(r):
 
 
 def test_sk_inside_word_is_not_masked(r):
-    # 「task-1234」不是金鑰;只有在非英數字元之後的 sk- 才算
+    # 「task-1234」不是金鑰;只有在非英數字元(或跳脫/編碼前綴)之後的 sk- 才算
     assert r.redact("task-1234 done") == ("task-1234 done", False)
+    assert r.redact("ask-question") == ("ask-question", False)
+
+
+# ---- M4:JSON 跳脫與 URL 編碼的上下文 ----
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        f"line1\n{FAKE_KEY}",
+        f"col\t{FAKE_KEY}",
+        f"cr\r{FAKE_KEY}",
+        f"x\b{FAKE_KEY}",
+        f"x\f{FAKE_KEY}",
+        f"say \"{FAKE_KEY}\"",
+        f"path/{FAKE_KEY}",
+        f"space {FAKE_KEY}",
+        f"\u00e9{FAKE_KEY}",  # ensure_ascii 時變成 \u00e9sk-…
+        f"\u4e2d{FAKE_KEY}",
+        f"\x01{FAKE_KEY}",  # 控制字元 → \u0001sk-…
+    ],
+)
+def test_sk_after_json_escape_is_masked(r, prompt):
+    raw = json.dumps({"messages": [{"role": "user", "content": prompt}]})
+    out, hit = r.redact(raw)
+    assert hit is True
+    assert FAKE_KEY not in out
+    json.loads(out)  # 遮罩後仍是合法 JSON
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "key%3Dsk-abcdef123",
+        "%22sk-proj-abcdef%22",
+        "q=a%20sk-abcdef123&b=1",
+        "%0Ask-abcdef123",
+        "%0ask-abcdef123",
+    ],
+)
+def test_sk_after_url_encoding_is_masked(r, text):
+    out, hit = r.redact(text)
+    assert hit is True
+    assert "sk-abcdef" not in out and "sk-proj" not in out
+
+
+def test_sk_url_encoded_keeps_surrounding_text(r):
+    assert r.redact("key%3Dsk-abcdef123&x=1") == (f"key%3D{MASK}&x=1", True)
+    assert r.redact("%22sk-proj-abcdef%22") == (f"%22{MASK}%22", True)
+
+
+def test_sk_full_charset_is_masked_whole(r):
+    # 含 .、+、/、= 的金鑰要整串遮掉,不能只遮到第一個標點前
+    key = "sk-ant-api03-ab.cd/ef+gh=="
+    out, hit = r.redact(f"key {key} end")
+    assert hit is True
+    assert out == f"key {MASK} end"
+    for frag in ("ab.cd", "ef+gh", "gh=="):
+        assert frag not in out
+    raw = json.dumps({"k": key})
+    out, _ = r.redact(raw)
+    assert json.loads(out) == {"k": MASK}
 
 
 def test_sk_after_punctuation_is_masked(r):
@@ -48,6 +109,11 @@ def test_sk_after_punctuation_is_masked(r):
         "line1\nBearer xyz",
         "Bearer\txyz",
         "Bearer   xyz",
+        "Bearer\nxyz",
+        "Bearer:xyz",
+        "Bearer: xyz",
+        "bearer=xyz",
+        "Bearer\u00a0xyz",  # NBSP
     ],
 )
 def test_bearer_value_is_masked(r, text):
@@ -91,6 +157,30 @@ def test_extra_secret_all_occurrences(r):
 def test_extra_secrets_longer_first(r):
     out, _ = r.redact("abcdefgh", extra_secrets=("abcd", "abcdefgh"))
     assert out == MASK
+
+
+@pytest.mark.parametrize(
+    "secret", [" AIzaFAKE ", "AIzaFAKE\n", "\tAIzaFAKE\r\n", "AIzaFAKE"]
+)
+def test_extra_secret_with_whitespace_masks_stripped_form(r, secret):
+    # M5:上游/HTTP 層回顯的是修剪後的值
+    out, hit = r.redact("invalid credential: AIzaFAKE end", extra_secrets=(secret,))
+    assert hit is True
+    assert "AIzaFAKE" not in out
+    assert out.startswith("invalid credential:") and out.endswith("end")
+    assert MASK in out
+
+
+def test_extra_secret_raw_form_with_whitespace_also_masked(r):
+    out, hit = r.redact("x=AIzaFAKE\n;y", extra_secrets=("AIzaFAKE\n",))
+    assert hit is True and "AIzaFAKE" not in out
+
+
+@pytest.mark.parametrize("secret", ["    ", " ab ", "\n\n\n\n", "  abc\n"])
+def test_extra_secret_short_after_strip_is_ignored(r, secret):
+    # 長度門檻以 strip 後為準:純空白或修剪後 < 4 的值不遮(含原樣形式)
+    text = "x ab y    z\n\n\n\n  abc\n"
+    assert r.redact(text, extra_secrets=(secret,)) == (text, False)
 
 
 @pytest.mark.parametrize("secret", ["", "a", "abc"])

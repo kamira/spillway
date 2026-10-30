@@ -76,6 +76,20 @@ def test_resolve_env_empty_value_raises(monkeypatch):
         resolve("env:SPILLWAY_TEST_KEY")
 
 
+@pytest.mark.parametrize("raw", [f"  {FAKE_KEY}  ", f"{FAKE_KEY}\n", f"\t{FAKE_KEY}\r\n"])
+def test_resolve_env_strips_whitespace(monkeypatch, raw):
+    # M5:值帶前後空白或結尾換行時回傳修剪後的值,讓遮罩與上游回顯一致
+    monkeypatch.setenv("SPILLWAY_TEST_KEY", raw)
+    assert resolve("env:SPILLWAY_TEST_KEY") == FAKE_KEY
+
+
+@pytest.mark.parametrize("raw", [" ", "\n", " \t\r\n "])
+def test_resolve_env_whitespace_only_raises(monkeypatch, raw):
+    monkeypatch.setenv("SPILLWAY_TEST_KEY", raw)
+    with pytest.raises(CredentialError):
+        resolve("env:SPILLWAY_TEST_KEY")
+
+
 # ---- resolve: keyring ----
 
 def test_resolve_keyring_reads_from_backend(memory_keyring):
@@ -86,6 +100,18 @@ def test_resolve_keyring_reads_from_backend(memory_keyring):
 def test_resolve_keyring_account_may_contain_colon(memory_keyring):
     memory_keyring.set_password("spillway-test", "team:acct", FAKE_KEY)
     assert resolve("keyring:spillway-test:team:acct") == FAKE_KEY
+
+
+def test_resolve_keyring_strips_whitespace(memory_keyring):
+    memory_keyring.set_password("spillway-test", "acct", f" {FAKE_KEY}\n")
+    assert resolve("keyring:spillway-test:acct") == FAKE_KEY
+
+
+@pytest.mark.parametrize("raw", ["", "  ", "\n"])
+def test_resolve_keyring_blank_value_raises(memory_keyring, raw):
+    memory_keyring.set_password("spillway-test", "acct", raw)
+    with pytest.raises(CredentialError):
+        resolve("keyring:spillway-test:acct")
 
 
 def test_resolve_keyring_missing_entry_raises(memory_keyring):

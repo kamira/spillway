@@ -9,6 +9,10 @@
 秘密處理:``CredentialError`` 的訊息與 ``args`` 一律不含憑證值,也不回顯呼叫者傳入的
 ref 字串(格式錯誤的 ref 可能就是誤貼的金鑰本體)。底層例外以 ``from None`` 切斷,
 避免 traceback 帶出後端訊息。
+
+解析出的值一律 ``strip()``:前後空白或結尾換行(例如檔案讀入的值)會讓 HTTP 層送出、
+上游回顯的是修剪後的形式,原樣回傳會讓 ``extra_secrets`` 逐字遮罩對不上。strip 後為空
+視為未設定。
 """
 from __future__ import annotations
 
@@ -43,10 +47,10 @@ def validate_ref(ref: str) -> None:
 
 
 def resolve(ref: str) -> str:
-    """依 ``credential_ref`` 解析出憑證值;找不到或為空時丟 ``CredentialError``。"""
+    """依 ``credential_ref`` 解析出憑證值;值會 ``strip()``;找不到或 strip 後為空時丟 ``CredentialError``。"""
     scheme, parts = _parse(ref)
     if scheme == "env":
-        value = os.environ.get(parts[0])
+        value = (os.environ.get(parts[0]) or "").strip()
         if not value:
             raise CredentialError("env 憑證的環境變數未設定或為空")
         return value
@@ -58,6 +62,7 @@ def resolve(ref: str) -> str:
         value = keyring.get_password(service, account)
     except Exception:  # noqa: BLE001 — 後端錯誤訊息可能含敏感內容,一律改寫
         raise CredentialError("keyring 憑證讀取失敗") from None
+    value = value.strip() if isinstance(value, str) else ""
     if not value:
         raise CredentialError("keyring 中找不到該憑證或值為空")
     return value
