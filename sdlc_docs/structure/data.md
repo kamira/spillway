@@ -1,6 +1,6 @@
 # 資料結構 — Spillway
 
-- 專案:spillway · 分支:main · 版本:v1.0 已確認(2026-10-29,使用者) · 日期:2026-10-29(UTC+0)
+- 專案:spillway · 分支:main · 版本:v1.1(2026-10-30,CHG-20261030-02:`access_token_sha256` 產生時機改 M3 起、`bind_host`/`port` 鍵 M2 不讀取;使用者於 CHG 確認閘確認,2026-10-30) · 前版 v1.0 已確認(2026-10-29,使用者) · 日期:2026-10-30(UTC+0)
 - 依據:docs/spec.md 第 2 節(DDL 正本)、第 3 節(YAML);sdlc_docs/structure/design.md D2、D3
 
 **DDL 正本是 `docs/spec.md` 2.3**,本文件不重抄欄位;只記關聯、約束、列舉、設定鍵與本設計新增的部分。實作的 `schema.sql` 必須與 spec 2.3 一致,差異走 CHG。
@@ -63,14 +63,14 @@ erDiagram
 
 | 鍵 | 型別 | 初始值 | 來源 |
 |----|------|--------|------|
-| `access_token_sha256` | hex 字串 | 首次啟動產生 | spec 8.1.3 |
-| `bind_host` | 字串 | `127.0.0.1` | spec 9.1.1、NFR-3 |
-| `port` | 整數 | `8787` | design D9 |
+| `access_token_sha256` | hex 字串 | M3 起於 `spillway init` 或首次啟動產生;M2 不產生也不驗證 | spec 8.1.3;design D9(CHG-20261030-02 依使用者決定 B1 修訂) |
+| `bind_host` | 字串 | `127.0.0.1`;**M2 不讀取**,綁定位址唯一來源為 `serve --host` 旗標與 settings.py 常數(design D16) | spec 9.1.1、NFR-3 |
+| `port` | 整數 | `8787`;**M2 不讀取**,唯一來源為 `serve --port` 旗標與 settings.py 常數(design D16) | design D9 |
 | `record_context_default` | `0`/`1` | `1` | spec 2.4.1 |
 | `context_retention_days` | 整數 | `7` | spec 2.4.5 |
 | `context_max_bytes` | 整數 | `262144` | spec 2.4.3 |
 
-spec 2 要求「初始化只建表、不寫入資料列」;上表初始值由程式在讀不到鍵時套用預設,**不在建表時寫入**。access token 在 `spillway init` 或首次啟動時才寫入。
+spec 2 要求「初始化只建表、不寫入資料列」;上表初始值由程式在讀不到鍵時套用預設,**不在建表時寫入**。access token 自 M3 起在 `spillway init` 或首次啟動時才寫入。
 
 ## JSON 欄位形狀
 
