@@ -7,7 +7,7 @@
 | provider | `openai` |
 | kind / access | `api` / `api` |
 | cardinality | `multiple` |
-| 模型字串 | `openai/<model>`;`model` 已帶 `openai/` 前綴時不重複加 |
+| 模型字串 | 一律 `openai/<model>`(`adapters.base.model_string`,spec 7.2.1);`model` 本身以 `openai/` 開頭時也照補,例如 `openai/gpt-oss-20b` → `openai/openai/gpt-oss-20b`,上游收到 `openai/gpt-oss-20b` |
 | requires | 無(金鑰不靠環境變數,見「憑證」) |
 
 ## 憑證
@@ -48,4 +48,4 @@
 
 ## 已知限制
 
-- `adapter.py` 與 anthropic_api、litellm 模組相同(模組之間不可互相 import)。
+- `adapter.py` 與 anthropic_api、litellm 模組相同(模組之間不可互相 import);`tests/unit/adapters/test_review_w3_fixes.py` 檢查三份逐字相同。

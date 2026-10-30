@@ -7,8 +7,15 @@ anthropic_api、openai_api、litellm 模組只經這裡呼叫 LiteLLM,不直接 
   模組應在 `credential_ref` 為空的 api 成員上直接回 `error`,不呼叫本函式。
 - `api_base` 有值才傳;`timeout` 預設 120 秒(`params.timeout` 覆寫由模組傳入)。
 - `max_retries=0`:失敗交給路由 fallback,不在 SDK 內重試。
-- 每次呼叫前把 `litellm.set_verbose` 設 False、`suppress_debug_info` 設 True;
+- LiteLLM 一律經 `load_litellm()` 載入:先設 `LITELLM_LOCAL_MODEL_COST_MAP=True`(本地價格表),
+  再把 `set_verbose` 設 False、`suppress_debug_info` 設 True、關閉遙測,並設
+  `disable_hf_tokenizer_download=True`(token_counter 遇到 llama 系模型名不從 HuggingFace 下載
+  tokenizer,退回 tiktoken;CHG-20261030-02 M13)。應用層的 `estimate` 也用同一個函式。
   不註冊任何 callback、不傳 `callbacks`。
+- 模型字串一律經 `model_string(dep)`(spec 7.2.1;M11、M14):provider 為 `litellm`(直通)時原樣
+  使用 `dep.model`(必須含 `/`),其他 provider 一律 `<provider>/<model>`,即使 model 已以
+  `<provider>/` 開頭也照補(例如 vLLM 以 HF id `openai/gpt-oss-20b` 對外提供的模型)。
+- 成功時帶出 `tool_calls`(OpenAI 格式 dict 清單;沒有時 None)與 `finish_reason`(spec 7.1;決策 28)。
 - 例外不外拋:轉成 `LiteLLMResult(ok=False, raw=...)`,`raw` 交給 `classify()`;
   `raw["message"]` 中的 `api_key` 值(含去前後空白、JSON 跳脫後的形式)已替換為 `***`。其他遮罩(`sk-`、Bearer)由應用層 Redactor 負責。
 
@@ -22,7 +29,10 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from spillway.domain import Deployment
 
 DEFAULT_TIMEOUT = 120.0
 PROTECTED_KEYS = frozenset(
@@ -41,13 +51,51 @@ class LiteLLMResult:
     cost_usd: float | None = None
     raw: dict[str, Any] | None = None                    # 失敗時描述上游輸出,交給 classify()
     response: Any = field(default=None, repr=False)      # 成功時 LiteLLM 的原始回應
+    tool_calls: list[dict[str, Any]] | None = None       # OpenAI 格式;沒有時 None
+    finish_reason: str | None = None
 
 
-def _quiet(litellm: Any) -> None:
+PASSTHROUGH_PROVIDER = "litellm"
+"""provider 為此值的成員:`model` 已是完整的 LiteLLM 模型字串(例如 `ollama/llama3`)。"""
+
+
+def model_string(dep: "Deployment") -> str:
+    """成員的 LiteLLM 模型字串(spec 7.2.1)。adapter 呼叫與 estimate 查價共用這一條規則。
+
+    - provider 為 `litellm`(直通):原樣使用 `dep.model`,必須寫成 `<provider>/<model>`,
+      否則丟 `ValueError`。
+    - 其他 provider:一律 `f"{provider}/{model}"`;model 已以 `<provider>/` 開頭也照補
+      (`openai` + `openai/gpt-oss-20b` → `openai/openai/gpt-oss-20b`,LiteLLM 剝掉第一段後
+      上游收到 `openai/gpt-oss-20b`)。
+    - model 為空丟 `ValueError`。
+    """
+    model = (dep.model or "").strip()
+    if dep.provider == PASSTHROUGH_PROVIDER:
+        head, sep, tail = model.partition("/")
+        if not (head and sep and tail):
+            raise ValueError(f"provider {PASSTHROUGH_PROVIDER} 的 model 必須寫成 <provider>/<model>")
+        return model
+    if not model:
+        raise ValueError("model 不可為空")
+    return f"{dep.provider}/{model}"
+
+
+def load_litellm() -> Any:
+    """載入並設定 LiteLLM(adapters.base 與應用層 estimate 共用的唯一入口)。
+
+    每次呼叫都重設下列旗標(便宜,且防止其他程式碼改回):本地價格表、不 verbose、
+    不印 debug 資訊、不送遙測、不從 HuggingFace 下載 tokenizer。
+    """
+    # 防線:任何進入點第一次 import litellm 前都改用本地價格表,不在 import 時連網
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    import litellm  # 延後載入:只 import adapters.base 不必付出 litellm 的載入成本
+
     litellm.set_verbose = False
     litellm.suppress_debug_info = True
     if hasattr(litellm, "telemetry"):
         litellm.telemetry = False
+    litellm.disable_hf_tokenizer_download = True
+    return litellm
 
 
 def _get(obj: Any, name: str) -> Any:
@@ -56,6 +104,24 @@ def _get(obj: Any, name: str) -> Any:
     if isinstance(obj, Mapping):
         return obj.get(name)
     return getattr(obj, name, None)
+
+
+def _tool_calls(items: Any) -> list[dict[str, Any]] | None:
+    """LiteLLM 回應的 `message.tool_calls` 轉成 OpenAI 格式的 dict 清單;沒有或空清單時 None。"""
+    if not items:
+        return None
+    out: list[dict[str, Any]] = []
+    for tc in items:
+        fn = _get(tc, "function")
+        args = _get(fn, "arguments")
+        if args is not None and not isinstance(args, str):
+            args = json.dumps(args, ensure_ascii=False)
+        out.append({
+            "id": _get(tc, "id"),
+            "type": _get(tc, "type") or "function",
+            "function": {"name": _get(fn, "name"), "arguments": args if args is not None else ""},
+        })
+    return out or None
 
 
 def _int_or_none(v: Any) -> int | None:
@@ -71,7 +137,30 @@ def _strict_int(v: str) -> int | None:
     return int(v) if _INT_RE.fullmatch(v) else None
 
 
+_CHAIN_LIMIT = 8
+
+
 def _status_of(exc: BaseException) -> int | None:
+    """上游實際回的 HTTP 狀態碼。
+
+    LiteLLM 會改寫部分狀態碼:Anthropic 的 529(overloaded)被包成 `InternalServerError`,
+    `status_code` 寫死為 500,原值只留在例外鏈(`__cause__`/`__context__`)裡的 provider 例外與
+    httpx 例外上。因此沿例外鏈往下找,取最內層(最接近 HTTP 回應)的有效狀態碼;鏈上都沒有時
+    用最外層例外自己的值。spec 5.3.1 anthropic 列的 529 規則靠這一步才能命中。
+    """
+    found: int | None = None
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen and len(seen) < _CHAIN_LIMIT:
+        seen.add(id(cur))
+        status = _own_status(cur)
+        if status is not None and 100 <= status <= 599:
+            found = status
+        cur = cur.__cause__ or cur.__context__
+    return found if found is not None else _own_status(exc)
+
+
+def _own_status(exc: BaseException) -> int | None:
     for attr in ("status_code", "http_status"):
         v = getattr(exc, attr, None)
         if isinstance(v, int) and not isinstance(v, bool):
@@ -159,11 +248,7 @@ async def litellm_call(
     `reasoning_effort` 為已經 `effort_to_upstream()` 轉換的上游值;None 時不傳。
     `extra` 為其餘 OpenAI 參數(例如 temperature),不可覆寫上列受保護參數(會被略過)。
     """
-    # 防線:任何進入點(不只 app lifespan)第一次 import litellm 前都改用本地價格表,不在 import 時連網
-    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
-    import litellm  # 延後載入:只 import adapters.base 不必付出 litellm 的載入成本
-
-    _quiet(litellm)
+    litellm = load_litellm()
     kwargs: dict[str, Any] = {
         k: v for k, v in (extra or {}).items() if k not in PROTECTED_KEYS
     }
@@ -190,8 +275,10 @@ async def litellm_call(
         return LiteLLMResult(ok=False, raw=exception_to_raw(exc, api_key))
 
     choices = _get(resp, "choices") or []
-    message = _get(choices[0], "message") if choices else None
+    first = choices[0] if choices else None
+    message = _get(first, "message")
     text = _get(message, "content") or ""
+    finish = _get(first, "finish_reason")
     usage = _get(resp, "usage")
     try:
         cost = litellm.completion_cost(completion_response=resp)
@@ -205,4 +292,6 @@ async def litellm_call(
         tokens_out=_int_or_none(_get(usage, "completion_tokens")),
         cost_usd=cost,
         response=resp,
+        tool_calls=_tool_calls(_get(message, "tool_calls")),
+        finish_reason=finish if isinstance(finish, str) and finish else None,
     )

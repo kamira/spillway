@@ -4,7 +4,11 @@
 `X-Spillway-Est-Cost` header 與 dry-run 使用。
 
 輸入 token(5.4.2)
-    以 `litellm.token_counter(model="<provider>/<model>", messages=req.messages)` 計算。
+    以 `litellm.token_counter(model=model_string(dep), messages=req.messages)` 計算;
+    `model_string` 與 adapter 呼叫共用(`adapters.base`,spec 7.2.1):provider 為 `litellm`
+    (直通)時原樣使用 `model`,其他一律 `<provider>/<model>`。
+    LiteLLM 經 `adapters.base.load_litellm()` 載入,其中 `disable_hf_tokenizer_download=True`:
+    llama 系等模型名不從 HuggingFace 下載 tokenizer,退回 tiktoken(不連網、不阻塞事件迴圈)。
     token_counter 拋出任何例外或回傳非正整數以外的值時,退回「字元數 ÷ 4」:
     `ceil(req.text_chars / 4)`(`text_chars` 為各訊息文字內容的字元總數,見 `ChatRequest`)。
     `kind == "cli"` 的成員另加 `params.cli_overhead_tokens`(未設定或不是非負整數時視為 0)。
@@ -23,20 +27,21 @@
     `cost_usd_p90 = tokens_in × 每 token 輸入價 + out_p90 × 每 token 輸出價`,
     價格來自 LiteLLM 的本地價格表(`litellm.cost_per_token`;不連網,
     import litellm 前設定 `LITELLM_LOCAL_MODEL_COST_MAP=True`)。
-    以 `<provider>/<model>` 查價;`kind == "cli"` 查不到時再以裸 `model` 查一次
+    以 `model_string(dep)` 查價;`kind == "cli"` 查不到時再以裸 `model` 查一次
     (CLI provider 名稱如 `claude-cli` 不在價格表,但其模型名可能在)。
     以下情況為 None(不參與 4.2.5 的 precheck):`kind == "local"`、`provider == "codex-cli"`、
-    價格表查不到該模型(cost_per_token 拋例外)。
+    價格表查不到該模型(cost_per_token 拋例外)、`model_string` 不合法(例如 `litellm` 直通的
+    model 沒有 `/`)。
 """
 from __future__ import annotations
 
 import math
-import os
 import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from spillway.adapters.base import load_litellm, model_string
 from spillway.domain import ChatRequest, Deployment
 
 HISTORY_WINDOW = 50
@@ -56,18 +61,6 @@ class Estimate:
     cost_usd_p90: float | None
 
 
-def _litellm() -> Any:
-    # 防線:第一次 import litellm 前改用本地價格表,不在 import 時連網(Global Constraints)
-    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
-    import litellm  # 延後載入
-
-    litellm.set_verbose = False
-    litellm.suppress_debug_info = True
-    if hasattr(litellm, "telemetry"):
-        litellm.telemetry = False
-    return litellm
-
-
 def percentile_nearest_rank(values: Sequence[int], p: float) -> int:
     """nearest-rank 百分位:排序後取第 ceil(p/100 × n) 個(1 起算)。`values` 不可為空。"""
     if not values:
@@ -75,10 +68,6 @@ def percentile_nearest_rank(values: Sequence[int], p: float) -> int:
     ordered = sorted(values)
     rank = max(1, math.ceil(p / 100 * len(ordered)))
     return ordered[rank - 1]
-
-
-def _model_string(dep: Deployment) -> str:
-    return f"{dep.provider}/{dep.model}"
 
 
 def _cli_overhead(dep: Deployment) -> int:
@@ -104,7 +93,7 @@ class Estimator:
     def tokens_in(self, dep: Deployment, req: ChatRequest) -> int:
         n: int | None
         try:
-            n = _litellm().token_counter(model=_model_string(dep), messages=req.messages)
+            n = load_litellm().token_counter(model=model_string(dep), messages=req.messages)
         except Exception:  # noqa: BLE001 — 任何失敗都退回字元估算
             n = None
         if not isinstance(n, int) or isinstance(n, bool) or n < 0:
@@ -146,10 +135,14 @@ class Estimator:
     def cost_usd(self, dep: Deployment, tokens_in: int, tokens_out: int) -> float | None:
         if dep.kind == "local" or dep.provider in NO_PRICE_PROVIDERS:
             return None
-        candidates = [_model_string(dep)]
-        if dep.kind == "cli":
+        candidates: list[str] = []
+        try:
+            candidates.append(model_string(dep))
+        except ValueError:
+            pass
+        if dep.kind == "cli" and dep.model:
             candidates.append(dep.model)
-        litellm = _litellm()
+        litellm = load_litellm()
         for model in candidates:
             try:
                 cin, cout = litellm.cost_per_token(

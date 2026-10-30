@@ -7,13 +7,14 @@ anthropic_api、openai_api、litellm 三個模組的 `adapter.py` 內容相同:�
 1. 成員 `kind` 不在 manifest 的 `kinds` → `error`。
 2. `resolve_signals(default_signals, dep.params)`;規則不合法 → `error`。
 3. `effort_to_upstream()`;`none` 或 None → 不送 `reasoning_effort`。
-4. 模型字串 `<provider>/<model>`(spec 7.2.1);provider 為 `litellm` 時 `model` 本身須已是
-   `<provider>/<model>`,原樣傳入。
+4. 模型字串經 `adapters.base.model_string()`(spec 7.2.1):provider 為 `litellm` 時 `model`
+   本身須已是 `<provider>/<model>`,原樣傳入;其他 provider 一律補 `<provider>/`。
 5. 憑證:`credential_ref` 有值 → 經 `context.credentials` 解析並明確傳入;為空時 api 成員回
    `error` 且不發請求,local 成員以 `api_key=None` 呼叫(決策 13)。
 6. `litellm_call`(`params.api_base`、`params.timeout`,預設 120 秒)。
 7. 成功:local 成員 `cost_usd` 為 0(spec 5.2.4),api 成員用 `completion_cost()`,無定價為 None
-   (spec 5.2.1)。失敗:以 `classify()` 歸類;`error` 為 `litellm_call` 已遮罩金鑰的訊息。
+   (spec 5.2.1);`tool_calls`、`finish_reason` 原樣帶出(spec 7.1;只回工具呼叫時 text 為空字串)。
+   失敗:以 `classify()` 歸類;`error` 為 `litellm_call` 已遮罩金鑰的訊息。
 """
 from __future__ import annotations
 
@@ -31,13 +32,10 @@ from spillway.adapters.base import (
     classify,
     effort_to_upstream,
     litellm_call,
+    model_string,
     probe_http,
     resolve_signals,
 )
-
-PASSTHROUGH_PROVIDER = "litellm"
-"""provider 為此值的成員:`model` 已是完整的 LiteLLM 模型字串(例如 `ollama/llama3`)。"""
-
 
 def _error(message: str) -> CallResult:
     return CallResult(ok=False, text="", tokens_in=None, tokens_out=None, cost_usd=None,
@@ -82,21 +80,6 @@ class LiteLLMAdapter:
     def _params(self, dep: Deployment) -> dict[str, Any]:
         return {**self.manifest.default_params, **(dep.params or {})}
 
-    @staticmethod
-    def model_string(dep: Deployment) -> str:
-        model = (dep.model or "").strip()
-        if dep.provider == PASSTHROUGH_PROVIDER:
-            head, sep, tail = model.partition("/")
-            if not (head and sep and tail):
-                raise ValueError(
-                    f"provider {PASSTHROUGH_PROVIDER} 的 model 必須寫成 <provider>/<model>"
-                )
-            return model
-        if not model:
-            raise ValueError("model 不可為空")
-        prefix = f"{dep.provider}/"
-        return model if model.startswith(prefix) else prefix + model
-
     async def call(self, dep: Deployment, req: ChatRequest, effort: str | None) -> CallResult:
         if dep.kind not in self.manifest.kinds:
             return _error(f"此模組不支援 kind {dep.kind!r}")
@@ -107,7 +90,7 @@ class LiteLLMAdapter:
             return _error(f"params.signals 不合法:{exc}")
         try:
             upstream_effort = effort_to_upstream(self.manifest, effort)
-            model = self.model_string(dep)
+            model = model_string(dep)
         except ValueError as exc:
             return _error(str(exc))
         try:
@@ -140,7 +123,8 @@ class LiteLLMAdapter:
         if result.ok:
             cost = 0.0 if dep.kind == "local" else result.cost_usd
             return CallResult(ok=True, text=result.text, tokens_in=result.tokens_in,
-                              tokens_out=result.tokens_out, cost_usd=cost, status="ok", error=None)
+                              tokens_out=result.tokens_out, cost_usd=cost, status="ok", error=None,
+                              tool_calls=result.tool_calls, finish_reason=result.finish_reason)
         raw = _enrich(result.raw or {})
         return CallResult(ok=False, text="", tokens_in=None, tokens_out=None, cost_usd=None,
                           status=classify(raw, signals),

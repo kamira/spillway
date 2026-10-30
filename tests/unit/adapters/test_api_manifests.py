@@ -70,10 +70,23 @@ def test_requires_lists_no_api_key_env(name):
     assert not any("KEY" in r.upper() or "TOKEN" in r.upper() for r in m.requires)
 
 
-@pytest.mark.parametrize("name", MODULE_NAMES)
+@pytest.mark.parametrize("name", ["openai_api", "litellm"])
 def test_default_signals_are_spec_api_row(name):
     m = validate_manifest(module(name).MANIFEST)
     assert dict(m.default_signals) == API_DEFAULT_SIGNALS
+
+
+def test_anthropic_default_signals_are_spec_anthropic_row():
+    """spec 5.3.1 api(anthropic)列(決策 27):api 列之外另加 400+credit balance、529。"""
+    m = validate_manifest(module("anthropic_api").MANIFEST)
+    assert dict(m.default_signals) == {
+        "quota": [{"http_status": 402}, {"error_code": "insufficient_quota"},
+                  {"http_status": 400, "match": {"message": "credit balance"}}],
+        "rate_limit": [{"http_status": 429}, {"http_status": 529}],
+    }
+    # 共用常數未被改動(其他模組仍是 api 列)
+    assert API_DEFAULT_SIGNALS == {"quota": [{"http_status": 402}, {"error_code": "insufficient_quota"}],
+                                   "rate_limit": [{"http_status": 429}]}
 
 
 @pytest.mark.parametrize("name", MODULE_NAMES)

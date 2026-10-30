@@ -84,3 +84,6 @@ class CallResult:
     cost_usd: float | None
     status: str          # ok | error | quota_exhausted | rate_limited
     error: str | None
+    # spec 7.1(決策 28):附加的可選欄位,放在最後以相容既有建構呼叫;不升 contract_version
+    tool_calls: list[dict[str, Any]] | None = None   # 上游回傳的工具呼叫(OpenAI 格式)
+    finish_reason: str | None = None

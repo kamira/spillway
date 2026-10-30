@@ -2,11 +2,19 @@
 
 匯出:值物件(types)、`Adapter` Protocol 與 `AdapterContext`、`AdapterManifest` 與驗證、
 `models.yaml` 解析、`classify` 與 signals 規則、`effort_to_upstream`、`litellm_call`、
+`model_string`(模型字串規則)、`load_litellm`(LiteLLM 載入與設定的唯一入口)、
 `AdapterRegistry` 與合約檢查、HTTP 存活探測 `probe_http`。
 """
 from spillway.adapters.base.contract import contract_problems, layering_violations
 from spillway.adapters.base.effort import effort_to_upstream
-from spillway.adapters.base.litellm_call import DEFAULT_TIMEOUT, LiteLLMResult, litellm_call
+from spillway.adapters.base.litellm_call import (
+    DEFAULT_TIMEOUT,
+    PASSTHROUGH_PROVIDER,
+    LiteLLMResult,
+    litellm_call,
+    load_litellm,
+    model_string,
+)
 from spillway.adapters.base.manifest import (
     ACCESS_VALUES,
     CARDINALITIES,
@@ -58,6 +66,7 @@ __all__ = [
     # signals / effort / litellm
     "API_DEFAULT_SIGNALS", "SignalsError", "classify", "resolve_signals", "validate_signals",
     "effort_to_upstream", "DEFAULT_TIMEOUT", "LiteLLMResult", "litellm_call",
+    "load_litellm", "model_string", "PASSTHROUGH_PROVIDER",
     # 健康探測(決策 10)
     "PROBE_TIMEOUT", "probe_http",
     # registry / contract

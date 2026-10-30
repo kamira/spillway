@@ -9,7 +9,7 @@
 | fallback_for_kinds | `api`、`local` |
 | kind / access | `api`、`local` / `api`、`local` |
 | cardinality | `multiple` |
-| 模型字串 | `<provider>/<model>`;`model` 已帶該前綴時不重複加 |
+| 模型字串 | provider 為 `litellm` 時原樣使用 `model`(須含 `/`);其他一律 `<provider>/<model>`,`model` 本身以該前綴開頭也照補(`adapters.base.model_string`,spec 7.2.1;estimate 查價用同一規則) |
 | requires | 無 |
 
 ## provider
@@ -53,6 +53,10 @@ provider 填 `litellm` 的成員,`model` 欄直接寫完整 LiteLLM 模型字串
 端點依序取:參數 `api_base` → 環境變數 `SPILLWAY_LOCAL_API_BASE` → Ollama 預設
 `http://127.0.0.1:11434/v1`。結尾有無 `/v1` 皆可。逾時 2 秒,不讀 proxy 環境變數、不跟隨轉址。
 
+`SPILLWAY_LOCAL_API_BASE` 是 M2 的**暫行設定**(CHG-20261030-02 決策 25):契約的
+`list_models(context)` 拿不到個別成員的 `api_base`,暫以環境變數指定單一 local 端點。M4 UI-2
+建立成員表單時改為以既有 local 成員的 `api_base` 查詢,屆時本環境變數會移除。
+
 ## 可用模型(models.yaml)
 
 | id | provider | ctx | tools | vision | efforts |
@@ -65,6 +69,6 @@ local 端點的模型不列在這裡,由 `list_models()` 查詢。
 
 ## 已知限制
 
-- `adapter.py` 與 anthropic_api、openai_api 模組相同(模組之間不可互相 import)。
+- `adapter.py` 與 anthropic_api、openai_api 模組相同(模組之間不可互相 import);`tests/unit/adapters/test_review_w3_fixes.py` 檢查三份逐字相同。
 - `list_models(context)` 只拿得到 `AdapterContext`,不知道個別成員的 `api_base`;多個 local
   端點時只查詢上述單一端點。

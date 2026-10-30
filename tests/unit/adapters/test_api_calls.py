@@ -96,11 +96,28 @@ async def test_model_string_and_api_base(case, fake_api, monkeypatch):
 
 
 @pytest.mark.parametrize("case", CASES, ids=IDS)
-async def test_model_already_prefixed_is_not_doubled(case, fake_api, monkeypatch):
+async def test_model_starting_with_provider_prefix_is_still_prefixed(case, fake_api, monkeypatch):
+    """M11:spec 7.2.1 沒有「已帶前綴就不補」的例外;模型 id 本身以 provider 名開頭時
+    (vLLM 以 HF id 對外提供的模型)照補,上游收到完整的模型 id。"""
     spy = spy_litellm_call(monkeypatch, case)
-    full = f"{case.provider}/{case.model}"
-    await adapter(case).call(dep(case, fake_api.base_url, model=full), request(), None)
-    assert spy.calls[0]["model"] == full
+    model_id = f"{case.provider}/{case.model}"
+    fake_api.set_mode(model_id, "ok")
+    r = await adapter(case).call(dep(case, fake_api.base_url, model=model_id), request(), None)
+    assert r.ok, r.error
+    assert spy.calls[0]["model"] == f"{case.provider}/{model_id}"
+    assert fake_api.requests[0].model == model_id
+
+
+async def test_openai_hf_style_model_id_reaches_upstream_intact(fake_api, monkeypatch):
+    """M11 探測 t6b 的情境:provider=openai、model=openai/gpt-oss-20b。"""
+    case = next(c for c in CASES if c.id == "openai_api")
+    spy = spy_litellm_call(monkeypatch, case)
+    fake_api.set_mode("openai/gpt-oss-20b", "ok")
+    r = await adapter(case).call(dep(case, fake_api.base_url, model="openai/gpt-oss-20b"),
+                                 request(), None)
+    assert r.ok, r.error
+    assert spy.calls[0]["model"] == "openai/openai/gpt-oss-20b"
+    assert fake_api.requests[0].model == "openai/gpt-oss-20b"
 
 
 @pytest.mark.parametrize("case", CASES, ids=IDS)

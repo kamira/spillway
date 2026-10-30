@@ -83,7 +83,11 @@ def test_value_object_fields():
                                   "credential_ref", "capabilities", "enabled", "tags", "budget"]
     assert _names(ChatRequest) == ["model", "messages", "max_tokens", "reasoning_effort", "tools",
                                    "metadata", "stream", "extra"]
-    assert _names(CallResult) == ["ok", "text", "tokens_in", "tokens_out", "cost_usd", "status", "error"]
+    # spec 7.1 修訂(決策 28):tool_calls、finish_reason 為附加的可選欄位,放在最後
+    assert _names(CallResult) == ["ok", "text", "tokens_in", "tokens_out", "cost_usd", "status", "error",
+                                  "tool_calls", "finish_reason"]
+    legacy = CallResult(True, "t", 1, 1, 0.0, "ok", None)   # 既有的七欄建構呼叫仍可用
+    assert legacy.tool_calls is None and legacy.finish_reason is None
     assert _names(Budget) == ["type", "limit_amount", "window", "reset_anchor", "exhausted_until"]
 
 
