@@ -4,6 +4,8 @@
 
 修訂：2026-10-29 CHG-20261029-01（adapter 模組化、可用模型清單、後台選單、模組唯一或多個）
 
+修訂：2026-10-30 CHG-20261030-02（7.1 Adapter 介面改為非同步）
+
 ## 1 範圍與名詞定義
 
 本規格定義單人使用的 LLM 路由閘道之資料模型、路由規則、介面與驗收標準；目的、選型與風險見企劃書。
@@ -410,8 +412,8 @@ routes:
 
 ```python
 class Adapter(Protocol):
-    def call(self, dep: Deployment, req: ChatRequest, effort: str | None) -> CallResult: ...
-    def health(self, dep: Deployment) -> bool: ...
+    async def call(self, dep: Deployment, req: ChatRequest, effort: str | None) -> CallResult: ...
+    async def health(self, dep: Deployment) -> bool: ...
 
 @dataclass
 class CallResult:
