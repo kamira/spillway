@@ -1,0 +1,16 @@
+# openai_api 可用模型清單(spec 7.6.4;design D12)。
+# id 為 OpenAI API 的模型名(LiteLLM 價格表有定價);呼叫時模型字串為 openai/<id>。
+# efforts:GPT-5 系列接受 reasoning_effort low/medium/high,不接受 max(依 6.2 降級);
+# gpt-4o-mini 不是推理模型,送 reasoning_effort 會被 LiteLLM 拒絕,所以 efforts 為空。
+- id: gpt-5.5
+  label: GPT-5.5
+  capabilities: {ctx: 1050000, tools: true, vision: true, efforts: [low, medium, high]}
+- id: gpt-5.4-mini
+  label: GPT-5.4 mini
+  capabilities: {ctx: 272000, tools: true, vision: true, efforts: [low, medium, high]}
+- id: gpt-5.4-nano
+  label: GPT-5.4 nano
+  capabilities: {ctx: 272000, tools: true, vision: true, efforts: [low, medium, high]}
+- id: gpt-4o-mini
+  label: GPT-4o mini
+  capabilities: {ctx: 128000, tools: true, vision: true, efforts: []}

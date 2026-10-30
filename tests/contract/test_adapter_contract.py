@@ -48,6 +48,12 @@ def _discovered():
 MODULES = _discovered()
 
 
+def test_modules_discovered():
+    """守門:參數化不可因為沒有發現任何模組而全部 skip(波次 1–2 施工審議建議修,T6 加入)。"""
+    assert MODULES
+    assert {"anthropic_api", "openai_api", "litellm"} <= {m.name for m in MODULES}
+
+
 @pytest.mark.parametrize("info", MODULES, ids=[m.name for m in MODULES])
 def test_module_contract(info):
     assert contract_problems(info, _ctx()) == []
