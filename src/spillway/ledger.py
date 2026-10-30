@@ -21,6 +21,8 @@ Payload 規則:
 """
 from __future__ import annotations
 
+import dataclasses
+import logging
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -31,6 +33,8 @@ from spillway.clock import Clock
 from spillway.redact import Redactor
 from spillway.store import repo
 from spillway.store.db import transaction
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "LEDGER_STATUSES",
@@ -154,11 +158,18 @@ class LedgerWriter:
             est_cost_usd_p90=attempt.est_cost_usd_p90,
             error=error,
         )
+        settings = repo.get_context_settings(self._conn)
+        # 遮罩與截斷在交易外先完成;失敗時只記錄例外型別(不含內容或秘密),略過 payload、帳本列照寫
+        draft = None
+        if attempt.request_text is not None and self._should_record(attempt, settings):
+            try:
+                draft = self._build_payload(attempt, secrets, settings.max_bytes)
+            except Exception as exc:  # noqa: BLE001 - 帳本列不可因 payload 失敗而遺失
+                _log.error("組 payload 失敗,略過 payload(%s)", type(exc).__name__)
         with transaction(self._conn):
-            settings = repo.get_context_settings(self._conn)
             ledger_id = repo.insert_ledger(self._conn, row)
-            if attempt.request_text is not None and self._should_record(attempt, settings):
-                repo.insert_payload(self._conn, self._build_payload(ledger_id, attempt, secrets, settings.max_bytes))
+            if draft is not None:
+                repo.insert_payload(self._conn, dataclasses.replace(draft, ledger_id=ledger_id))
         return ledger_id
 
     def payload_status(self, ledger_id: int, now: datetime) -> PayloadStatus:
@@ -173,7 +184,7 @@ class LedgerWriter:
         return bool(attempt.route_record_context)
 
     def _build_payload(
-        self, ledger_id: int, attempt: Attempt, secrets: tuple[str, ...], max_bytes: int
+        self, attempt: Attempt, secrets: tuple[str, ...], max_bytes: int
     ) -> repo.Payload:
         assert attempt.request_text is not None
         req, req_hit = self._redactor.redact(attempt.request_text, secrets)
@@ -190,7 +201,7 @@ class LedgerWriter:
         truncated = len(req_out) < len(req_b) or len(resp_out) < len(resp_b)
 
         return repo.Payload(
-            ledger_id=ledger_id,
+            ledger_id=0,  # 佔位,寫入時換成實際 id
             ts=attempt.ts,
             request_json=req_out.decode("utf-8"),
             response_text=None if resp is None else resp_out.decode("utf-8"),
@@ -205,23 +216,28 @@ def _cutoff(now: datetime, retention_days: int) -> datetime:
 
 
 def payload_status(conn: sqlite3.Connection, ledger_id: int, now: datetime) -> PayloadStatus:
-    """payload 狀態(決策 17)。
+    """payload 狀態(決策 17;先以時間判斷是否過期,再看 payload 列)。
 
+    - 保存天數 > 0 且 `usage_ledger.ts` 早於 `now − 保存天數` → `expired`(即使清理尚未執行);
+    - 保存天數 == 0 且 payload 列仍在(尚未清理)→ `expired`;
     - payload 列存在 → `ok`;
-    - 不存在,且保存天數 > 0、`usage_ledger.ts` 早於 `now − 保存天數` → `expired`;
-    - 其他(route 關閉、保存天數 0、沒有送出內容)→ `never_recorded`。
+    - 其餘(route 關閉、沒有送出內容、已清理的 0 天設定)→ `never_recorded`。
     - ledger_id 不存在 → 丟 `LedgerNotFound`(與 never_recorded 區分;呼叫端皆可回 404)。
 
-    已知限制:以 ts 判斷,當初未記錄但已超過保存期限的列也會回 `expired`(刪除後無法區分)。
+    已知限制:以 ts 判斷,當初未記錄但已超過保存期限的列也會回 `expired`;保存天數改為 0 並清理後,
+    曾記錄過的列回 `never_recorded`(刪除後無法區分)。
     """
     led = repo.get_ledger(conn, ledger_id)
     if led is None:
         raise LedgerNotFound(ledger_id)
-    if repo.get_payload(conn, ledger_id) is not None:
-        return "ok"
     days = repo.get_context_settings(conn).retention_days
+    has_payload = repo.get_payload(conn, ledger_id) is not None
     if days > 0 and led.ts < _cutoff(now, days):
         return "expired"
+    if days <= 0 and has_payload:
+        return "expired"
+    if has_payload:
+        return "ok"
     return "never_recorded"
 
 

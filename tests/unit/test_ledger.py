@@ -306,7 +306,7 @@ def test_retention_advance_8_days(db):
     new = w.record(_att(ts=clock.now()))
     new_off = w.record(_att(ts=clock.now(), route_record_context=0))
 
-    assert payload_status(db, old, clock.now()) == "ok"  # 尚未清理前仍存在
+    assert payload_status(db, old, clock.now()) == "expired"  # 尚未清理,但已過期(M15)
     deleted = RetentionJob(db, clock).run_once(clock.now())
     assert deleted == 1
     assert _payload_row(db, old) is None
@@ -354,3 +354,35 @@ def test_deleting_ledger_cascades_payload(db):
     db.execute("DELETE FROM usage_ledger WHERE id = ?", (lid,))
     assert _payload_row(db, lid) is None
     assert db.execute("SELECT COUNT(*) FROM usage_payloads").fetchone()[0] == 0
+
+
+def test_payload_status_expired_before_cleanup_runs(db):
+    clock = FakeClock(T0)
+    lid = LedgerWriter(db).record(_att(ts=clock.now()))
+    clock.advance(days=7, minutes=30)
+    assert _payload_row(db, lid) is not None  # 尚未執行 run_once
+    assert payload_status(db, lid, clock.now()) == "expired"
+
+
+def test_payload_status_expired_when_retention_set_to_zero_before_cleanup(db):
+    lid = LedgerWriter(db).record(_att(ts=T0))
+    assert payload_status(db, lid, T0) == "ok"
+    repo.set_setting(db, "context_retention_days", 0)
+    assert _payload_row(db, lid) is not None
+    assert payload_status(db, lid, T0) == "expired"
+    clock = FakeClock(T0)
+    clock.advance(seconds=1)
+    assert RetentionJob(db, clock).run_once() == 1
+    assert payload_status(db, lid, clock.now()) == "never_recorded"
+
+
+def test_payload_build_failure_keeps_ledger_row_and_logs_no_content(db, caplog):
+    secret_text = "SECRET-CONTENT-xyz"
+    with caplog.at_level("ERROR", logger="spillway.ledger"):
+        lid = LedgerWriter(db).record(
+            _att(cost_usd=0.5, response_text=secret_text.encode())  # type: ignore[arg-type]
+        )
+    assert repo.get_ledger(db, lid).cost_usd == 0.5
+    assert _payload_row(db, lid) is None
+    assert caplog.records
+    assert secret_text not in caplog.text and "hello" not in caplog.text
