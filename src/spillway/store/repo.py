@@ -47,8 +47,8 @@ def _bool_or_none(v: int | None) -> bool | None:
     return None if v is None else bool(v)
 
 
-def _int_or_none(v: bool | None) -> int | None:
-    return None if v is None else int(bool(v))
+def _bool_to_int(v: bool | None) -> int | None:
+    return None if v is None else int(v)
 
 
 # ---------------------------------------------------------------- deployments / tags / budgets
@@ -283,7 +283,7 @@ def save_route(conn: sqlite3.Connection, route: Route) -> None:
                 _dumps(route.target),
                 route.mode,
                 _dumps(list(route.tags)),
-                _int_or_none(route.record_context),
+                _bool_to_int(route.record_context),
                 int(bool(route.budget_precheck)),
             ),
         )
@@ -519,12 +519,14 @@ def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
 
 
 def set_setting(conn: sqlite3.Connection, key: str, value: Any) -> None:
-    """以 `str(value)` 寫入或覆寫。"""
+    """寫入或覆寫。bool 存成 `"1"`/`"0"`(與 `get_context_settings` 的讀法一致),
+    其餘以 `str(value)` 存。"""
+    text = ("1" if value else "0") if isinstance(value, bool) else str(value)
     with transaction(conn):
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, str(value)),
+            (key, text),
         )
 
 

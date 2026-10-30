@@ -315,3 +315,74 @@ def test_check_constraints_enforced(fresh):
 def test_db_fixture_is_migrated(db):
     assert db.execute("PRAGMA user_version").fetchone()[0] == 1
     assert _user_tables(db) == set(TABLES)
+
+
+def test_concurrent_first_connect_migrates_once(tmp_path):
+    """M2:多條連線同時第一次 connect 同一個新庫,全部成功、只建一次表。"""
+    import threading
+
+    threads_n, rounds = 8, 20
+    for r in range(rounds):
+        path = tmp_path / f"race{r}.db"
+        barrier = threading.Barrier(threads_n)
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                barrier.wait()
+                connect(path).close()
+            except BaseException as exc:  # noqa: BLE001 - 收集後統一斷言
+                errors.append(exc)
+
+        ts = [threading.Thread(target=worker) for _ in range(threads_n)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        assert errors == [], f"round {r}: {errors!r}"
+        raw = sqlite3.connect(path)
+        try:
+            assert raw.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 1
+            assert _user_tables(raw) == set(TABLES)
+        finally:
+            raw.close()
+
+
+def test_migration_waits_for_lock_and_rereads_version(tmp_path):
+    """M2:等鎖期間別的連線已完成 migration 時,鎖內重讀版本後不再套用。"""
+    path = tmp_path / "held.db"
+    raw = sqlite3.connect(path, isolation_level=None)
+    raw.execute("PRAGMA journal_mode=WAL")
+    raw.execute("BEGIN IMMEDIATE")
+    for stmt in store_db._split_statements(store_db.MIGRATIONS[0][1]):
+        raw.execute(stmt)
+    raw.execute("PRAGMA user_version = 1")
+
+    import threading
+
+    result: list[object] = []
+
+    def worker() -> None:
+        try:
+            c = connect(path)
+            result.append(c.execute("PRAGMA user_version").fetchone()[0])
+            c.close()
+        except BaseException as exc:  # noqa: BLE001
+            result.append(exc)
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join(0.3)
+    assert t.is_alive()  # 卡在 BEGIN IMMEDIATE 等鎖
+    raw.execute("COMMIT")
+    t.join()
+    raw.close()
+    assert result == [1]
+
+
+def test_split_statements_ignores_semicolons_in_comments_and_strings():
+    sql = "-- a; b\nCREATE TABLE t (x TEXT DEFAULT ';');\n/* ; */ CREATE INDEX i ON t(x);\n"
+    stmts = [s.strip() for s in store_db._split_statements(sql)]
+    assert len(stmts) == 2
+    assert stmts[0].endswith("DEFAULT ';');")
+    assert stmts[1].endswith("CREATE INDEX i ON t(x);")

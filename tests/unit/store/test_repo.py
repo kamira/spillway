@@ -421,3 +421,30 @@ def test_save_deployment_atomic_on_bad_budget(db):
         repo.save_deployment(db, bad)
     assert repo.load_deployment(db, "d1") is None
     assert _row_count(db, "deployment_tags") == 0
+
+
+# ---------- 審查回修 M3、S-T2-1 ----------
+
+@pytest.mark.parametrize("value, expected", [(True, True), (False, False)])
+def test_set_setting_bool_roundtrip(db, value, expected):
+    """M3:bool 寫入存成 "1"/"0",get_context_settings 讀回同值。"""
+    repo.set_setting(db, "record_context_default", value)
+    assert repo.get_setting(db, "record_context_default") == ("1" if expected else "0")
+    assert repo.get_context_settings(db).record_default is expected
+
+
+def test_set_setting_bool_overwrite_flips_both_ways(db):
+    repo.set_setting(db, "record_context_default", False)
+    assert repo.get_context_settings(db).record_default is False
+    repo.set_setting(db, "record_context_default", True)
+    assert repo.get_context_settings(db).record_default is True
+
+
+def test_savepoint_keeps_original_exception_when_sqlite_already_rolled_back(db):
+    """S-T2-1:外層交易已被回滾(SAVEPOINT 隨之消失)時,原例外照原樣往外丟。"""
+    with pytest.raises(ValueError, match="original"):
+        with transaction(db):
+            with transaction(db):
+                db.execute("ROLLBACK")  # 模擬 SQLite 自動回滾整個交易
+                raise ValueError("original")
+    assert not db.in_transaction
