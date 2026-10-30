@@ -310,3 +310,31 @@ def test_mark_other_status_without_budget_row_creates_nothing(db, qs: QuotaServi
     dep = _save(db, None)
     assert qs.mark(dep, "error", T(2026, 10, 30, 12)) is None
     assert repo.get_budget(db, dep.id) is None
+
+
+def test_mark_does_not_clobber_budget_saved_between_read_and_write(db, qs: QuotaService, monkeypatch) -> None:
+    # M12:mark 讀完 budget(無列)後、寫入前,另一連線存入 usd 預算,不得被覆寫成 type=none
+    from spillway.store.db import connect
+
+    dep = _save(db, None)
+    path = db.execute("PRAGMA database_list").fetchone()[2]
+    real = qs._budget
+    fired: list[int] = []
+
+    def racing(d):
+        got = real(d)
+        if not fired:
+            fired.append(1)
+            other = connect(path)
+            try:
+                repo.save_budget(other, d.id, Budget(type="usd", limit_amount=20.0, window="monthly", reset_anchor=5))
+            finally:
+                other.close()
+        return got
+
+    monkeypatch.setattr(qs, "_budget", racing)
+    now = T(2026, 10, 30, 12, 0, 0)
+    until = qs.mark(dep, "rate_limited", now)
+    b = repo.get_budget(db, dep.id)
+    assert (b.type, b.limit_amount, b.window, b.reset_anchor) == ("usd", 20.0, "monthly", 5)
+    assert b.exhausted_until == until == now + timedelta(seconds=60)

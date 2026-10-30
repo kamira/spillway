@@ -448,3 +448,19 @@ def test_savepoint_keeps_original_exception_when_sqlite_already_rolled_back(db):
                 db.execute("ROLLBACK")  # 模擬 SQLite 自動回滾整個交易
                 raise ValueError("original")
     assert not db.in_transaction
+
+
+def test_mark_exhausted_until_inserts_none_row(db):
+    repo.save_deployment(db, _dep(budget=None))
+    repo.mark_exhausted_until(db, "d1", T0)
+    b = repo.get_budget(db, "d1")
+    assert (b.type, b.limit_amount, b.window, b.reset_anchor) == ("none", None, "none", None)
+    assert b.exhausted_until == T0
+
+
+def test_mark_exhausted_until_conflict_only_updates_cooldown(db):
+    repo.save_deployment(db, _dep(budget=None))
+    orig = Budget(type="usd", limit_amount=20.0, window="monthly", reset_anchor=5)
+    repo.save_budget(db, "d1", orig)
+    repo.mark_exhausted_until(db, "d1", T0)
+    assert repo.get_budget(db, "d1") == dataclasses.replace(orig, exhausted_until=T0)

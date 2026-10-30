@@ -158,20 +158,17 @@ class QuotaService:
         只為記錄冷卻;依決策 6 這等同「無上限」,不改變額度判斷(施工審議代決)。
         """
         now = self._now(now)
-        budget = self._budget(dep)
-        if budget is None:
-            if status not in ("quota_exhausted", "rate_limited"):
-                return None
-            budget = Budget(type="none", limit_amount=None, window="none")
-            repo.save_budget(self._conn(), dep.id, budget)
+        if status not in ("quota_exhausted", "rate_limited"):
+            budget = self._budget(dep)
+            return budget.exhausted_until if budget else None
+        # 讀不到 budget 時視為 window none;寫入用單一原子敘述,不覆寫其他欄位(審查 M12)
+        budget = self._budget(dep) or Budget(type="none", limit_amount=None, window="none")
         if status == "quota_exhausted":
             until = self.next_reset(budget, now)
-        elif status == "rate_limited":
-            until = now + RATE_LIMIT_COOLDOWN
         else:
-            return budget.exhausted_until
+            until = now + RATE_LIMIT_COOLDOWN
         until = until.replace(microsecond=0)  # 存到秒(spec 2.1.2),回傳值與讀回一致
-        repo.set_exhausted_until(self._conn(), dep.id, until)
+        repo.mark_exhausted_until(self._conn(), dep.id, until)
         return until
 
     def clear(self, dep: Deployment) -> None:

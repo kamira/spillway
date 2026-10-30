@@ -196,6 +196,20 @@ def set_exhausted_until(conn: sqlite3.Connection, dep_id: str, when: datetime | 
     return cur.rowcount > 0
 
 
+def mark_exhausted_until(conn: sqlite3.Connection, dep_id: str, when: datetime) -> None:
+    """單一原子敘述設定冷卻;沒有 budgets 列時插入 type=none、window=none 的列,
+    已有列時只改 exhausted_until(不動 type、limit_amount、window、reset_anchor)。"""
+    with transaction(conn):
+        conn.execute(
+            """
+            INSERT INTO budgets (deployment_id, type, limit_amount, window, exhausted_until)
+            VALUES (?, 'none', NULL, 'none', ?)
+            ON CONFLICT(deployment_id) DO UPDATE SET exhausted_until = excluded.exhausted_until
+            """,
+            (dep_id, _iso(when)),
+        )
+
+
 # ---------------------------------------------------------------- groups
 
 
