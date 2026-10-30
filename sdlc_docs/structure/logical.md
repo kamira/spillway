@@ -15,7 +15,7 @@
 | 介面層 | `cli` | `spillway serve`(M2)/ `mcp-stdio`、`init`(M3) | `app`、`mcp.bridge` | — |
 | 應用層 | `routing` | 請求解析 → 候選篩選 → 順序決定 → slot 內選擇 → 呼叫與 fallback | `quota`、`estimate`、`effort`、`adapters`、`ledger`、`store` | FR-2–FR-7 |
 | 應用層 | `quota` | 計算期間、剩餘額度與比例、冷卻設定與清除(上游訊號判定已移至 `adapters.base` 的 `classify`) | `store`、`clock` | FR-8 |
-| 應用層 | `estimate` | token 與花費預估(P50/P90) | `store`、LiteLLM | FR-9 |
+| 應用層 | `estimate` | token 與花費預估(P50/P90) | `store`、`adapters.base`(`model_string`、`load_litellm`)、LiteLLM | FR-9 |
 | 應用層 | `effort` | 五級 effort 的來源優先序與降級 | — | FR-10 |
 | 應用層 | `ledger` | 每次嘗試寫入 `usage_ledger`;context 記錄(截斷、遮罩)與保存清理 | `store`、`redact`、`clock` | FR-7、FR-14 |
 | 應用層 | `configio`(M4) | YAML 匯入(merge/replace、單一交易)與匯出 | `store` | FR-21 |

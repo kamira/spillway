@@ -33,6 +33,9 @@
 | `Clock` / `Rng` | 時間與亂數來源;實作:`SystemClock`、`FakeClock`(`advance()`)、`SystemRng(seed=None)`、`SeqRng` | `now() -> datetime(UTC)`;`random() -> float` | 測試注入 |
 | `domain` 值物件 | `Deployment`、`Budget`、`ChatRequest`、`CallResult` 定義於基礎層 `spillway/domain.py`;`adapters.base` 轉匯出,adapter 模組照舊只 import base | dataclass(frozen) | 7.1;CHG-20261030-02 施工審議 M1 |
 | `probe_http` | local 端點健康探測(D18):對 URL 發一次 GET,任何 HTTP 回應即健康 | `async probe_http(url, timeout=2.0) -> bool`(不外拋、不跟隨轉址、不讀 proxy 環境變數) | 4.2.4;CHG-20261030-02 施工審議 M8 |
+| `model_string` / `load_litellm` | 統一的 LiteLLM 模型字串規則(provider 為 `litellm` 時原樣使用 model,其他一律 `<provider>/<model>`,spec 7.2.1);LiteLLM 單一載入點(本地價格表、關閉 verbose 與遙測、不下載 HF tokenizer) | `model_string(dep) -> str`;`load_litellm() -> module` | 7.2.1;CHG-20261030-02 施工審議 M11、M13、M14 |
+| `CallResult` 工具呼叫欄位 | `tool_calls`(OpenAI 格式 dict 清單)、`finish_reason`,皆可選 | spec 7.1(CHG-20261030-02 決策 28) | 7.1 |
+| litellm 模組 `list_models` | 查 local 端點可用模型;端點取參數 `api_base`,未給時取環境變數 `SPILLWAY_LOCAL_API_BASE`,再無則 Ollama 預設 `http://127.0.0.1:11434/v1`(M2 暫行設定,M4 UI-2 改用既有 local 成員的 api_base) | `list_models(context, api_base=None)` | 7.6.4;CHG-20261030-02 決策 25 |
 
 ## 元件關係圖
 
