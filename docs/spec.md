@@ -4,7 +4,7 @@
 
 修訂：2026-10-29 CHG-20261029-01（adapter 模組化、可用模型清單、後台選單、模組唯一或多個）
 
-修訂：2026-10-30 CHG-20261030-02（7.1 Adapter 介面改為非同步）
+修訂：2026-10-30 CHG-20261030-02（7.1 Adapter 介面改為非同步；CallResult 加 tool_calls、finish_reason；5.3.1 加 anthropic 額度與過載訊號）
 
 ## 1 範圍與名詞定義
 
@@ -355,6 +355,7 @@ routes:
 | claude-cli | JSON `is_error = true` 且訊息符合 `credit\|usage limit\|extra usage` | 訊息符合 `rate limit\|overloaded` |
 | codex-cli | 結束碼 ≠ 0 且 stderr 符合 `usage limit\|quota` | stderr 符合 `rate limit\|429` |
 | api | HTTP 402，或錯誤碼 `insufficient_quota` | HTTP 429 |
+| api（anthropic） | 同上，另加：HTTP 400 且訊息符合 `credit balance` | 同上，另加：HTTP 529 |
 
 5.3.2 判定為額度用完時，系統必須將 `budgets.exhausted_until` 設為 5.1 的下一個重置點，即使本地計算仍有剩餘。
 
@@ -424,6 +425,8 @@ class CallResult:
     cost_usd: float | None
     status: str          # ok | error | quota_exhausted | rate_limited
     error: str | None
+    tool_calls: list[dict] | None = None   # 上游回傳的工具呼叫（OpenAI 格式）；沒有時為 None
+    finish_reason: str | None = None
 ```
 
 7.1.1 系統啟動時必須自動發現全部 adapter 模組，並依 manifest 的 `providers` 註冊；沒有任何模組宣告的 `provider`，依 `kind` 使用通用 `litellm` 模組（`api`、`local`）。
