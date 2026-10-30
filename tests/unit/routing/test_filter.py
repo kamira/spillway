@@ -1,6 +1,7 @@
 """T11 L1/L2:CandidateFilter(spec 4.2.1–4.2.6;決策 6、14、20)。"""
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -10,6 +11,7 @@ from spillway.domain import Budget, ChatRequest
 from spillway.estimate import Estimate, Estimator
 from spillway.quota import QuotaService
 from spillway.routing import (
+    HEALTH_PROBE_TIMEOUT,
     HEALTH_TTL,
     CandidateFilter,
     FilterResult,
@@ -275,6 +277,40 @@ async def test_real_registry_unavailable_provider(db, clock, tmp_path):
 
 
 # ------------------------------------------------------------------ 決策 20:健康快取
+
+
+class _HangingHealth:
+    """health() 等一個永不觸發的 Event(模擬沒有自設逾時的第三方模組)。"""
+
+    def __init__(self) -> None:
+        self.never = asyncio.Event()
+        self.calls = 0
+
+    def module_for(self, dep):
+        return object()
+
+    def get(self, dep):
+        return self
+
+    async def health(self, dep) -> bool:
+        self.calls += 1
+        await self.never.wait()
+        return True
+
+
+async def test_health_probe_timeout_counts_as_unhealthy_and_is_cached(db, clock):
+    # M17:決策 20 的 2 秒上限由 filter 強制,不依賴模組自己的逾時
+    assert HEALTH_PROBE_TIMEOUT == 2.0
+    make_dep(db, "loc", kind="local", tags=("r",))
+    reg = _HangingHealth()
+    cache = HealthCache(clock)
+    f = CandidateFilter(reg, QuotaService(db, clock), FixedEstimator(), clock, cache,
+                        health_timeout=0.05)
+    res = await asyncio.wait_for(f.filter(route(db), req()), timeout=2)
+    assert reasons(res) == {"loc": "unhealthy"}
+    assert cache.get("loc") is False                     # 逾時結果已寫入快取
+    await f.filter(route(db), req())
+    assert reg.calls == 1                                # 快取有效期間不再探測
 
 
 async def test_health_cached_for_ttl_via_clock(db, clock, stub):

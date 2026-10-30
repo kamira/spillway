@@ -14,8 +14,11 @@
    編號從「全部 route_targets 的最大 slot + 1」起算。
 3. 無手動順序(4.3.1 ②、4.3.2):層級為「全部 cli 一個 slot → 全部 api 一個 slot →
    每個 local 各一個 slot(依 id 字母序)」,`unsorted=False`。
-   層級編號:以 `members` 中實際存在的層級依序連號(從 1 或規則 2 的起點開始);沒有 cli 成員時
-   api 層為第 1 個。層級內 `position` 依 id 字母序從 0 起算;`weight="medium"`、`effort=None`。
+   層級編號固定(spec 4.3.2 字面;施工審議 M16、代決 D-7):cli 層為 `base`、api 層為 `base + 1`、
+   第 i 個 local(`members` 中 local 依 id 字母序,i 從 0 起)為 `base + 2 + i`。無手動排序時
+   `base = 1`;有手動排序時 `base` 為規則 2 的起點。某層沒有成員或成員全被篩掉時該 slot 不輸出,
+   其他層的編號不重排(例如沒有 cli 成員時 api 仍為 slot 2)。
+   層級內 `position` 依 id 字母序從 0 起算;`weight="medium"`、`effort=None`。
 
 `SlotEntry` 帶 deployment、weight、effort、position、unsorted,以及候選的 estimate、health,
 供 SlotSelector、Router 寫帳本與 dry-run 的 `Plan` 使用。
@@ -55,11 +58,11 @@ class Slot:
 
 
 def _tiers(deps: Iterable[Deployment]) -> list[list[Deployment]]:
-    """4.3.2 層級:cli 一層、api 一層、每個 local 一層;空層略過。層內依 id 排序。"""
+    """4.3.2 層級:索引 0 為 cli、1 為 api、2 起每個 local 一層(依 id)。空層保留(編號固定)。"""
     by_id = sorted(deps, key=lambda d: d.id)
     tiers = [[d for d in by_id if d.kind == "cli"], [d for d in by_id if d.kind == "api"]]
     tiers += [[d] for d in by_id if d.kind == "local"]
-    return [t for t in tiers if t]
+    return tiers
 
 
 class OrderPlanner:

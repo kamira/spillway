@@ -1,6 +1,6 @@
 """候選篩選(spec 4.2.1–4.2.6;CHG-20261030-02 T11;決策 6、14、20)。
 
-`CandidateFilter(registry, quota, estimator, clock, health_cache=None)`
+`CandidateFilter(registry, quota, estimator, clock, health_cache=None, *, health_timeout=HEALTH_PROBE_TIMEOUT)`
 `await filter(target, req, *, probe=True, now=None) -> FilterResult`
 
 對 `target.members`(依其順序)逐一檢查,第一個不符合的條件即為該成員的排除原因:
@@ -24,7 +24,9 @@
 
 local 健康(決策 20):結果以 `HealthCache` 快取 `HEALTH_TTL`(10 秒,時間經 Clock)。
 - 快取有效 → 用快取值。
-- 冷快取且 `probe=True`(`route()`)→ `await registry.get(dep).health(dep)` 一次並寫入快取。
+- 冷快取且 `probe=True`(`route()`)→ `await registry.get(dep).health(dep)` 一次並寫入快取;
+  探測以 `asyncio.timeout(HEALTH_PROBE_TIMEOUT)`(2 秒,建構子 `health_timeout` 可覆寫)包住,
+  逾時視為不健康並寫入快取(決策 20 的 2 秒上限;施工審議 M17)。
 - 冷快取且 `probe=False`(`dry_run()`)→ 不探測、不寫快取,`Candidate.health = "health_unknown"`,照樣列為候選。
 `Candidate.health`:cli/api 為 None;local 為 `"healthy"` 或 `"health_unknown"`。
 
@@ -32,6 +34,7 @@ local 健康(決策 20):結果以 `HealthCache` 快取 `HEALTH_TTL`(10 秒,時�
 """
 from __future__ import annotations
 
+import asyncio
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -44,6 +47,7 @@ from spillway.estimate import Estimate
 from spillway.routing.resolver import Target
 
 HEALTH_TTL = timedelta(seconds=10)
+HEALTH_PROBE_TIMEOUT = 2.0   # 秒;單次 local 健康探測上限(決策 20)
 CLOUD_KINDS = ("cli", "api")
 
 HEALTHY = "healthy"
@@ -151,8 +155,11 @@ class CandidateFilter:
         estimator: _Estimator,
         clock: Clock,
         health_cache: HealthCache | None = None,
+        *,
+        health_timeout: float = HEALTH_PROBE_TIMEOUT,
     ) -> None:
         self._registry = registry
+        self._health_timeout = health_timeout
         self._quota = quota
         self._estimator = estimator
         self._clock = clock
@@ -228,8 +235,9 @@ class CandidateFilter:
             if not probe:
                 return HEALTH_UNKNOWN
             try:
-                cached = bool(await self._registry.get(dep).health(dep))
-            except Exception:  # noqa: BLE001 — 探測失敗一律視為不健康
+                async with asyncio.timeout(self._health_timeout):
+                    cached = bool(await self._registry.get(dep).health(dep))
+            except Exception:  # noqa: BLE001 — 探測失敗或逾時(TimeoutError)一律視為不健康
                 cached = False
             self.health_cache.put(dep.id, cached)
         return HEALTHY if cached else None

@@ -13,7 +13,9 @@ health_cache=None, close_conn=False)`
     一次,這個連線供本次請求的 Resolver、QuotaService、Estimator、LedgerWriter 共用(以
     `contextvars` 保存,並行請求各用各的)。`close_conn=True` 時請求結束後關閉該連線(工廠每次
     開新連線的情況);預設 False(工廠回傳共用連線,例如測試的 `lambda: db`)。
-    `quota`、`estimator`、`ledger` 可注入;未給時以「本次請求的連線」建立。`ledger` 未給時每次
+    `quota`、`estimator`、`ledger` 可注入;未給時以「本次請求的連線」建立。
+    內建元件(`router.quota`、`router.estimator`、`router.resolver`)只在 `route()`/`dry_run()`
+    期間可用:在那之外取連線會丟 `RuntimeError`,不會另開連線(施工審議 S6,避免連線洩漏)。`ledger` 未給時每次
     請求建一個 `LedgerWriter(conn)`(它只接受連線)。`health_cache` 跨請求共用(決策 20)。
 
 route() 規則:
@@ -44,14 +46,20 @@ route() 規則:
      帳本 `ts` 仍取注入的 Clock)。
    - `quota_exhausted` / `rate_limited` 且成員為 cli/api → `QuotaService.mark()`(4.5.2)。
      local 成員不設冷卻(4.2.4 不檢查 local 的額度與冷卻,設了也不生效)。
+     `mark()` 丟例外時只以 logging 記錄例外型別(不記內容與秘密),帳本照寫原 status,照常換下一位
+     (施工審議 M18;4.5.1、4.4.3)。
+   - adapter 呼叫中被取消(`CancelledError`)時,同步寫一列 `status=error`、`error="cancelled"`
+     (不跨 await),再重新丟出(施工審議 S2;上游可能已計費)。
 6. 全部失敗 → `RouteOutcome(result=None, attempts=...)`;每筆 `AttemptInfo.error` 以該次的
    `extra_secrets` 經 Redactor 遮罩(帳本由 LedgerWriter 自行遮罩)。`excluded` 另列被篩掉的成員與原因。
 """
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import dataclasses
 import json
+import logging
 import sqlite3
 import time
 from collections.abc import Callable
@@ -91,6 +99,8 @@ __all__ = [
 ]
 
 ConnFactory = Callable[[], sqlite3.Connection]
+
+_log = logging.getLogger(__name__)
 
 _EFFORT_ALIASES = {"minimal": "none"}
 
@@ -221,6 +231,10 @@ def _pick_effort(entry_effort: str | None, req_effort: str | None, dep: Deployme
         return None
 
 
+def _elapsed_ms(start: float) -> int:
+    return max(0, int((time.perf_counter() - start) * 1000))
+
+
 def _response_text(result: CallResult) -> str | None:
     if result.tool_calls:
         return json.dumps(
@@ -269,7 +283,9 @@ class Router:
 
     def _conn(self) -> sqlite3.Connection:
         conn = self._current.get()
-        return conn if conn is not None else self._factory()
+        if conn is None:
+            raise RuntimeError("Router 的內建元件只能在 route()/dry_run() 內使用")
+        return conn
 
     def _open(self) -> tuple[sqlite3.Connection, contextvars.Token]:
         conn = self._factory()
@@ -388,14 +404,50 @@ class Router:
         except Exception as exc:  # noqa: BLE001 — adapter 例外一律視為該成員失敗,換下一位
             result = CallResult(ok=False, text="", tokens_in=None, tokens_out=None, cost_usd=None,
                                 status="error", error=f"{type(exc).__name__}: {exc}")
-        latency_ms = max(0, int((time.perf_counter() - start) * 1000))
+        except asyncio.CancelledError:
+            # 取消:上游可能已收到請求,同步補一列帳本(不跨 await)後重新丟出(S2)
+            cancelled = CallResult(ok=False, text="", tokens_in=None, tokens_out=None,
+                                   cost_usd=None, status="error", error="cancelled")
+            self._record(ledger, dep, req, effort, est, target, cancelled, ts=ts, status="error",
+                         slot=slot, depth=depth, latency_ms=_elapsed_ms(start), secrets=secrets)
+            raise
+        latency_ms = _elapsed_ms(start)
         status = result.status if result.status in CALL_STATUSES else "error"
         if status != result.status:
             result = dataclasses.replace(
                 result, ok=False, status="error",
                 error=result.error or f"adapter 回傳未知 status {result.status!r}")
         if status in ("quota_exhausted", "rate_limited") and dep.kind in CLOUD_KINDS:
-            self.quota.mark(dep, status)
+            try:
+                self.quota.mark(dep, status)
+            except Exception as exc:  # noqa: BLE001 — 冷卻設定失敗不可中斷帳本與 fallback(M18)
+                _log.warning("QuotaService.mark 失敗(%s),成員 %s 本次未設冷卻",
+                             type(exc).__name__, dep.id)
+        self._record(ledger, dep, req, effort, est, target, result, ts=ts, status=status,
+                     slot=slot, depth=depth, latency_ms=latency_ms, secrets=secrets)
+        error = None
+        if status != "ok" and result.error is not None:
+            error, _ = self.redactor.redact(result.error, secrets)
+        return result, AttemptInfo(dep.id, status, slot, error, latency_ms)
+
+    def _record(
+        self,
+        ledger: LedgerWriter,
+        dep: Deployment,
+        req: ChatRequest,
+        effort: str | None,
+        est: Estimate | None,
+        target: Target,
+        result: CallResult,
+        *,
+        ts: Any,
+        status: str,
+        slot: int | None,
+        depth: int,
+        latency_ms: int,
+        secrets: tuple[str, ...],
+    ) -> None:
+        """寫一次到達 adapter 的嘗試(同步,不跨 await)。"""
         ledger.record(Attempt(
             ts=ts, status=status, route_name=target.route_name, deployment_id=dep.id,
             effort=effort, tokens_in=result.tokens_in, tokens_out=result.tokens_out,
@@ -410,10 +462,6 @@ class Router:
             extra_secrets=secrets,
             route_record_context=target.record_context,
         ))
-        error = None
-        if status != "ok" and result.error is not None:
-            error, _ = self.redactor.redact(result.error, secrets)
-        return result, AttemptInfo(dep.id, status, slot, error, latency_ms)
 
     # -- dry_run ----------------------------------------------------------------------------
 

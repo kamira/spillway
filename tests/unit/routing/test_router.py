@@ -5,8 +5,11 @@ L1 以 `ScriptedRegistry` 控制每個成員的 CallResult;L2 以 T6 內建 adap
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
+import logging
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -15,6 +18,7 @@ from spillway import credentials
 from spillway.adapters.base import AdapterContext, AdapterRegistry
 from spillway.clock import SeqRng
 from spillway.domain import Budget, ChatRequest, Deployment
+from spillway.quota import QuotaService
 from spillway.routing import RouteNotFound
 from spillway.routing.router import (
     InvalidEffort,
@@ -151,6 +155,28 @@ async def test_429_cools_member_60s_and_next_serves(db, clock):
     assert [r.status for r in ledger(db)] == ["rate_limited", "ok"]
 
 
+class _MarkFails(QuotaService):
+    def mark(self, dep, status, now=None):
+        raise sqlite3.OperationalError("database is locked: secret-sk-XYZ")
+
+
+async def test_mark_exception_still_records_and_falls_back(db, clock, caplog):
+    # M18:mark 丟例外時,a 的帳本照寫原 status,照常由 b 完成;log 只有例外型別
+    make_dep(db, "a", tags=("r",))
+    make_dep(db, "b", tags=("r",))
+    make_route(db, targets=[("a", 1, 0), ("b", 2, 0)])
+    reg = ScriptedRegistry()
+    reg.script = {"a": fail("rate_limited", "429")}
+    r = router(db, clock, reg, quota=_MarkFails(db, clock))
+    with caplog.at_level(logging.WARNING, logger="spillway.routing.router"):
+        out = await r.route(req())
+    assert out.served_by == "b" and reg.called_ids() == ["a", "b"]
+    assert [(x.deployment_id, x.status) for x in ledger(db)] == [("a", "rate_limited"), ("b", "ok")]
+    assert [(a.deployment, a.status) for a in out.attempts] == [("a", "rate_limited"), ("b", "ok")]
+    assert "OperationalError" in caplog.text
+    assert "secret-sk-XYZ" not in caplog.text and "locked" not in caplog.text
+
+
 async def test_429_on_member_without_budget_still_cools(db, clock):
     make_dep(db, "a", tags=("r",))
     make_dep(db, "b", tags=("r",))
@@ -265,7 +291,7 @@ async def test_success_ledger_row_fields(db, clock):
     assert out.result.text == "answer" and out.estimate == EST
     (row,) = ledger(db)
     assert (row.route_name, row.deployment_id, row.slot, row.fallback_depth, row.ts) == (
-        "r", "a", 1, 0, clock.now())
+        "r", "a", 2, 0, clock.now())         # 預設層級:api 固定為 slot 2(M16)
     assert (row.tokens_in, row.tokens_out, row.cost_usd) == (3, 4, 0.5)
     assert (row.est_tokens_in, row.est_tokens_out_p50, row.est_tokens_out_p90,
             row.est_cost_usd_p90) == (10, 500, 2000, 0.01)
@@ -300,7 +326,7 @@ async def test_route_record_context_off_writes_no_payload(db, clock):
 async def test_implicit_route_ledger_route_name_is_model_name(db, clock):
     make_dep(db, "a1", model_name="gpt")
     out = await router(db, clock, ScriptedRegistry()).route(req("gpt"))
-    assert out.served_by == "a1" and out.slot == 1
+    assert out.served_by == "a1" and out.slot == 2      # 無 cli 成員,api 仍為 slot 2(M16)
     assert ledger(db)[0].route_name == "gpt"
 
 
@@ -440,6 +466,53 @@ async def test_extra_secrets_resolved_per_attempt(db, clock, monkeypatch):
     assert seen == ["env:SPILLWAY_TEST_KEY", "env:SPILLWAY_TEST_KEY2"]
 
 
+# ------------------------------------------------------------------ 取消(施工審議 S2)
+
+
+class _HangingRegistry(ScriptedRegistry):
+    """`call()` 等一個永不觸發的 Event;`entered` 在進入 call 時設起。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        reg = self
+
+        class _A:
+            async def call(self, dep, req, effort):
+                reg.calls.append((dep.id, effort, req))
+                reg.entered.set()
+                await asyncio.Event().wait()
+
+        self._adapter = _A()
+
+
+async def test_cancel_during_adapter_call_writes_error_row_and_reraises(db, clock):
+    make_dep(db, "a", tags=("r",))
+    make_dep(db, "b", tags=("r",))
+    make_route(db, targets=[("a", 1, 0), ("b", 2, 0)])
+    reg = _HangingRegistry()
+    task = asyncio.ensure_future(router(db, clock, reg).route(req()))
+    await asyncio.wait_for(reg.entered.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert reg.called_ids() == ["a"]                       # 取消後不 fallback
+    (row,) = ledger(db)
+    assert (row.deployment_id, row.status, row.error, row.slot, row.fallback_depth) == (
+        "a", "error", "cancelled", 1, 0)
+    assert row.latency_ms is not None and row.latency_ms >= 0
+
+
+async def test_cancelled_error_raised_by_adapter_is_recorded(db, clock):
+    make_dep(db, "a", tags=("r",))
+    reg = ScriptedRegistry()
+    reg.script = {"a": asyncio.CancelledError()}
+    with pytest.raises(asyncio.CancelledError):
+        await router(db, clock, reg).route(req("a"))
+    (row,) = ledger(db)
+    assert (row.status, row.error) == ("error", "cancelled")
+
+
 # ------------------------------------------------------------------ 連線注入(design D2)
 
 
@@ -484,6 +557,29 @@ async def test_close_conn_closes_factory_connection(tmp_path, clock):
     setup.close()
 
 
+async def test_components_outside_request_raise_and_do_not_open_connection(db, clock):
+    # S6:contextvar 為空時取連線丟 RuntimeError,不呼叫工廠(不洩漏連線)
+    dep = make_dep(db, "a", tags=("r",))
+    n = []
+
+    def factory():
+        n.append(1)
+        return db
+
+    r = Router(factory, ScriptedRegistry(), clock, SeqRng([0.0]))
+    with pytest.raises(RuntimeError):
+        r.quota.remaining(dep)
+    with pytest.raises(RuntimeError):
+        r.resolver.resolve("a")
+    with pytest.raises(RuntimeError):
+        r._conn()
+    assert n == []
+    make_route(db)
+    assert (await r.route(req())).ok and len(n) == 1     # 請求期間照常可用
+    with pytest.raises(RuntimeError):                   # 請求結束後又不可用
+        r._conn()
+
+
 # ================================================================== dry_run
 
 
@@ -508,7 +604,8 @@ async def test_dry_run_plan_no_side_effects(db, clock):
         ("hot", "cooling"), ("poor", "skipped_precheck")}
     assert next(e for e in plan.excluded if e.deployment == "poor").estimate == EST
     layout = [(s.number, [e.deployment for e in s.entries]) for s in plan.slots]
-    assert layout == [(1, ["a", "b"]), (3, ["loc"]), (4, ["new"])]
+    # 未排序成員 base = 3 + 1;new 為 api → base + 1(M16 固定編號,cli 層 slot 4 空著)
+    assert layout == [(1, ["a", "b"]), (3, ["loc"]), (5, ["new"])]
     assert plan.first == "a"
     assert plan.unsorted == ("new",)
     a = plan.slots[0].entries[0]

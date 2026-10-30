@@ -58,8 +58,37 @@ def test_default_numbering_is_stable_when_members_filtered(db):
 
 
 def test_default_without_cli_members_starts_api_at_slot_1(db):
+    # 名稱沿用;M16 後的語意:層級編號固定,沒有 cli 成員時 slot 1 空著(不輸出),api 仍為 slot 2
     cs = cands(db, [("api-a", "api"), ("loc", "local")])
-    assert layout(OrderPlanner().plan((), cs)) == [(1, [("api-a", False)]), (2, [("loc", False)])]
+    assert layout(OrderPlanner().plan((), cs)) == [(2, [("api-a", False)]), (3, [("loc", False)])]
+
+
+def test_default_numbering_fixed_without_api_members(db):
+    # 只有 cli 與 local:api 層 slot 2 空著不輸出,local 依 id 從 slot 3 起
+    cs = cands(db, [("sub", "cli"), ("loc-b", "local"), ("loc-a", "local")])
+    assert layout(OrderPlanner().plan((), cs)) == [
+        (1, [("sub", False)]), (3, [("loc-a", False)]), (4, [("loc-b", False)])]
+
+
+def test_default_numbering_only_locals(db):
+    cs = cands(db, [("loc", "local")])
+    assert layout(OrderPlanner().plan((), cs)) == [(3, [("loc", False)])]
+
+
+def test_unsorted_numbering_fixed_without_cli_members(db):
+    # 有手動排序:base = max(手動 slot)+1 = 3;沒有 cli 新成員時 api 新成員仍為 base+1
+    cs = cands(db, [("api-a", "api"), ("api-new", "api"), ("loc-new", "local")])
+    rts = [RouteTarget("api-a", 2, 0)]
+    assert layout(OrderPlanner().plan(rts, cs)) == [
+        (2, [("api-a", False)]), (4, [("api-new", True)]), (5, [("loc-new", True)])]
+
+
+def test_local_numbering_uses_members_not_candidates(db):
+    # 被篩掉的 local(loc-a)仍佔它的編號,loc-b 不往前遞補
+    cs = cands(db, [("api-a", "api"), ("loc-a", "local"), ("loc-b", "local")])
+    members = [c.deployment for c in cs]
+    slots = OrderPlanner().plan((), [cs[0], cs[2]], members=members)
+    assert layout(slots) == [(2, [("api-a", False)]), (4, [("loc-b", False)])]
 
 
 def test_manual_order_by_slot_and_position(db):
