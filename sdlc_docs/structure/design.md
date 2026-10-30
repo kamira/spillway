@@ -20,7 +20,7 @@
 | `Adapter`(Protocol) | 呼叫上游與健康檢查 | `async call(dep, req, effort) -> CallResult`;`async health(dep) -> bool`(CHG-20261030-02 決策 5,spec 7.1 同步改 async) | 7.1 |
 | `AdapterContext` | `create(context)` 注入給模組的物件;新增欄位不算破壞契約、不升 `contract_version`(決策 13) | `credentials`(解析器)、`clock`、`cli_runner`(M2 為 None) | 7.6 |
 | `AdapterManifest` | 每個 adapter 模組的宣告資料(見下方「Adapter 模組契約」) | dataclass,模組層級常數 `MANIFEST` | 6.3、5.3.1、7 |
-| `AdapterRegistry` | 啟動時掃描 `spillway.adapters` 下的子套件並註冊;`provider` → adapter;未註冊依 `kind` 用通用 `litellm` 模組;提供 `cardinality_of(provider)` | `discover(extra_paths=()) -> list[AdapterManifest]`;`get(dep) -> Adapter`;`unavailable() -> dict[provider, reason]`;`cardinality_of(provider)`;`modules()` | 7.1.1 |
+| `AdapterRegistry` | 啟動時掃描 `spillway.adapters` 下的子套件並註冊;`provider` → adapter;未註冊依 `kind` 用通用 `litellm` 模組;提供 `cardinality_of(provider, kind=None)` | `discover(extra_paths=()) -> list[AdapterManifest]`;`get(dep) -> Adapter`;`module_for(dep) -> ModuleInfo`(不可用時丟 `AdapterUnavailableError`,供 CandidateFilter 判定 `adapter_unavailable`);`unavailable() -> dict[provider, reason]`;`cardinality_of(provider, kind=None)`;`modules()` | 7.1.1 |
 | `CliRunner`(M3) | 啟動 CLI 子行程:環境清理、深度標記、逾時、並行上限(非阻塞取得,滿了視為不可用) | `run(argv, stdin, env, cwd, timeout) -> ProcResult` | 7.3、7.4、NFR-6 |
 | `Attempt` | Router 交給 LedgerWriter 的單次嘗試記錄:ts、route_name、deployment_id、effort、tokens、cost、status、slot、fallback_depth、latency_ms、est_*、error、請求與回應內容、`extra_secrets` | 型別,定義於 `ledger.py` | 2.4、4.5.1 |
 | `Plan` | dry-run 結果:slots(每個候選含 deployment、kind、weight、effort、`Estimate`、健康狀態)、`excluded[]`(deployment、原因,含 `adapter_unavailable`、`skipped_precheck`)、`unsorted[]`、依 Rng 本次抽出的第一順位 | 型別,由 `Router.dry_run` 回傳 | 4 |
@@ -110,7 +110,7 @@ adapters/<module>/
 
 1. **新增一種 AI = 新增一個子套件資料夾**,不修改任何既有檔案(含 registry)。spec 7.1.2「只可新增 adapter 檔案與註冊一行」的上限因此收緊為零行。
 2. 模組只可 import `spillway.adapters.base`(Protocol、`CallResult`、`AdapterManifest`、`AdapterContext`、`classify`、`effort_to_upstream`、`litellm_call`;M3 起另有 `CliRunner`)、標準庫與 `pyyaml`;不可直接 import `litellm`、`spillway.credentials`、`spillway.clock`;**不可 import `routing`、`store`、`api`、`mcp`**。由 `tests/contract/test_layering.py` 以 AST 檢查。
-3. 每個模組必須通過共用合約測試(對所有被發現的模組參數化執行):`tests/contract/test_adapter_contract.py` 檢查 manifest 欄位齊全且合法、`effort_map` 五級都有定義、`models.yaml` 可解析;`tests/contract/test_call_status.py` 檢查 `call` 對假上游的成功/用完/429/錯誤四種輸出回傳正確的 `CallResult.status`(adapter 在 `call()` 內以 `classify` 歸類)。新模組另放自己的假上游於 `tests/fakes/<module>/`;三個內建 API 模組共用 `tests/fakes/api_upstream/`(D17)。
+3. 每個模組必須通過共用合約測試(對所有被發現的模組參數化執行):`tests/contract/test_adapter_contract.py` 檢查 manifest 欄位齊全且合法、`effort_map` 五級都有定義、`models.yaml` 可解析;`tests/contract/test_call_status.py` 檢查 `call` 對假上游的成功/用完/429/錯誤四種輸出回傳正確的 `CallResult.status`(adapter 在 `call()` 內以 `classify` 歸類)。新模組另放自己的假上游於 `tests/fakes/<module>/`;三個內建 API 模組共用 `tests/fakes/api_upstream/`(D17)。repo 外的模組(以 `discover(extra_paths)` 載入)以環境變數 `SPILLWAY_CONTRACT_EXTRA_PATHS` 納入合約測試,其 call_status 測試 harness 以 `SPILLWAY_CONTRACT_HARNESS_PATHS` 目錄下的 `<module>_harness.py` 提供(CHG-20261030-02 決策 57)。模組層級的 `list_models(context, …)` 可為同步或 async 函式。
 4. 註冊衝突(兩個模組宣告同一 `provider`)→ 啟動失敗並列出兩個模組,不猜哪個優先。
 5. 模組載入失敗(import 錯誤、manifest 不合法、`contract_version` 不支援)→ 該模組不註冊,原因記入 `AdapterRegistry.unavailable()`,其 provider 依 D21 推得;使用該 `provider` 的成員在候選篩選時視為不可用(原因 `adapter_unavailable`),並在 UI-2 成員頁顯示。其他模組照常運作。
 6. 成員的 `params` 覆寫 manifest 的 `default_params` / `default_signals`(spec 5.3.1「可於 UI 修改」不變)。
@@ -171,7 +171,7 @@ Web 後台建立與編輯成員時以選單取代自由輸入,資料來源是新
   | `payload_expired` | 410 | api.admin | payload 已過保存期限 |
   | `provider_single` | 409 | api.admin | `single` 的 provider 建立第二個成員,或 `PUT` 變更 provider 違反 cardinality(D15、D22) |
   | `validation_error` | 422 | api.admin、api.openai | 欄位格式錯誤;欄位路徑寫在 `message`(D22) |
-  | `not_found` | 404 | api.admin | 資源不存在,或 payload 從未記錄(D22) |
+  | `not_found` | 404 | api.admin;全站 | 資源不存在、payload 從未記錄(D22),或任何未知路徑(全站 handler) |
   | `conflict` | 409 | api.admin | 例如刪除仍被 route 參照的群組(D22) |
   | `internal_error` | 500 | api(全站) | 非預期例外(例如帳本寫入失敗,決策 35);message 只含例外型別(CHG-20261030-02 決策 42) |
   | `method_not_allowed` | 405 | api(全站) | HTTP 方法不允許(決策 42) |

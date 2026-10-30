@@ -27,6 +27,7 @@ spillway/
 │   ├── credentials.py
 │   ├── redact.py
 │   ├── routing/
+│   │   ├── target.py            # route 目標(group / tags)→ 成員集合
 │   │   ├── resolver.py
 │   │   ├── filter.py
 │   │   ├── planner.py
@@ -65,8 +66,9 @@ spillway/
     │   └── admin/               # 管理 API 整合測試(M2)
     ├── features/                # behave 行為情境(m2_*.feature)
     │   ├── steps/               # 步驟檔(T15 撰寫)
+    │   ├── support/             # 行程內驅動 app 的 gateway(與 open_spillway 同方式)
     │   └── environment.py
-    └── acceptance/              # AC-1–21、NFR 量測
+    └── acceptance/              # AC-7 與 NFR 量測、test_operation.py(操作驗收,L4);輔助 seed.py、perf.py、procs.py、results.py
 ```
 
 ## 各目錄職責
@@ -92,5 +94,5 @@ spillway/
 - 新增一種 AI:只新增 `adapters/<module>/` 子套件(含 `MANIFEST`、`create()`、`models.yaml`、`README.md`)與 `tests/fakes/<module>/`,不修改任何既有檔案;須通過 `tests/contract/`(design D11)。模組名小寫底線,`provider` 值用連字號(例:模組 `gemini_cli` 處理 provider `gemini-cli`)。
 - 新增或下架某個 AI 的模型:只改該模組的 `models.yaml`(design D12)。
 - 新增 MCP 工具格式:只加 `templates/mcp/<tool>.j2`(spec 8.2.3)。
-- 驗收測試檔名 `test_ac<編號>_<簡述>.py`(例:`test_ac04_weighted_split.py`),NFR 量測檔名 `test_nfr<n>_<簡述>.py`,讓 ACC 可直接指到。
+- 驗收測試檔名 `test_ac<編號>_<簡述>.py`(例:`test_ac07_dry_run_p95.py`),NFR 量測檔名 `test_nfr<n>_<簡述>.py`,讓 ACC 可直接指到。以行為情境驗證的 AC(M2:AC-3、4、5、13、14、15、18、19)放在 `tests/features/m2_*.feature`,情境標題帶 AC 編號。
 - 不在 repo 存任何憑證、資料庫檔或 payload;資料目錄在 repo 外(design D8)。

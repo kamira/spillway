@@ -16,16 +16,16 @@
 | 應用層 | `routing` | 請求解析 → 候選篩選 → 順序決定 → slot 內選擇 → 呼叫與 fallback | `quota`、`estimate`、`effort`、`adapters`、`ledger`、`store` | FR-2–FR-7 |
 | 應用層 | `quota` | 計算期間、剩餘額度與比例、冷卻設定與清除(上游訊號判定已移至 `adapters.base` 的 `classify`) | `store`、`clock` | FR-8 |
 | 應用層 | `estimate` | token 與花費預估(P50/P90) | `store`、`adapters.base`(`model_string`、`load_litellm`)、LiteLLM | FR-9 |
-| 應用層 | `effort` | 五級 effort 的來源優先序與降級 | — | FR-10 |
+| 應用層 | `effort` | 五級 effort 的來源優先序與降級 | `domain` | FR-10 |
 | 應用層 | `ledger` | 每次嘗試寫入 `usage_ledger`;context 記錄(截斷、遮罩)與保存清理 | `store`、`redact`、`clock` | FR-7、FR-14 |
 | 應用層 | `configio`(M4) | YAML 匯入(merge/replace、單一交易)與匯出 | `store` | FR-21 |
 | 應用層 | `mcpconf`(M4) | 依群組與工具產生 MCP 設定(模板) | `store` | FR-19 |
-| 整合層 | `adapters.base` | `Adapter` 介面、`AdapterContext`、`AdapterManifest`、自動發現的註冊表、上游訊號歸類 `classify`、effort 上游值轉換 `effort_to_upstream`、共用 LiteLLM 呼叫 `litellm_call`、local 健康探測 `probe_http`(httpx)、`CliRunner`〔M3〕(含 CLI 並行上限) | `credentials`、`clock` | FR-11、FR-17 |
+| 整合層 | `adapters.base` | `Adapter` 介面、`AdapterContext`、`AdapterManifest`、自動發現的註冊表、上游訊號歸類 `classify`、effort 上游值轉換 `effort_to_upstream`、共用 LiteLLM 呼叫 `litellm_call`、local 健康探測 `probe_http`(httpx)、`CliRunner`〔M3〕(含 CLI 並行上限) | `clock`、`domain`(憑證解析器經 `AdapterContext` 注入,不 import `credentials`) | FR-11、FR-17 |
 | 整合層 | `adapters.<module>` | 一種 AI、一種接入方式一個模組:訂閱 CLI(claude_cli、codex_cli;M3)、API(anthropic_api、openai_api)、通用後備(litellm);各宣告唯一或多個;各帶 manifest(effort 對應、訊號預設、能力預設)與可用模型清單 | 只依 `adapters.base` | FR-12、FR-15、FR-16、FR-23 |
 | 基礎層 | `domain` | 跨層共用的值物件:`Deployment`、`Budget`、`ChatRequest`、`CallResult`(CHG-20261030-02 審查修正;`adapters.base` 轉匯出) | — | FR-1、FR-11 |
 | 基礎層 | `store` | SQLite 連線(WAL、外鍵)、schema 建立與版本、各表存取 | `domain`、`clock` | FR-1 |
 | 基礎層 | `credentials` | 解析 `credential_ref`(`env:`、`keyring:`) | — | FR-1、NFR-4 |
-| 基礎層 | `redact` | 疑似金鑰遮罩規則 | `credentials` | FR-14、NFR-4 |
+| 基礎層 | `redact` | 疑似金鑰遮罩規則(已解析的憑證值由呼叫端以 `extra_secrets` 傳入) | — | FR-14、NFR-4 |
 | 基礎層 | `clock` / `rng` | 可注入的時間與亂數來源 | — | AC-4、AC-14、AC-17、NFR-5 |
 | 基礎層 | `settings` | 資料目錄、埠號、綁定位址;存取 token 雜湊(M3) | M2 不依賴 `store`;M3 讀 settings 表 | NFR-3 |
 
