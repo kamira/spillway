@@ -103,3 +103,69 @@ async def test_cleanup_error_does_not_kill_scheduler(open_spillway, clock, monke
         assert calls["n"] >= 3
         assert not h.app.state.retention.task.done()
     assert "RuntimeError" in caplog.text
+
+
+# ---- CHG-20261030-02 T13/T14 審議 M22:最壞延遲 ≤ interval(NFR-5)與排程韌性 ----
+
+
+async def test_triggers_within_one_poll_after_interval_minus_poll(open_spillway, clock):
+    async with open_spillway(retention_poll_seconds=POLL) as h:
+        assert h.app.state.retention.runs == 1
+        clock.advance(seconds=3600 - POLL)
+        await _wait_runs(h, 2, timeout=POLL * 50)
+        assert h.app.state.retention.runs == 2
+
+
+def test_worst_case_delay_is_at_most_interval(clock):
+    from spillway.app import RetentionScheduler
+
+    sched = RetentionScheduler(lambda: None, clock, interval_seconds=3600, poll_seconds=30)
+    sched.next_due = clock.now() + timedelta(seconds=3600)
+    clock.advance(seconds=3600 - 30 - 1)
+    assert not sched.due()
+    clock.advance(seconds=1)          # 3600 − poll:本輪就清理,不必等到下一輪(3600 + poll)
+    assert sched.due()
+
+
+class _FlakyClock:
+    def __init__(self, inner, fail_on: set[int]):
+        self.inner, self.fail_on, self.n = inner, fail_on, 0
+
+    def now(self):
+        self.n += 1
+        if self.n in self.fail_on:
+            raise RuntimeError("clock boom")
+        return self.inner.now()
+
+
+async def test_clock_error_does_not_kill_scheduler(clock, caplog):
+    from spillway.app import RetentionScheduler
+
+    flaky = _FlakyClock(clock, fail_on={2, 3})
+    calls = []
+    sched = RetentionScheduler(lambda: calls.append(1), flaky, interval_seconds=3600,
+                               poll_seconds=POLL)
+    sched.next_due = clock.now()
+    sched.task = asyncio.get_running_loop().create_task(sched._loop())
+    for _ in range(100):
+        if flaky.n > 4:
+            break
+        await asyncio.sleep(POLL)
+    assert not sched.task.done()
+    await sched.stop()
+    assert "RuntimeError" in caplog.text
+    assert "clock boom" not in caplog.text
+
+
+async def test_stop_swallows_non_cancel_exception(clock):
+    from spillway.app import RetentionScheduler
+
+    sched = RetentionScheduler(lambda: None, clock, poll_seconds=POLL)
+
+    async def boom():
+        raise ValueError("x")
+
+    sched.task = asyncio.get_running_loop().create_task(boom())
+    await asyncio.sleep(0)
+    await sched.stop()          # 不往外丟
+    assert sched.task.done()

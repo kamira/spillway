@@ -5,7 +5,11 @@ M2 只有 `spillway serve [--host 127.0.0.1] [--port 8787]`;`mcp-stdio`、`init`
 - `--host` 只接受 `settings.ALLOWED_HOSTS`(字面 `127.0.0.1`);其他值印錯誤到 stderr 並回 2,不啟動。
 - `--port` 必須為 1–65535。
 - 以 uvicorn 執行 `spillway.app.create_app()`(`lifespan="on"`:lifespan 失敗即啟動失敗)。
-  啟動失敗(例如 7.6.6 模組衝突)回 1;正常關閉(Ctrl-C / SIGTERM)回 0。
+  退出碼:用法錯誤或 host 不允許回 2;啟動失敗(例如 7.6.6 模組衝突)回非 0——uvicorn 以
+  `sys.exit(3)` 結束時沿用 3,未啟動而無退出碼時回 1(`EXIT_STARTUP_FAILED`)。
+  Ctrl-C / SIGTERM:uvicorn 先完成正常關閉(lifespan shutdown、停止 RetentionJob 排程),再依 Unix
+  慣例把收到的訊號重新送給自己,行程以該訊號結束(shell 看到 130 / 143,`subprocess` 看到 −2 / −15),
+  不回 0;這讓上層的行程管理器分得出「被要求停止」與「自己結束」。本模組不改寫此行為。
 - `main(argv)` 回傳退出碼;`python -m spillway` 以 `SystemExit(main())` 結束。
 - uvicorn access log 保留(只有方法、路徑、狀態碼,不含 body)。
 """

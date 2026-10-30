@@ -10,22 +10,27 @@ design D13、D15、D22;決策 6、16、17、22、24、25、32)。
   請求結束時關閉(與 `Router(..., close_conn=True)` 的假設相同)
 - `clock`:`spillway.clock.Clock`
 
-錯誤(spec 9.1.2;決策 16、17、22):一律 `{"error": {"code", "message"}}`。
+錯誤(spec 9.1.2;決策 16、17、22):一律 `{"error": {"code", "message"}}`,格式工具與
+`/v1/*` 共用 `spillway.api` 的 `ApiError`、`error_response`、`validation_message`。
 - 422 `validation_error`:body/query/path 驗證失敗(含 FastAPI 的 `RequestValidationError`,
   由本 router 的 `_AdminRoute` 轉換,不依賴 app 層 handler);message 為「欄位路徑: 說明」,
   多筆以「; 」連接,路徑以 `.` 連接(例:`body.capabilities.efforts.1`)。**不回顯輸入值**。
 - 404 `not_found`:資源不存在;payload 從未記錄或帳本列不存在。
 - 409 `conflict`:id/name 重複;刪除仍被 route 參照的群組。
-- 409 `provider_single`:`single` 模組的 provider 已有成員(POST,或 PUT 變更 provider)。
+- 409 `provider_single`:`single` 模組的 provider 已有成員(POST,或 PUT 變更 provider / kind)。
+錯誤訊息中回顯的使用者輸入(id、名稱、model)一律先經 Redactor 遮罩。
 - 422 `member_not_in_target`:`PUT /api/routes/{name}/order` 的成員不屬 route 目標(9.3.1)。
 - 410 `payload_expired`:payload 已過保存期限(決策 17)。
 
 寫入驗證(決策 22):`credential_ref` 只接受 `env:…`、`keyring:…:…`(`credentials.validate_ref`);
-`params` 內任何字串(含巢狀與鍵名)命中 `Redactor.matches` 即 422;`reset_anchor` 1–28;
+`params` 與 `capabilities` 的額外鍵內任何字串(含巢狀與鍵名)命中 `Redactor.matches`,或任一層
+鍵名不分大小寫完全等於 `CREDENTIAL_KEY_NAMES`(api_key、apikey、key、token、access_token、secret、
+password、authorization;U9)即 422,不回顯值;`reset_anchor` 1–28;
+`context_retention_days` 0–36500;
 `kind`、`effort`、`weight`、`mode`、`window`、budget `type` 只接受 DDL 的合法值;
 `capabilities.efforts` 只可含五級。成員 id、群組名不可含空白與 `/`;route 名另不可含 `:`
 (避免與 `local/`、`route:` 前綴混淆)。各 body 不接受未知欄位(`/api/estimate`、dry-run 的請求 body
-除外,其餘 OpenAI 參數原樣轉交)。
+除外:其他鍵只轉交 OpenAI 標準參數白名單,名單外靜默丟棄)。
 
 各端點回應格式見各函式 docstring。時間一律 UTC ISO 8601 到秒(`2026-10-30T12:00:00Z`)。
 """
@@ -34,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import logging
 import math
 import sqlite3
 import time
@@ -44,7 +50,6 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import (
     BaseModel,
@@ -54,6 +59,7 @@ from pydantic import (
     StrictInt,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from spillway import credentials
@@ -62,6 +68,13 @@ from spillway.adapters.base import (
     AdapterUnavailableError,
     ModuleInfo,
     available_models,
+)
+from spillway.api import (
+    ApiError,
+    error_response,
+    filter_chat_params,
+    redact_echo,
+    validation_message,
 )
 from spillway.clock import to_iso
 from spillway.domain import CALL_STATUSES, Budget, CallResult, ChatRequest, Deployment
@@ -80,44 +93,26 @@ from spillway.routing import (
 from spillway.store import repo
 from spillway.store.db import transaction
 
-__all__ = ["router", "ApiError", "LEDGER_PAGE_SIZE", "LEDGER_PAGE_SIZE_MAX",
-           "CONTEXT_MAX_BYTES_MIN", "TEST_PROMPT"]
+__all__ = ["router"]
 
 LEDGER_PAGE_SIZE = 50
 LEDGER_PAGE_SIZE_MAX = 500
 CONTEXT_MAX_BYTES_MIN = 1024     # context_max_bytes 下限:小於 1 KiB 的 payload 已無檢視價值
+CONTEXT_RETENTION_DAYS_MAX = 36500   # 約 100 年;再大會讓 ledger._cutoff 溢位(審議 M25)
 TEST_PROMPT = "ping"
 TEST_MAX_TOKENS = 16
 TEST_TEXT_PREVIEW = 200          # 測試呼叫回傳的文字預覽上限(字元)
 
+# U9(使用者決定 2026-10-30):params 與 capabilities 額外鍵的鍵名(不分大小寫、完全相等)
+CREDENTIAL_KEY_NAMES = frozenset({
+    "api_key", "apikey", "key", "token", "access_token", "secret", "password", "authorization",
+})
+
 _REDACTOR = Redactor()
+_log = logging.getLogger(__name__)
 
 
-# ================================================================ 錯誤處理
-
-
-class ApiError(Exception):
-    """以 9.1.2 格式回應的錯誤。message 不可含秘密或使用者輸入的原值。"""
-
-    def __init__(self, status: int, code: str, message: str) -> None:
-        super().__init__(message)
-        self.status = status
-        self.code = code
-        self.message = message
-
-
-def _error_response(status: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
-
-
-def _format_validation(errors: list[Mapping[str, Any]]) -> str:
-    """`loc: msg; …`。只用 pydantic 的 `loc` 與 `msg`(不含 `input`,避免回顯輸入值)。"""
-    parts = []
-    for e in errors:
-        loc = ".".join(str(x) for x in e.get("loc", ()))
-        msg = str(e.get("msg", "格式錯誤"))
-        parts.append(f"{loc}: {msg}" if loc else msg)
-    return "; ".join(parts) or "格式錯誤"
+# ================================================================ 錯誤處理(共用 spillway.api 的工具)
 
 
 def _invalid(path: str, message: str) -> ApiError:
@@ -125,13 +120,17 @@ def _invalid(path: str, message: str) -> ApiError:
 
 
 def _not_found(what: str) -> ApiError:
-    return ApiError(404, "not_found", f"找不到{what}")
+    """`what` 可能含使用者輸入(id、名稱),先經 Redactor;英數開頭時與「找不到」之間補空白。"""
+    what = redact_echo(what.strip())
+    sep = " " if what[:1].isascii() and what[:1].isalnum() else ""
+    return ApiError(404, "not_found", f"找不到{sep}{what}")
 
 
 class _AdminRoute(APIRoute):
     """把本 router 內的 `RequestValidationError` 與 `ApiError` 轉成 9.1.2 格式。
 
     exception handler 只能掛在 app 上;以 route class 處理,admin.router 掛到任何 app 都一致。
+    轉換一律呼叫 `spillway.api` 的共用函式(與 app 層 handler 同一份格式)。
     """
 
     def get_route_handler(self) -> Callable[[Request], Any]:
@@ -141,9 +140,9 @@ class _AdminRoute(APIRoute):
             try:
                 return await handler(request)
             except RequestValidationError as exc:
-                return _error_response(422, "validation_error", _format_validation(exc.errors()))
+                return error_response(422, "validation_error", validation_message(list(exc.errors())))
             except ApiError as exc:
-                return _error_response(exc.status, exc.code, exc.message)
+                return error_response(exc.status, exc.code, exc.message, exc.headers)
 
         return wrapped
 
@@ -204,9 +203,22 @@ class CapabilitiesIn(BaseModel):
     vision: StrictBool | None = None
     efforts: list[EffortLit] | None = None
 
+    @model_validator(mode="after")
+    def _check_extra(self) -> CapabilitiesIn:
+        hits = _secret_paths(self.model_extra or {}, "capabilities")
+        if hits:
+            raise ValueError(_secret_message(hits))
+        return self
+
 
 def _secret_paths(value: Any, path: str) -> list[str]:
-    """`value` 內命中 Redactor 樣式的位置(鍵名本身命中時以 `<key>` 代替,不回顯)。"""
+    """`value` 內疑似憑證的位置,遞迴檢查巢狀 dict 與 list:
+
+    - 字串值命中 Redactor 樣式(`sk-…`、`Bearer …`);
+    - 鍵名本身命中 Redactor 樣式(以 `<key>` 代替,不回顯);
+    - 鍵名不分大小寫、**完全等於** `CREDENTIAL_KEY_NAMES` 之一(U9;`max_tokens` 不算)。
+    回傳的位置只含鍵名,不含值。
+    """
     hits: list[str] = []
     if isinstance(value, str):
         if _REDACTOR.matches(value):
@@ -217,11 +229,18 @@ def _secret_paths(value: Any, path: str) -> list[str]:
             if _REDACTOR.matches(ks):
                 hits.append(f"{path}.<key>")
                 continue
+            if ks.lower() in CREDENTIAL_KEY_NAMES:
+                hits.append(f"{path}.{ks}")
+                continue
             hits += _secret_paths(v, f"{path}.{ks}")
     elif isinstance(value, (list, tuple)):
         for i, v in enumerate(value):
             hits += _secret_paths(v, f"{path}.{i}")
     return hits
+
+
+def _secret_message(hits: list[str]) -> str:
+    return redact_echo(f"疑似金鑰,請改用 credential_ref(位置:{', '.join(hits)})")
 
 
 class DeploymentIn(BaseModel):
@@ -257,8 +276,7 @@ class DeploymentIn(BaseModel):
     def _check_params(cls, v: dict[str, Any]) -> dict[str, Any]:
         hits = _secret_paths(v, "params")
         if hits:
-            raise ValueError(
-                f"疑似金鑰,請改用 credential_ref(位置:{', '.join(hits)})")
+            raise ValueError(_secret_message(hits))
         return v
 
     def to_deployment(self, dep_id: str, exhausted_until: datetime | None) -> Deployment:
@@ -315,7 +333,7 @@ def _check_cardinality(conn: sqlite3.Connection, registry: Any, dep: Deployment)
     if rows:
         raise ApiError(
             409, "provider_single",
-            f"provider {dep.provider} 的模組僅允許 1 個成員,已有 1 個:{rows[0][0]}")
+            redact_echo(f"provider {dep.provider} 的模組僅允許 1 個成員,已有 1 個:{rows[0][0]}"))
 
 
 # ================================================================ /api/deployments
@@ -338,7 +356,7 @@ async def create_deployment(request: Request, body: DeploymentIn) -> dict[str, A
     with _db(request) as conn:
         with transaction(conn):
             if conn.execute("SELECT 1 FROM deployments WHERE id = ?", (dep.id,)).fetchone():
-                raise ApiError(409, "conflict", f"成員 id 已存在:{dep.id}")
+                raise ApiError(409, "conflict", redact_echo(f"成員 id 已存在:{dep.id}"))
             _check_cardinality(conn, request.app.state.registry, dep)
             repo.save_deployment(conn, dep)
         return _dep_out(_load_dep(conn, dep.id))
@@ -359,7 +377,7 @@ async def update_deployment(request: Request, dep_id: str, body: DeploymentIn) -
 
     budget 的 `exhausted_until` 不由 body 設定:保留既有值(編輯不清掉冷卻;清除請用 clear-cooldown);
     body 的 `budget` 為 null 時刪除 budgets 列(冷卻一併消失)。
-    變更 provider 時依新 provider 的 cardinality 在同一交易內檢查(決策 22)。
+    變更 provider 或 kind 時依新 (provider, kind) 的 cardinality 在同一交易內檢查(決策 22)。
     """
     if body.id is not None and body.id != dep_id:
         raise _invalid("body.id", "不可變更成員 id(必須與路徑相同)")
@@ -368,7 +386,7 @@ async def update_deployment(request: Request, dep_id: str, body: DeploymentIn) -
             old = _load_dep(conn, dep_id)
             until = old.budget.exhausted_until if old.budget is not None else None
             dep = body.to_deployment(dep_id, until)
-            if dep.provider != old.provider:
+            if dep.provider != old.provider or dep.kind != old.kind:
                 _check_cardinality(conn, request.app.state.registry, dep)
             repo.save_deployment(conn, dep)
         return _dep_out(_load_dep(conn, dep_id))
@@ -400,11 +418,13 @@ async def test_deployment(request: Request, dep_id: str) -> dict[str, Any]:
     實作選擇:Router 只有 `local/` 直呼能指定單一成員,cli/api 成員無法經它呼叫;因此直接取
     `registry.get(dep)` 呼叫 adapter,但比照 Router 的直呼規則記錄:呼叫前以 Estimator 預估、
     帳本一次寫入(`route_name`、`slot` 為 NULL,payload 依全域設定)、`extra_secrets` 為當次解析的
-    憑證值、cli/api 成員遇 `quota_exhausted`/`rate_limited` 以 `QuotaService.mark` 設冷卻。
+    憑證值、cli/api 成員遇 `quota_exhausted`/`rate_limited` 以 `QuotaService.mark` 設冷卻
+    (`mark` 失敗只記例外型別,帳本照寫);adapter 被取消時先寫一列 `status=error`、
+    `error="cancelled"` 再重新丟出。
 
     回應:`{deployment, status, ok, latency_ms, tokens_in, tokens_out, cost_usd, text, error,
-    ledger_id}`;`text` 為回應文字前 200 字元(已遮罩)、`error` 已遮罩。模組不可用時 status 為
-    `adapter_unavailable`,不呼叫、不寫帳本(`ledger_id` null)。
+    ledger_id}`;`text` 為回應文字先遮罩、再取前 200 字元,`error` 已遮罩。模組不可用時 status 為
+    `adapter_unavailable`(`error` 為經 Redactor 的原因),不呼叫、不寫帳本(`ledger_id` null)。
     """
     clock = _clock(request)
     registry = request.app.state.registry
@@ -413,9 +433,10 @@ async def test_deployment(request: Request, dep_id: str) -> dict[str, Any]:
         try:
             adapter = registry.get(dep)
         except AdapterUnavailableError as exc:
+            reason, _ = _REDACTOR.redact(str(exc.reason))
             return {"deployment": dep.id, "status": "adapter_unavailable", "ok": False,
                     "latency_ms": None, "tokens_in": None, "tokens_out": None,
-                    "cost_usd": None, "text": None, "error": exc.reason, "ledger_id": None}
+                    "cost_usd": None, "text": None, "error": reason, "ledger_id": None}
         req = ChatRequest(model=dep.model_name,
                           messages=[{"role": "user", "content": TEST_PROMPT}],
                           max_tokens=TEST_MAX_TOKENS)
@@ -426,8 +447,26 @@ async def test_deployment(request: Request, dep_id: str) -> dict[str, Any]:
                 secrets = (credentials.resolve(dep.credential_ref),)
             except credentials.CredentialError:
                 secrets = ()
+        writer = LedgerWriter(conn, _REDACTOR)
         ts = clock.now()
         start = time.perf_counter()
+
+        def elapsed_ms() -> int:
+            return max(0, int((time.perf_counter() - start) * 1000))
+
+        def record(res: CallResult, status: str, latency_ms: int) -> int:
+            return writer.record(Attempt(
+                ts=ts, status=status, route_name=None, deployment_id=dep.id, effort=None,
+                tokens_in=res.tokens_in, tokens_out=res.tokens_out, cost_usd=res.cost_usd,
+                slot=None, fallback_depth=0, latency_ms=latency_ms,
+                est_tokens_in=est.tokens_in, est_tokens_out_p50=est.out_p50,
+                est_tokens_out_p90=est.out_p90, est_cost_usd_p90=est.cost_usd_p90,
+                error=None if status == "ok" else (res.error or f"status {res.status}"),
+                request_text=json.dumps(req.messages, ensure_ascii=False),
+                response_text=res.text or None, extra_secrets=secrets,
+                route_record_context=None,
+            ))
+
         try:
             result = await adapter.call(dep, req, None)
             if not isinstance(result, CallResult):
@@ -435,24 +474,25 @@ async def test_deployment(request: Request, dep_id: str) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 — 與 Router 相同:例外視為 error
             result = CallResult(ok=False, text="", tokens_in=None, tokens_out=None,
                                 cost_usd=None, status="error", error=f"{type(exc).__name__}: {exc}")
-        latency_ms = max(0, int((time.perf_counter() - start) * 1000))
+        except asyncio.CancelledError:
+            # 比照 routing/router.py:上游可能已收到請求,同步補一列帳本(不跨 await)後重新丟出
+            record(CallResult(ok=False, text="", tokens_in=None, tokens_out=None, cost_usd=None,
+                              status="error", error="cancelled"), "error", elapsed_ms())
+            raise
+        latency_ms = elapsed_ms()
         status = result.status if result.status in CALL_STATUSES else "error"
         if status in ("quota_exhausted", "rate_limited") and dep.kind in CLOUD_KINDS:
-            QuotaService(conn, clock).mark(dep, status)
-        ledger_id = LedgerWriter(conn, _REDACTOR).record(Attempt(
-            ts=ts, status=status, route_name=None, deployment_id=dep.id, effort=None,
-            tokens_in=result.tokens_in, tokens_out=result.tokens_out, cost_usd=result.cost_usd,
-            slot=None, fallback_depth=0, latency_ms=latency_ms,
-            est_tokens_in=est.tokens_in, est_tokens_out_p50=est.out_p50,
-            est_tokens_out_p90=est.out_p90, est_cost_usd_p90=est.cost_usd_p90,
-            error=None if status == "ok" else (result.error or f"status {result.status}"),
-            request_text=json.dumps(req.messages, ensure_ascii=False),
-            response_text=result.text or None, extra_secrets=secrets,
-            route_record_context=None,
-        ))
+            try:
+                QuotaService(conn, clock).mark(dep, status)
+            except Exception as exc:  # noqa: BLE001 — 冷卻設定失敗不可中斷帳本(決策 35;同 Router M18)
+                _log.warning("QuotaService.mark 失敗(%s),本次測試呼叫未設冷卻",
+                             type(exc).__name__)
+        ledger_id = record(result, status, latency_ms)
     text = None
     if result.text:
-        text, _ = _REDACTOR.redact(result.text[:TEST_TEXT_PREVIEW], secrets)
+        # 先遮罩再截斷:先截斷會讓橫跨第 200 字元的金鑰只剩前半段而漏遮(審議 M24)
+        redacted, _ = _REDACTOR.redact(result.text, secrets)
+        text = redacted[:TEST_TEXT_PREVIEW]
     error = None
     if status != "ok":
         error, _ = _REDACTOR.redact(result.error or f"status {result.status}", secrets)
@@ -518,7 +558,7 @@ async def create_group(request: Request, body: GroupIn) -> dict[str, Any]:
     with _db(request) as conn:
         with transaction(conn):
             if repo.get_group(conn, body.name) is not None:
-                raise ApiError(409, "conflict", f"群組已存在:{body.name}")
+                raise ApiError(409, "conflict", redact_echo(f"群組已存在:{body.name}"))
             repo.save_group(conn, repo.Group(body.name, body.selector.model_dump()))
         return _group_out(_load_group(conn, body.name), repo.list_deployments(conn))
 
@@ -549,7 +589,7 @@ async def delete_group(request: Request, name: str) -> Response:
             _load_group(conn, name)
             refs = [r.name for r in repo.list_routes(conn) if r.target.get("group") == name]
             if refs:
-                raise ApiError(409, "conflict", f"群組 {name} 仍被 route 參照:{', '.join(refs)}")
+                raise ApiError(409, "conflict", redact_echo(f"群組 {name} 仍被 route 參照:{', '.join(refs)}"))
             repo.delete_group(conn, name)
     return Response(status_code=204)
 
@@ -571,7 +611,7 @@ def _normalize_target(v: Any) -> dict[str, Any]:
             sel = SelectorIn.model_validate(v["tags"])
         except ValidationError as exc:
             raise ValueError(
-                "tags 必須是 {all, any, none} 字串清單(" + _format_validation(
+                "tags 必須是 {all, any, none} 字串清單(" + validation_message(
                     [{**e, "loc": ("tags", *e["loc"])} for e in exc.errors()]) + ")") from None
         return {"tags": sel.model_dump()}
     raise ValueError("必須是 {group} 或 {tags: {all, any, none}} 其中之一")
@@ -626,7 +666,7 @@ class OrderIn(BaseModel):
                     dup.append(e.deployment)
                 seen.add(e.deployment)
         if dup:
-            raise ValueError(f"同一成員出現多次:{', '.join(sorted(set(dup)))}")
+            raise ValueError(redact_echo(f"同一成員出現多次:{', '.join(sorted(set(dup)))}"))
         return v
 
 
@@ -655,7 +695,7 @@ def _load_route(conn: sqlite3.Connection, name: str) -> repo.Route:
 
 def _check_group_exists(conn: sqlite3.Connection, target: Mapping[str, Any]) -> None:
     if "group" in target and repo.get_group(conn, target["group"]) is None:
-        raise _invalid("body.target.group", f"群組 {target['group']} 不存在")
+        raise _invalid("body.target.group", redact_echo(f"群組 {target['group']} 不存在"))
 
 
 @router.get("/routes")
@@ -673,7 +713,7 @@ async def create_route(request: Request, body: RouteIn) -> dict[str, Any]:
     with _db(request) as conn:
         with transaction(conn):
             if repo.get_route(conn, body.name) is not None:
-                raise ApiError(409, "conflict", f"route 已存在:{body.name}")
+                raise ApiError(409, "conflict", redact_echo(f"route 已存在:{body.name}"))
             _check_group_exists(conn, body.target)
             repo.save_route(conn, body.to_route(body.name))
         return _route_out(conn, _load_route(conn, body.name))
@@ -722,7 +762,7 @@ async def put_route_order(request: Request, name: str, body: OrderIn) -> dict[st
                        if e.deployment not in members]
             if outside:
                 raise ApiError(422, "member_not_in_target",
-                               f"成員不屬於 route {name} 的目標:{', '.join(outside)}")
+                               redact_echo(f"成員不屬於 route {name} 的目標:{', '.join(outside)}"))
             repo.replace_route_targets(conn, name, [
                 repo.RouteTarget(deployment_id=e.deployment, slot=i + 1, position=j,
                                  effort=e.effort, weight=e.weight)
@@ -745,7 +785,9 @@ async def delete_route_order(request: Request, name: str) -> Response:
 
 
 class ChatBody(BaseModel):
-    """範例請求(OpenAI 形狀);未列出的參數原樣放進 `ChatRequest.extra`。`stream` 不影響 dry-run。"""
+    """範例請求(OpenAI 形狀);未列出的參數只留 `spillway.api.ALLOWED_CHAT_PARAMS` 白名單內的
+    OpenAI 標準參數放進 `ChatRequest.extra`,其餘靜默丟棄(U8,與 `/v1/chat/completions` 同一份過濾)。
+    `stream` 不影響 dry-run。"""
 
     model_config = ConfigDict(extra="allow")
 
@@ -769,7 +811,7 @@ class ChatBody(BaseModel):
         return ChatRequest(model=model, messages=self.messages, max_tokens=self.max_tokens,
                            reasoning_effort=self.reasoning_effort, tools=self.tools,
                            metadata=dict(self.metadata), stream=False,
-                           extra=dict(self.model_extra or {}))
+                           extra=filter_chat_params(self.model_extra))
 
 
 class EstimateBody(ChatBody):
@@ -806,7 +848,7 @@ async def _dry_run(request: Request, model: str, req: ChatRequest) -> Plan:
     try:
         return await request.app.state.router.dry_run(model, req)
     except RouteNotFound:
-        raise _not_found(f" route 或成員:{model}") from None
+        raise _not_found(f"route 或成員:{model}") from None
     except InvalidEffort:
         raise _invalid("body.reasoning_effort", "必須為 none、low、medium、high、max") from None
 
@@ -936,13 +978,15 @@ async def get_payload(request: Request, ledger_id: int) -> dict[str, Any]:
 
 
 class ContextSettingsIn(BaseModel):
-    """部分更新:未給或為 null 的鍵不變。`context_retention_days` ≥ 0(0 = 不保存內容,spec 2.4.5);
+    """部分更新:未給或為 null 的鍵不變。`context_retention_days` 0–36500(0 = 不保存內容,spec 2.4.5;
+    上限 `CONTEXT_RETENTION_DAYS_MAX`,避免清理的截止時間溢位而永遠刪不掉);
     `context_max_bytes` ≥ 1024(`CONTEXT_MAX_BYTES_MIN`)。型別嚴格(不接受字串數字、1/0 當布林)。"""
 
     model_config = ConfigDict(extra="forbid")
 
     record_context_default: StrictBool | None = None
-    context_retention_days: StrictInt | None = Field(default=None, ge=0)
+    context_retention_days: StrictInt | None = Field(default=None, ge=0,
+                                                     le=CONTEXT_RETENTION_DAYS_MAX)
     context_max_bytes: StrictInt | None = Field(default=None, ge=CONTEXT_MAX_BYTES_MIN)
 
 

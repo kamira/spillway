@@ -3,10 +3,11 @@
 依賴 `request.app.state` 的 `router`(`spillway.routing.Router`)、`clock`、`conn_factory`(見 `app.py`)。
 
 `POST /v1/chat/completions`
-- body 以 Pydantic 驗證(OpenAI 相容欄位);未知欄位原樣放進 `ChatRequest.extra` 轉交上游。
+- body 以 Pydantic 驗證(OpenAI 相容欄位);其他欄位只轉交 `spillway.api.ALLOWED_CHAT_PARAMS`
+  白名單內的 OpenAI 標準參數(放進 `ChatRequest.extra`),名單外的鍵靜默丟棄(U8)。
 - `stream: true` → 400 `streaming_unsupported`(決策 7),不呼叫上游、不寫帳本。
 - `reasoning_effort` 先以 `normalize_effort` 正規化(決策 29、40),不合法 → 422 `validation_error`。
-- `RouteNotFound` → 404 `route_not_found`(4.1.4)。
+- `RouteNotFound` → 404 `route_not_found`(4.1.4);回顯的 model 名先經 Redactor 遮罩。
 - `RouteOutcome.result is None` → 503 `no_candidate`,message 先列每次嘗試「成員:狀態」,
   再列被篩成員「成員:原因」(決策 31);嘗試的錯誤內容已由 Router 遮罩,這裡只用成員 id 與狀態,
   不放錯誤原文。
@@ -29,17 +30,18 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-from spillway.api import ApiError
+from spillway.api import ApiError, filter_chat_params, redact_echo
 from spillway.domain import CallResult, ChatRequest
 from spillway.redact import Redactor
 from spillway.routing import InvalidEffort, RouteNotFound, RouteOutcome, normalize_effort
 from spillway.store import repo
 
-__all__ = ["router", "ChatCompletionBody", "format_no_candidate", "format_est_cost"]
+__all__ = ["router"]
 
 _log = logging.getLogger(__name__)
 
 router = APIRouter()
+_REDACTOR = Redactor()
 
 HEADER_SERVED_BY = "X-Spillway-Served-By"
 HEADER_SLOT = "X-Spillway-Slot"
@@ -55,7 +57,7 @@ class Message(BaseModel):
 
 
 class ChatCompletionBody(BaseModel):
-    """OpenAI `chat/completions` 請求;未列出的欄位(temperature、top_p…)進 `model_extra`。"""
+    """OpenAI `chat/completions` 請求;未列出的欄位進 `model_extra`,轉交時只留白名單參數。"""
 
     model_config = ConfigDict(extra="allow")
 
@@ -76,7 +78,7 @@ class ChatCompletionBody(BaseModel):
             tools=self.tools,
             metadata=dict(self.metadata or {}),
             stream=self.stream,
-            extra=dict(self.model_extra or {}),
+            extra=filter_chat_params(self.model_extra),
         )
 
 
@@ -93,7 +95,7 @@ def format_no_candidate(outcome: RouteOutcome) -> str:
     if excluded:
         parts.append(f"被篩:{excluded}")
     # 防線:成員 id 與狀態不應含秘密,仍以預設樣式再遮罩一次
-    text, _ = Redactor().redact(";".join(parts))
+    text, _ = _REDACTOR.redact(";".join(parts))
     return text
 
 
@@ -131,7 +133,7 @@ async def chat_completions(body: ChatCompletionBody, request: Request) -> JSONRe
     try:
         outcome = await state.router.route(req)
     except RouteNotFound:
-        raise ApiError(404, "route_not_found", f"找不到 route 或成員:{req.model}") from None
+        raise ApiError(404, "route_not_found", f"找不到 route 或成員:{redact_echo(req.model)}") from None
     except InvalidEffort:   # Router 的防線(決策 40);正規化後不應發生
         raise ApiError(422, "validation_error", "body.reasoning_effort: 不合法") from None
     except Exception as exc:  # noqa: BLE001 — 例如帳本寫入失敗(決策 35);不回顯例外內容

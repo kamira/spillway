@@ -35,9 +35,14 @@ if TYPE_CHECKING:
     from spillway.domain import Deployment
 
 DEFAULT_TIMEOUT = 120.0
+# `extra` 不可覆寫的參數。後半段(base_url 起)為縱深防禦(CHG-20261030-02 T13/T14 審議 M20):
+# 這些 LiteLLM 參數可改變上游目的地、協定、header,或以 mock 繞過上游;介面層已用白名單過濾,
+# 這裡再擋一次,避免其他入口(例如 M3 的 MCP)把請求參數原樣轉進來。
 PROTECTED_KEYS = frozenset(
     {"model", "messages", "api_key", "api_base", "timeout", "stream", "max_retries",
-     "callbacks", "verbose", "reasoning_effort", "max_tokens", "tools"}
+     "callbacks", "verbose", "reasoning_effort", "max_tokens", "tools",
+     "base_url", "custom_llm_provider", "mock_response", "extra_headers", "api_version",
+     "organization", "deployment_id"}
 )
 _CODE_RE = re.compile(r"""['"]code['"]\s*:\s*['"]([A-Za-z_][\w.\-]*)['"]""")
 

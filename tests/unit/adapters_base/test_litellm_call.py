@@ -269,3 +269,27 @@ def test_exception_to_raw_status_string_never_raises(value, expected):
         status_code = value
 
     assert exception_to_raw(E("boom"))["http_status"] == expected
+
+
+# ---- CHG-20261030-02 T13/T14 審議 M20:extra 不可改上游目的地或以 mock 繞過(縱深防禦)-------
+
+DANGEROUS_EXTRA = {
+    "base_url": "http://evil.invalid/v1",
+    "custom_llm_provider": "anthropic",
+    "mock_response": "MOCKED",
+    "extra_headers": {"X-Leak": "1"},
+    "api_version": "2099-01-01",
+    "organization": "org-evil",
+    "deployment_id": "evil",
+}
+
+
+async def test_extra_cannot_redirect_or_mock_upstream(captured):
+    await litellm_call(model="openai/gpt-4o-mini", messages=MSGS, api_key=KEY,
+                       api_base="http://127.0.0.1:9/v1",
+                       extra={**DANGEROUS_EXTRA, "temperature": 0.3})
+    kw = captured[0]
+    for key in DANGEROUS_EXTRA:
+        assert key not in kw, key
+    assert kw["api_base"] == "http://127.0.0.1:9/v1"
+    assert kw["temperature"] == 0.3
