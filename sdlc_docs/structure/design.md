@@ -7,11 +7,11 @@
 
 | 元件 | 責任 | 對外介面 / 契約 | 規格 |
 |------|------|-----------------|------|
-| `Router` | 單次請求的完整路由:解析、篩選、排序、選擇、fallback | `async route(req, ctx) -> RouteOutcome`;`async dry_run(route, req) -> Plan`(不呼叫 adapter、不寫帳本) | 4 |
+| `Router` | 單次請求的完整路由:解析、篩選、排序、選擇、fallback | `Router(conn_factory, registry, clock, rng, *, close_conn=False, …)`;`async route(req) -> RouteOutcome`;`async dry_run(route_name_or_model, req) -> Plan`(不呼叫 adapter、不寫帳本);conn_factory 每請求呼叫一次、以 contextvar 共用,內建元件只在 route()/dry_run() 期間可用(CHG-20261030-02 施工審議 M19) | 4 |
 | `Resolver` | `model` 字串 → `local/` 直呼 / route / 隱含 route / 404 | `resolve(model) -> Target` | 4.1 |
-| `CandidateFilter` | 依 enabled、能力、mode、額度、冷卻、健康、預估篩選 | `filter(target, req, now) -> list[Candidate]`(含被篩原因) | 4.2 |
-| `OrderPlanner` | 手動 slot 或預設層級 → slot 清單;標示「未排序」 | `plan(route, candidates) -> list[Slot]` | 4.3 |
-| `SlotSelector` | slot 內加權隨機選雲端(權重 = 優先權重值 × `ratio()`)、失敗重選、再依 position 試 local | `iterate(slot, rng) -> Iterator[Candidate]` | 4.4 |
+| `CandidateFilter` | 依 enabled、能力、mode、額度、冷卻、健康、預估篩選 | `async filter(target, req, *, probe=True, now=None) -> FilterResult(candidates, excluded)`;local 健康探測上限 2 秒、結果快取 10 秒(D20) | 4.2 |
+| `OrderPlanner` | 手動 slot 或預設層級 → slot 清單;標示「未排序」 | `plan(route_targets, candidates, members=None) -> list[Slot]`;預設層級固定編號:cli 為 base、api 為 base+1、local 自 base+2 起(CHG-20261030-02 決策 38) | 4.3 |
+| `SlotSelector` | slot 內加權隨機選雲端(權重 = 優先權重值 × `ratio()`)、失敗重選、再依 position 試 local | `SlotSelector(quota, rng).iterate(slot, now)`(generator,失敗後於剩餘成員重新加權) | 4.4 |
 | `QuotaService` | 本期起點、下一重置點、剩餘額度與比例、冷卻判定、設定與清除;不含上游訊號判定(已移至 `adapters.base.classify`,D12 修訂) | `period_start(budget, now)`、`next_reset(budget, now)`、`remaining(dep, now)`、`ratio(dep, now)`、`is_cooling(dep, now)`、`mark(dep, status, now)`、`clear(dep)` | 5.1–5.3 |
 | `classify`(原 `SignalMatcher`,位於 `adapters.base`) | 純函式:依成員 `params.signals` 或模組 `default_signals` 將上游輸出歸類;由 adapter 在 `call()` 內呼叫並回傳 status(CHG-20261030-02 決策 12) | `classify(raw, signals) -> ok / quota_exhausted / rate_limited / error` | 5.3.1、7.6.3、7.6.8 |
 | `Estimator` | 輸入 token、輸出 P50/P90、P90 花費 | `estimate(dep, req, route_name) -> Estimate` | 5.4 |
@@ -42,7 +42,7 @@
 ```mermaid
 classDiagram
   class Router {
-    +route(req, ctx) RouteOutcome
+    +route(req) RouteOutcome
     +dry_run(route, req) Plan
   }
   class Adapter {
