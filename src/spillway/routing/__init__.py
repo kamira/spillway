@@ -35,3 +35,21 @@ __all__ = [
     "OrderPlanner", "Slot", "SlotEntry", "DEFAULT_WEIGHT",
     "SlotSelector", "WEIGHT_VALUES",
 ]
+
+# T12(CHG-20261030-02):Router 與其回傳型別(只追加匯出)
+from spillway.routing.router import (  # noqa: E402
+    AttemptInfo,
+    InvalidEffort,
+    Plan,
+    PlanEntry,
+    PlanExcluded,
+    PlanSlot,
+    RouteOutcome,
+    Router,
+    normalize_effort,
+)
+
+__all__ += [
+    "Router", "RouteOutcome", "AttemptInfo", "Plan", "PlanSlot", "PlanEntry", "PlanExcluded",
+    "InvalidEffort", "normalize_effort",
+]
