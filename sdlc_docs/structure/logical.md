@@ -7,8 +7,8 @@
 
 | 層 | 模組 | 職責 | 依賴 | 回應需求 |
 |----|------|------|------|----------|
-| 介面層 | `api.openai` | `/v1/chat/completions`、`/v1/models`;回應 header(帳本由 Router 寫入,本模組只做 HTTP 轉換) | `routing` | FR-2、FR-13 |
-| 介面層 | `api.admin` | `/api/*` 管理端點(CRUD、order、dry-run、estimate、ledger、config〔M4〕、settings、`/api/adapters` 模組與可用模型) | `store`、`routing`、`estimate`、`quota`、`configio`〔M4〕、`mcpconf`〔M4〕、`adapters.base` | FR-13、FR-21、FR-24 |
+| 介面層 | `api.openai` | `/v1/chat/completions`、`/v1/models`;回應 header(帳本由 Router 寫入,本模組只做 HTTP 轉換) | `routing`、`store`(`/v1/models` 讀清單)、`redact`(503 訊息防線) | FR-2、FR-13 |
+| 介面層 | `api.admin` | `/api/*` 管理端點(CRUD、order、dry-run、estimate、ledger、config〔M4〕、settings、`/api/adapters` 模組與可用模型) | `store`、`routing`、`estimate`、`quota`、`ledger`、`credentials`、`redact`、`domain`、`clock`、`configio`〔M4〕、`mcpconf`〔M4〕、`adapters.base` | FR-13、FR-21、FR-24 |
 | 介面層 | `mcp.server`(M3) | `/mcp/<group>` Streamable HTTP;`ask`/`list_routes`/`quota_status`;遞迴防護 | `routing`、`quota`、`store` | FR-18 |
 | 介面層 | `mcp.bridge`(M3) | `spillway mcp-stdio`:stdio ↔ HTTP 轉發,`SPILLWAY_DEPTH` → header | (只依 HTTP) | FR-18 |
 | 介面層 | `web`(M4) | 7 個畫面(伺服端渲染 + 少量 JS),只呼叫 `/api/*` | `api.admin`(經 HTTP) | FR-20、FR-22 |

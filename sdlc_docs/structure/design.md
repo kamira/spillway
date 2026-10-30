@@ -136,8 +136,9 @@ Web 後台建立與編輯成員時以選單取代自由輸入,資料來源是新
 
 ```json
 {"modules": [{"module": "claude_cli", "providers": ["claude-cli"], "kinds": ["cli"],
-  "access": "subscription-cli", "cardinality": "single", "existing_members": 0,
-  "available": true, "unavailable_reason": null,
+  "access": ["subscription-cli"], "cardinality": "single", "existing_members": 0,
+  "builtin": true, "fallback_for_kinds": [],
+  "available": true, "unavailable_reason": null, "models_error": null,
   "models": [{"id": "claude-sonnet-5-5", "label": "Sonnet 5.5",
               "capabilities": {"ctx": 200000, "tools": true, "vision": false,
                                "efforts": ["low","medium","high","max"]}}]}]}
@@ -169,9 +170,12 @@ Web 後台建立與編輯成員時以選單取代自由輸入,資料來源是新
   | `recursion_blocked` | spec 8.1.6 | mcp.server(M3) | 請求帶 `X-Spillway-Depth` ≥ 1 |
   | `payload_expired` | 410 | api.admin | payload 已過保存期限 |
   | `provider_single` | 409 | api.admin | `single` 的 provider 建立第二個成員,或 `PUT` 變更 provider 違反 cardinality(D15、D22) |
-  | `validation_error` | 422 | api.admin | 欄位格式錯誤;欄位路徑寫在 `message`(D22) |
+  | `validation_error` | 422 | api.admin、api.openai | 欄位格式錯誤;欄位路徑寫在 `message`(D22) |
   | `not_found` | 404 | api.admin | 資源不存在,或 payload 從未記錄(D22) |
   | `conflict` | 409 | api.admin | 例如刪除仍被 route 參照的群組(D22) |
+  | `internal_error` | 500 | api(全站) | 非預期例外(例如帳本寫入失敗,決策 35);message 只含例外型別(CHG-20261030-02 決策 42) |
+  | `method_not_allowed` | 405 | api(全站) | HTTP 方法不允許(決策 42) |
+  | `http_error` | 其他 | api(全站) | 其餘 HTTPException 的後備(決策 42) |
 
 ## 設計決策與取捨
 
