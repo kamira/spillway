@@ -1,6 +1,6 @@
 # 設計結構 — Spillway
 
-- 專案:spillway · 分支:main · 版本:v1.0 已確認(2026-10-29,使用者;含 D11 adapter 模組化) · 日期:2026-10-29(UTC+0)
+- 專案:spillway · 分支:main · 版本:v1.1 已確認(2026-10-29,使用者;含 D11 adapter 模組化;v1.1 於 2026-10-30 確認 D8、D9、D13 手動輸入,CHG-20261030-01) · 日期:2026-10-30(UTC+0)
 - 依據:sdlc_docs/ai-guideline.md v1.0;docs/spec.md;sdlc_docs/structure/logical.md
 
 ## 關鍵元件
@@ -134,7 +134,7 @@ Web 後台建立與編輯成員時以選單取代自由輸入,資料來源是新
 | UI-4 每成員 effort | 只列該成員 `capabilities.efforts` 有的等級 + 「不指定」 | — |
 | UI-4 優先權重 | 高、中、低 | — |
 
-清單沒有的模型:模型選單最後一項「其他(手動輸入)」,允許輸入 `id`,能力需手填。**代使用者決定**:保留手動輸入是為了上游新出的模型不必等改清單就能用;要強制只能選清單內的,確認時說一聲即可移除。
+清單沒有的模型:模型選單最後一項「其他(手動輸入)」,允許輸入 `id`,能力需手填。**使用者確認**(2026-10-30):保留手動輸入,上游新出的模型不必等改清單就能用。
 
 ## 介面 / API 契約
 
@@ -154,8 +154,8 @@ Web 後台建立與編輯成員時以選單取代自由輸入,資料來源是新
 | D5 | 假上游(Guideline Q1):`tests/fakes/` 放假的 `claude`、`codex` 可執行腳本,測試時放到 `PATH` 最前面;API 以 LiteLLM 的 mock 回應/本機假 HTTP 端點 | PATH 注入 vs 在成員設定加「指令路徑」欄位 | PATH 注入不需要改 spec 7.3.1 的命令定義;假腳本依環境變數決定回傳成功、用完、429、錯誤或延遲。 |
 | D6 | MCP 用官方 `mcp` Python SDK 的 low-level server,單一 ASGI app 掛在 `/mcp/{group}`,依 path 參數決定暴露的 route | 低階 server vs 每群組一個 FastMCP 實例 | 群組會在執行期新增刪除;每群組一個實例要動態掛載與拆除,低階 server 依請求查表較單純,也方便發 `list_changed`。 |
 | D7 | Web UI:Jinja2 伺服端渲染 + 原生 JavaScript(HTML5 拖放、`fetch` 呼叫 `/api/*`),不引入前端建置與框架 | 原生 JS vs htmx vs SPA | 企劃書已定「不引入前端建置流程」;7 個畫面中只有 UI-4 拖曳需要較多互動,原生 DnD 足夠。 |
-| D8 | 資料目錄:環境變數 `SPILLWAY_HOME`,未設時用 `platformdirs.user_data_dir("spillway")`;內含 `spillway.db`、`work/claude/`、`tmp/` | 固定 `~/.spillway` vs platformdirs | 規格書只說「閘道資料目錄」;platformdirs 在三平台各自落在慣例位置(NFR-7)。**代使用者決定**,可在確認時否決。 |
-| D9 | 預設埠號 8787、綁定 127.0.0.1;存取 token 於 `spillway init` 或首次啟動產生,只印一次,資料庫存 SHA-256 | — | 依 spec 8.1.3、9.1.1 與範例;8787 取自規格書範例。**代使用者決定**埠號。 |
+| D8 | 資料目錄:環境變數 `SPILLWAY_HOME`,未設時用 `platformdirs.user_data_dir("spillway")`;內含 `spillway.db`、`work/claude/`、`tmp/` | 固定 `~/.spillway` vs platformdirs | 規格書只說「閘道資料目錄」;platformdirs 在三平台各自落在慣例位置(NFR-7)。**使用者確認**(2026-10-30)。 |
+| D9 | 預設埠號 8787、綁定 127.0.0.1;存取 token 於 `spillway init` 或首次啟動產生,只印一次,資料庫存 SHA-256 | — | 依 spec 8.1.3、9.1.1 與範例;8787 取自規格書範例。**使用者確認**埠號(2026-10-30)。 |
 | D10 | 設定檔 YAML 解析用 `PyYAML` safe_load,欄位驗證用 Pydantic 模型 | Pydantic vs 手寫驗證 | FastAPI 已帶 Pydantic;驗證失敗可直接產生欄位路徑(spec 3.1.2)。 |
 | D11 | Adapter 一供應商一個子套件,manifest 宣告 + 啟動時自動發現 + 共用合約測試(見上方「Adapter 模組契約」) | 子套件自動發現 vs 加 entry point 外部外掛 vs 規格書原做法(單檔 + 註冊一行) | 使用者要求不同 AI 能以模組化方式加入。自動發現讓新增 AI 不碰既有檔案;effort 對應與上游訊號預設跟著模組走,不再集中在共用表。entry point 會載入 repo 外的第三方程式,第一版不採用。**使用者決定**(2026-10-29)。 |
 | D12 | 可用模型清單放在各模組的 `models.yaml`,可選擇再加執行期查詢 | 模組內靜態清單 vs 資料庫表 vs 只靠執行期查詢 | 跟模組放在一起才符合「一種 AI 一個模組」:新增 AI 時清單一起帶進來;雲端 API 多半沒有可靠的列模型端點,所以靜態清單為主、執行期查詢為輔(local 端點可查)。**使用者要求**(2026-10-29),檔案形式代使用者決定。 |
