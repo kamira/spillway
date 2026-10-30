@@ -43,6 +43,7 @@ from fastapi import FastAPI
 from spillway import credentials, settings
 from spillway.adapters.base import AdapterContext, AdapterRegistry, load_litellm
 from spillway.api import install_error_handlers
+from spillway.api import admin
 from spillway.api import openai as openai_api
 from spillway.clock import Clock, Rng, SystemClock, SystemRng
 from spillway.ledger import RetentionJob
@@ -176,6 +177,6 @@ def create_app(
 
     app.include_router(openai_api.router)
     # ---- T15(CHG-20261030-02)只在此處追加下一行掛載管理端點,其餘不動 ----
-    # app.include_router(admin.router)   # 需要 `from spillway.api import admin`
+    app.include_router(admin.router)
     # ---- T15 追加處結束 ----
     return app
