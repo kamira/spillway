@@ -150,7 +150,7 @@ class QuotaService:
         return bool(budget and budget.exhausted_until and budget.exhausted_until > now)
 
     def mark(self, dep: Deployment, status: str, now: datetime | None = None) -> datetime | None:
-        """依 4.5.2 設冷卻並回傳新的 `exhausted_until`。
+        """依 4.5.2 設冷卻並回傳寫入後的 `exhausted_until`(冷卻只延長不縮短)。
 
         `quota_exhausted` 設為下一重置點(5.3.2;window none 為現在 + 1 小時),
         `rate_limited` 設為現在 + 60 秒;其他 status 不動,回傳目前值。
@@ -167,9 +167,12 @@ class QuotaService:
             until = self.next_reset(budget, now)
         else:
             until = now + RATE_LIMIT_COOLDOWN
-        until = until.replace(microsecond=0)  # 存到秒(spec 2.1.2),回傳值與讀回一致
-        repo.mark_exhausted_until(self._conn(), dep.id, until)
-        return until
+        until = until.replace(microsecond=0)  # 存到秒(spec 2.1.2)
+        conn = self._conn()
+        repo.mark_exhausted_until(conn, dep.id, until)
+        # 冷卻只延長不縮短(M27):回傳寫入後讀回的實際值
+        stored = repo.get_budget(conn, dep.id)
+        return stored.exhausted_until if stored else until
 
     def clear(self, dep: Deployment) -> None:
         """手動清除冷卻(5.3.3)。"""

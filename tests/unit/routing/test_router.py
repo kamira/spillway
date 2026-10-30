@@ -664,6 +664,62 @@ async def test_member_reselected_after_cooldown_expires(db, clock):
     assert reg.called_ids() == ["a", "b", "b", "a"]
 
 
+class _CoolsDuringCall(ScriptedRegistry):
+    """呼叫 `trigger` 成員時,模擬並行請求讓 `victim` 進入冷卻(末端審查 probe2 的交錯)。"""
+
+    def __init__(self, db, clock, trigger: str, victim: str, status: str) -> None:
+        super().__init__()
+        outer = self
+        inner = self._adapter
+
+        class _A:
+            async def call(self, dep, req, effort):
+                if dep.id == trigger:
+                    victim_dep = repo.load_deployment(db, victim)
+                    QuotaService(db, clock).mark(victim_dep, status)
+                return await inner.call(dep, req, effort)
+
+            async def health(self, dep):
+                return await inner.health(dep)
+
+        outer._adapter = _A()
+
+
+@pytest.mark.parametrize("status", ["quota_exhausted", "rate_limited"])
+async def test_fallback_rechecks_cooling_before_each_attempt(db, clock, status):
+    # S1:R2 篩選時 a 未冷卻;x 失敗期間並行請求讓 a 冷卻 → R2 的 fallback 略過 a,不呼叫、不寫帳本
+    make_dep(db, "x", tags=("r",))
+    make_dep(db, "a", tags=("r",), budget=Budget("usd", 10.0, "daily"))
+    make_dep(db, "b", tags=("r",))
+    make_route(db, targets=[("x", 1, 0), ("a", 2, 0), ("b", 3, 0)])
+    reg = _CoolsDuringCall(db, clock, "x", "a", status)
+    reg.script = {"x": fail()}
+    out = await router(db, clock, reg).route(req())
+    assert reg.called_ids() == ["x", "b"]
+    assert out.served_by == "b" and out.slot == 3
+    assert [(r.deployment_id, r.status, r.fallback_depth) for r in ledger(db)] == [
+        ("x", "error", 0), ("b", "ok", 1)]
+    assert dict(out.excluded) == {"a": "cooling"}
+    assert qs_cooling(db, clock, "a")
+
+
+def qs_cooling(db, clock, dep_id: str) -> bool:
+    return QuotaService(db, clock).is_cooling(repo.load_deployment(db, dep_id))
+
+
+async def test_fallback_skip_cooling_listed_in_503(db, clock):
+    make_dep(db, "x", tags=("r",))
+    make_dep(db, "a", tags=("r",))
+    make_route(db, targets=[("x", 1, 0), ("a", 2, 0)])
+    reg = _CoolsDuringCall(db, clock, "x", "a", "rate_limited")
+    reg.script = {"x": fail()}
+    out = await router(db, clock, reg).route(req())
+    assert not out.ok
+    assert [(a.deployment, a.status) for a in out.attempts] == [("x", "error")]
+    assert out.excluded == (("a", "cooling"),)
+    assert reg.called_ids() == ["x"]
+
+
 # ================================================================== L2:T6 adapter + T5 假端點
 
 

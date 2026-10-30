@@ -2,8 +2,10 @@
 
 測試模組以 `tests.contract.fakemods.write_module` 寫在情境的暫存目錄(決策 15:不寫入 src/);
 「啟動閘道」= 以 `create_app(extra_adapter_paths=[暫存目錄])` 建新 app(AC-19 的「重新啟動」)。
-「合約測試對該模組通過」以子行程執行 `tests/contract/test_adapter_contract.py`,
-經 `SPILLWAY_CONTRACT_EXTRA_PATHS` 把暫存目錄納入參數化,並只選該模組的參數化項。
+「合約測試對該模組通過」以子行程執行 `tests/contract/test_adapter_contract.py` 與
+`tests/contract/test_call_status.py`(design 規則 3 的兩個檔案),經 `SPILLWAY_CONTRACT_EXTRA_PATHS`
+把暫存目錄納入參數化、經 `SPILLWAY_CONTRACT_HARNESS_PATHS` 提供模組資料夾外的 call 狀態 harness,
+並只選該模組的參數化項;斷言 call_status 的 5 組上游輸出全數通過。
 """
 from __future__ import annotations
 
@@ -39,6 +41,11 @@ def _mods_dir(context) -> Path:
     return d
 
 
+def _harness_dir(context) -> Path:
+    # call 狀態 harness 放在模組資料夾外(spec 7.6.1 固定模組檔案清單;末端審查 M29)
+    return context.tmp / "contract-harness"
+
+
 def _adapters(gw) -> list[dict]:
     return gw.ok(gw.get("/api/adapters"), 200)["modules"]
 
@@ -52,7 +59,8 @@ def _module_for(gw, provider: str) -> dict:
 @step(r'另外放入一個宣告 provider "([^"]+)" 的測試模組資料夾,未修改任何既有檔案')
 def step_put_module(context, provider):
     before = _tree_digest(BUILTIN_ADAPTERS)
-    path = write_module(_mods_dir(context), f"{provider}_module", providers=(provider,))
+    path = write_module(_mods_dir(context), f"{provider}_module", providers=(provider,),
+                        harness_dir=_harness_dir(context))
     context.module_dir = path
     assert not path.resolve().is_relative_to(REPO_ROOT)
     assert _tree_digest(BUILTIN_ADAPTERS) == before, "既有的 adapter 模組檔案被修改"
@@ -112,18 +120,25 @@ def step_contract(context):
     env = {k: v for k, v in os.environ.items()
            if k not in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
     env["SPILLWAY_CONTRACT_EXTRA_PATHS"] = str(context.module_dir.parent)
+    env["SPILLWAY_CONTRACT_HARNESS_PATHS"] = str(_harness_dir(context))
     env["PYTHONPATH"] = os.pathsep.join([str(REPO_ROOT / "src"), str(REPO_ROOT)])
     env["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
+    contract = REPO_ROOT / "tests" / "contract"
+    # design 規則 3:合約測試 = 形狀契約 + call 狀態,兩檔都跑(末端審查 M29)
     r = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-         str(REPO_ROOT / "tests" / "contract" / "test_adapter_contract.py"), "-k", name],
+        [sys.executable, "-m", "pytest", "-v", "-p", "no:cacheprovider",
+         str(contract / "test_adapter_contract.py"), str(contract / "test_call_status.py"), "-k", name],
         cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=300)
     out = r.stdout + r.stderr
     assert r.returncode == 0, out
-    m = re.search(r"(\d+) passed", out)
+    assert "FAILED" not in out and " failed" not in out and "ERROR" not in out, out
+    shape = re.findall(r"test_adapter_contract\.py::\S+ PASSED", out)
     # test_module_contract、test_effort_map_has_five_levels、test_models_efforts_only_five_levels
-    assert m and int(m.group(1)) >= 3, out
-    assert "failed" not in out, out
+    assert len(shape) >= 3, out
+    status = re.findall(r"test_call_status\.py::test_call_status\[([^\]]+)\] PASSED", out)
+    modes = {"ok", "http_402", "insufficient_quota", "http_429", "http_500"}
+    got = {p for ids in status for p in ids.split("-") if p in modes and name in ids}
+    assert len(status) == 5 and got == modes, out
 
 
 @step(r'以 provider "([^"]+)" 建立成員 "([^"]+)" 並建立 target 只含它的 route "([^"]+)"')

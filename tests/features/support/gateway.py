@@ -11,7 +11,7 @@ behave 的步驟是同步函式,所以每個情境用一個 `asyncio.Runner` 承
 - 亂數:`SystemRng(seed=FIXED_SEED)`,固定 seed。
 - 假上游:`FakeApiServer`(背景執行緒,127.0.0.1 隨機埠),由 environment.py 在 before_all 啟動、
   每個情境 reset。假上游依 model 名稱設定模式,所以每個 api 成員配一個不同的模型(`API_MODELS`)。
-- 成員:api 成員為 openai provider、`credential_ref = env:SPILLWAY_TEST_KEY`(值 `sk-test-0000`);
+- 成員:api 成員為 openai provider、`credential_ref = env:SPILLWAY_TEST_KEY`(值 `sk-cred-behave-7777`,與 AC-15 prompt 的 `sk-test-0000` 不同);
   local 成員為 provider `hosted_vllm`(決策 10);兩者 `api_base` 指向假上游 `/v1`。
 - 「重新啟動」(AC-19):`start(extra_paths)` 以新的 `create_app(extra_adapter_paths=[tmp])` 建 app。
 - RetentionJob 的背景輪詢設為 3600 秒(真實時間),情境中的清理一律由步驟明確呼叫
@@ -35,7 +35,9 @@ from spillway.store.db import connect
 
 BASE_URL = "http://spillway.test"
 FIXED_SEED = 20261030
-TEST_KEY = "sk-test-0000"
+# 憑證值刻意與 AC-15 prompt 裡的 `sk-test-0000` 不同(末端審查 M28):
+# 否則 Router 的 extra_secrets 也會遮掉 prompt,分不出是 `sk-` 樣式規則遮罩的。
+TEST_KEY = "sk-cred-behave-7777"
 TEST_KEY_ENV = "SPILLWAY_TEST_KEY"
 DEFAULT_MESSAGES = [{"role": "user", "content": "hello"}]
 # 每個 api 成員依建立順序配一個價格表內、彼此不同的模型(假上游依 model 名稱設定模式)

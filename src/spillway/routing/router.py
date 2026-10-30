@@ -334,8 +334,8 @@ class Router:
         fres = await self.filter.filter(target, req, probe=True, now=now)
         slots, skipped_slot = self._plan(target, fres)
         attempts: list[AttemptInfo] = []
-        excluded = tuple((e.deployment_id, e.reason) for e in fres.excluded
-                         if e.reason != "skipped_precheck")
+        excluded = [(e.deployment_id, e.reason) for e in fres.excluded
+                    if e.reason != "skipped_precheck"]
 
         for ex in fres.excluded:
             if ex.reason != "skipped_precheck":
@@ -357,6 +357,11 @@ class Router:
         for slot in slots:
             for entry in self.selector.iterate(slot, now):
                 dep = entry.deployment
+                # S1:篩選之後、輪到它之前,並行請求可能已讓它進入冷卻;重查,冷卻中就略過
+                # (不呼叫、不寫帳本、不算 fallback 深度),記入 excluded 為 cooling
+                if dep.kind in CLOUD_KINDS and self._cooling_now(dep):
+                    excluded.append((dep.id, "cooling"))
+                    continue
                 effort = _pick_effort(entry.effort, req.reasoning_effort, dep)
                 result, info = await self._attempt(
                     dep, req, effort, entry.estimate, ledger, target, slot=slot.number, depth=depth)
@@ -364,8 +369,15 @@ class Router:
                 depth += 1
                 if result.status == "ok":
                     return RouteOutcome(result, dep.id, slot.number, entry.estimate,
-                                        tuple(attempts), excluded)
-        return RouteOutcome(None, attempts=tuple(attempts), excluded=excluded)
+                                        tuple(attempts), tuple(excluded))
+        return RouteOutcome(None, attempts=tuple(attempts), excluded=tuple(excluded))
+
+    def _cooling_now(self, dep: Deployment) -> bool:
+        try:
+            return bool(self.quota.is_cooling(dep, self.clock.now()))
+        except Exception as exc:  # noqa: BLE001 — 重查失敗不擋嘗試(篩選時已確認未冷卻)
+            _log.warning("QuotaService.is_cooling 失敗(%s),成員 %s 照常嘗試", type(exc).__name__, dep.id)
+            return False
 
     def _plan(self, target: Target, fres: FilterResult) -> tuple[list[Slot], dict[str, int]]:
         """候選的 slot;另以「假設未被跳過」排一次,取得 skipped_precheck 成員的 slot 編號。"""

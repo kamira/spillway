@@ -30,7 +30,9 @@ from tests.acceptance.results import ARTIFACTS, record_result
 
 pytestmark = pytest.mark.skipif(not procs.HAS_LSOF, reason="需要 lsof(macOS 驗收平台)")
 
-KEY = procs.TEST_KEY
+KEY = procs.PROMPT_KEY          # prompt 裡的金鑰字串,只能靠 `sk-` 樣式規則遮罩
+CRED = procs.TEST_KEY           # 憑證值,與 KEY 不同(M28)
+assert KEY != CRED
 SLOT1, SLOT2, LOCAL = "op-api-1", "op-api-2", "op-local"
 MODEL1, MODEL2 = "gpt-4o-mini", "gpt-4.1-mini"
 ROUTE = "op-route"
@@ -159,7 +161,7 @@ def test_acceptance_operation(tmp_path):
         assert p.status_code == 200, p.text
         obs["payload"] = {"ledger_id": row["id"], "contains_key": KEY in p.text,
                           "redacted": p.json()["redacted"]}
-        assert KEY not in p.text
+        assert KEY not in p.text and CRED not in p.text
         assert p.json()["redacted"] is True
 
         # ---- dry-run 前後帳本列數
@@ -195,7 +197,7 @@ def test_acceptance_operation(tmp_path):
 
     assert serve.poll() is not None and fake_proc.poll() is not None
     log_text = HTTP_LOG.read_text(encoding="utf-8")
-    assert KEY not in log_text
+    assert KEY not in log_text and CRED not in log_text
     for line in log_text.splitlines():
         assert set(json.loads(line)) == {"method", "path", "status", "elapsed_ms"}
     obs["http_log_lines"] = len(log_text.splitlines())

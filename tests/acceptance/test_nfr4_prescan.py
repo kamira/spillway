@@ -3,9 +3,9 @@
 以已知金鑰 `sk-test-0000`(`SPILLWAY_TEST_KEY`,成員以 `env:` 參照)跑完整流程後,以該字串搜尋:
 - `SPILLWAY_HOME` 下全部檔案的位元組(含 `spillway.db-wal`、`spillway.db-shm`;全程保持一條連線讓 WAL
   留在磁碟,app 開著時掃一次,關閉、checkpoint 後再掃一次);
-- caplog(以 DEBUG 擷取全部 logger 的訊息、參數與例外文字):INFO 以上全程 0 命中;DEBUG 除了
-  「prompt 含金鑰」那次請求期間(LiteLLM 自己的 DEBUG 日誌會印 prompt 原文,只記錄不判定)之外也 0 命中,
-  即憑證值在任何等級都不出現;
+- caplog(以 DEBUG 擷取全部 logger 的訊息、參數與例外文字):INFO 以上全程 0 命中;DEBUG 也全程 0 命中,
+  即憑證值在任何等級都不出現。「prompt 含金鑰」那次請求貼的是另一個 `sk-` 字串(`PROMPT_KEY`,與憑證不同;
+  末端審查 S5),LiteLLM 自己的 DEBUG 日誌印出它只記錄不判定,憑證在該期間仍照樣掃描;
 - `artifacts/m2/` 下全部檔案;
 - 另加:本流程中每個 HTTP 回應的 body 與 header。
 命中數必須為 0。正式的 NFR-4(含匯出檔)屬 M4 閘門。
@@ -29,20 +29,24 @@ pytestmark = pytest.mark.anyio
 
 KEY = "sk-test-0000"
 KEY_BYTES = KEY.encode()
+# 使用者貼進 prompt 的金鑰字串,刻意與憑證 KEY 不同(末端審查 S5):prompt 期間的排除窗只排除它,
+# 憑證 KEY 在任何時段、任何等級的日誌都仍須 0 命中
+PROMPT_KEY = "sk-pasted-prompt-5555"
 
 
-def _hits_in_tree(root: Path) -> dict[str, int]:
+def _hits_in_tree(root: Path, needle: bytes = KEY_BYTES) -> dict[str, int]:
     out: dict[str, int] = {}
     if not root.exists():
         return out
     for p in sorted(root.rglob("*")):
         if p.is_file():
-            out[str(p.relative_to(root))] = p.read_bytes().count(KEY_BYTES)
+            out[str(p.relative_to(root))] = p.read_bytes().count(needle)
     return out
 
 
 async def test_nfr4_known_key_prescan(open_spillway, fake_api, test_key_env, caplog, artifacts_dir):
     caplog.set_level(logging.DEBUG)
+    assert test_key_env == KEY and PROMPT_KEY != KEY
     responses = []
 
     async with open_spillway() as h:
@@ -83,7 +87,7 @@ async def test_nfr4_known_key_prescan(open_spillway, fake_api, test_key_env, cap
         # 會印出 prompt 原文(見下方 debug_prompt_hits),不是憑證外洩
         prompt_window_start = len(caplog.records)
         r = await call("POST", "/v1/chat/completions", json={"model": "scan", "messages": [
-            {"role": "user", "content": f"請用 {KEY} 呼叫,Authorization: Bearer {KEY}"}]})
+            {"role": "user", "content": f"請用 {PROMPT_KEY} 呼叫,Authorization: Bearer {PROMPT_KEY}"}]})
         assert r.status_code == 200
         prompt_window = range(prompt_window_start, len(caplog.records))
 
@@ -131,23 +135,29 @@ async def test_nfr4_known_key_prescan(open_spillway, fake_api, test_key_env, cap
         assert redacted_rows >= 1, redacted_rows     # prompt 含金鑰的那一列
         assert ledger_errors >= 2, ledger_errors     # echo_auth 的錯誤訊息確實含過金鑰並被遮罩
         home_open = _hits_in_tree(h.home)
+        prompt_home_open = _hits_in_tree(h.home, PROMPT_KEY.encode())
         wal = h.db_path.with_name(h.db_path.name + "-wal")
         assert wal.stat().st_size > 0 and h.db_path.with_name(h.db_path.name + "-shm").exists(), \
             sorted(home_open)
         keeper.close()
 
     home_closed = _hits_in_tree(h.home)
-    def rec_hits(rec: logging.LogRecord) -> int:
-        return f"{rec.getMessage()} {rec.args!r} {rec.exc_text or ''}".count(KEY)
+    prompt_home_closed = _hits_in_tree(h.home, PROMPT_KEY.encode())
+
+    def rec_hits(rec: logging.LogRecord, needle: str = KEY) -> int:
+        return f"{rec.getMessage()} {rec.args!r} {rec.exc_text or ''}".count(needle)
 
     # 閘門 1:INFO 以上(serve 的 uvicorn 為 info、root 預設 WARNING)全程 0 命中
     log_hits = sum(rec_hits(r) for r in caplog.records if r.levelno >= logging.INFO)
-    # 閘門 2:DEBUG 也算,但排除「prompt 含金鑰」那次請求期間的紀錄 → 憑證本身在任何等級都不出現
-    debug_cred_hits = sum(rec_hits(r) for i, r in enumerate(caplog.records)
-                          if r.levelno < logging.INFO and i not in prompt_window)
-    # 只記錄:LiteLLM DEBUG 日誌印出 prompt 原文(使用者貼上的字串);正式執行不開 DEBUG
-    debug_prompt_hits = sum(rec_hits(caplog.records[i]) for i in prompt_window
+    # 閘門 2:DEBUG 也算。prompt 用的是另一個字串,所以「prompt 含金鑰」那次請求期間也照樣掃描憑證
+    # → 憑證本身在任何時段、任何等級都不出現
+    debug_cred_hits = sum(rec_hits(r) for r in caplog.records if r.levelno < logging.INFO)
+    debug_cred_hits_in_prompt_window = sum(rec_hits(caplog.records[i]) for i in prompt_window
+                                           if caplog.records[i].levelno < logging.INFO)
+    # 只記錄:LiteLLM DEBUG 日誌印出 prompt 原文(使用者貼上的 PROMPT_KEY);正式執行不開 DEBUG
+    debug_prompt_hits = sum(rec_hits(caplog.records[i], PROMPT_KEY) for i in prompt_window
                             if caplog.records[i].levelno < logging.INFO)
+    prompt_info_hits = sum(rec_hits(r, PROMPT_KEY) for r in caplog.records if r.levelno >= logging.INFO)
     resp_hits = sum(r.content.count(KEY_BYTES) + str(dict(r.headers)).count(KEY) for r in responses)
     artifact_hits = _hits_in_tree(ARTIFACTS)
 
@@ -156,8 +166,11 @@ async def test_nfr4_known_key_prescan(open_spillway, fake_api, test_key_env, cap
         "spillway_home_closed": sum(home_closed.values()),
         "spillway_home_files": sorted(set(home_open) | set(home_closed)),
         "caplog_info_and_above": log_hits,
-        "caplog_debug_outside_prompt_request": debug_cred_hits,
+        "caplog_debug_all": debug_cred_hits,
+        "caplog_debug_credential_in_prompt_request": debug_cred_hits_in_prompt_window,
         "caplog_debug_prompt_echo_by_litellm": debug_prompt_hits,
+        "prompt_key_in_spillway_home": sum(prompt_home_open.values()) + sum(prompt_home_closed.values()),
+        "prompt_key_info_and_above": prompt_info_hits,
         "caplog_records": len(caplog.records),
         "artifacts_m2": sum(artifact_hits.values()),
         "artifacts_m2_files": sorted(artifact_hits),
@@ -171,6 +184,10 @@ async def test_nfr4_known_key_prescan(open_spillway, fake_api, test_key_env, cap
     assert {k: v for k, v in home_open.items() if v} == {}
     assert {k: v for k, v in home_closed.items() if v} == {}
     assert log_hits == 0
-    assert debug_cred_hits == 0
+    assert debug_cred_hits == 0 and debug_cred_hits_in_prompt_window == 0
+    # 貼進 prompt 的字串由 `sk-` 樣式規則遮罩後才落地(AC-15)
+    assert {k: v for k, v in prompt_home_open.items() if v} == {}
+    assert {k: v for k, v in prompt_home_closed.items() if v} == {}
+    assert prompt_info_hits == 0
     assert {k: v for k, v in artifact_hits.items() if v} == {}
     assert resp_hits == 0

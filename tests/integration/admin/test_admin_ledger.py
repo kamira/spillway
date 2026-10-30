@@ -70,6 +70,8 @@ async def test_ledger_filters(client, db, clock):
 @pytest.mark.parametrize("params,path", [
     ({"page": 0}, "query.page"),
     ({"page": "x"}, "query.page"),
+    ({"page": 1_000_001}, "query.page"),                  # S2:上限,超大值不得 500
+    ({"page": 10**19}, "query.page"),
     ({"page_size": 1000}, "query.page_size"),
     ({"status": "weird"}, "query.status"),
     ({"from": "yesterday"}, "query.from"),
@@ -77,6 +79,11 @@ async def test_ledger_filters(client, db, clock):
 async def test_ledger_query_validation(client, params, path):
     msg = assert_error(await client.get("/api/ledger", params=params), 422, "validation_error")
     assert path in msg
+
+
+async def test_ledger_page_max_is_accepted(client):
+    out = (await client.get("/api/ledger", params={"page": 1_000_000, "page_size": 500})).json()
+    assert out["page"] == 1_000_000 and out["items"] == []
 
 
 def record(db, clock, *, ts=None, route_record_context=None, text="hello") -> int:

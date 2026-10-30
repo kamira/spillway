@@ -21,7 +21,15 @@ DEFAULT_MODELS_YAML = """\
 """
 
 DEFAULT_ADAPTER_PY = '''\
-from spillway.adapters.base import CallResult
+from spillway.adapters.base import API_DEFAULT_SIGNALS, CallResult, classify, resolve_signals
+
+# 依 `dep.params["fake_mode"]` 模擬上游輸出(預設 ok);由 call_status harness 設定(末端審查 M29)
+_RAW = {
+    "http_402": {"http_status": 402, "message": "payment required"},
+    "insufficient_quota": {"http_status": 400, "error_code": "insufficient_quota", "message": "quota"},
+    "http_429": {"http_status": 429, "message": "rate limited"},
+    "http_500": {"http_status": 500, "message": "server error"},
+}
 
 
 class FakeAdapter:
@@ -29,11 +37,33 @@ class FakeAdapter:
         self.context = context
 
     async def call(self, dep, req, effort):
-        return CallResult(ok=True, text="fake", tokens_in=1, tokens_out=1,
-                          cost_usd=0.0, status="ok", error=None)
+        mode = (dep.params or {}).get("fake_mode", "ok")
+        if mode == "ok":
+            return CallResult(ok=True, text="fake", tokens_in=1, tokens_out=1,
+                              cost_usd=0.0, status="ok", error=None)
+        raw = _RAW[mode]
+        status = classify(raw, resolve_signals(API_DEFAULT_SIGNALS, dep.params))
+        return CallResult(ok=False, text="", tokens_in=None, tokens_out=None,
+                          cost_usd=None, status=status, error=f"fake upstream {raw['http_status']}")
 
     async def health(self, dep):
         return True
+'''
+
+HARNESS_SOURCE = '''\
+"""`{name}` 的 call 狀態 harness(由 tests/contract/fakemods.write_module 產生;放在模組資料夾外)。"""
+from spillway.adapters.base import Deployment
+
+
+def call_status_harness(fake_api):
+    dep = Deployment(id="{name}-1", model_name="{name}-1", kind={kind!r}, provider={provider!r},
+                     model="fake-small", params={{"fake_mode": "ok"}},
+                     credential_ref={cred!r})
+
+    def set_mode(mode):
+        dep.params["fake_mode"] = mode
+
+    return [(dep, set_mode)]
 '''
 
 
@@ -76,12 +106,17 @@ def write_module(
     readme: bool = True,
     adapter_file: bool = True,
     extra_files: dict[str, str] | None = None,
+    harness_dir: Path | None = None,
     **manifest_kw,
 ) -> Path:
     """在 `root/<name>/` 寫出一個模組資料夾,回傳該資料夾。
 
     `init_source` 給了就整個取代 `__init__.py`;`pre_import` 會放在 `__init__.py` 最前面
     (例如 `import 不存在的套件` 模擬無法 import)。`models_yaml=None` 表示不建立該檔。
+    `harness_dir` 給了就另外寫出 `harness_dir/<name>_harness.py`(`call_status_harness(fake_api)`),
+    供 `tests/contract/test_call_status.py` 經 `SPILLWAY_CONTRACT_HARNESS_PATHS` 載入;harness 放在
+    模組資料夾外,不違反 spec 7.6.1 的模組檔案清單。預設 adapter 依 `dep.params["fake_mode"]`
+    (ok、http_402、insufficient_quota、http_429、http_500)回傳對應狀態,未設定時為 ok。
     """
     d = root / name
     d.mkdir(parents=True, exist_ok=True)
@@ -104,4 +139,12 @@ def write_module(
         p = d / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
+    if harness_dir is not None:
+        provider = manifest_kw.get("providers", ("acme",))[0]
+        kind = manifest_kw.get("kinds", ("api",))[0]
+        harness_dir.mkdir(parents=True, exist_ok=True)
+        (harness_dir / f"{name}_harness.py").write_text(
+            HARNESS_SOURCE.format(name=name, kind=kind, provider=provider,
+                                  cred="env:SPILLWAY_TEST_KEY" if kind == "api" else None),
+            encoding="utf-8")
     return d

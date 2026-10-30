@@ -1,7 +1,7 @@
 """驗收用子行程:`python -m spillway serve` 與 `python -m tests.fakes.api_upstream`(CHG-20261030-02 T15)。
 
 - 子行程的環境:`SPILLWAY_HOME` 為呼叫端給的暫存目錄、`PYTHONPATH` 為 `src` 與 repo 根目錄、
-  `LITELLM_LOCAL_MODEL_COST_MAP=True`、`SPILLWAY_TEST_KEY=sk-test-0000`,並移除真實 API key 變數。
+  `LITELLM_LOCAL_MODEL_COST_MAP=True`、`SPILLWAY_TEST_KEY=sk-cred-serve-7777`(與 prompt 字串 `sk-test-0000` 不同),並移除真實 API key 變數。
 - `stop()` 先 SIGTERM、逾時再 SIGKILL;呼叫端以 try/finally 確保結束所有子行程。
 """
 from __future__ import annotations
@@ -16,7 +16,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-TEST_KEY = "sk-test-0000"
+# 子行程的憑證值;與 L4 prompt 裡的金鑰字串(`PROMPT_KEY`)不同(末端審查 M28)
+TEST_KEY = "sk-cred-serve-7777"
+PROMPT_KEY = "sk-test-0000"
 HAS_LSOF = shutil.which("lsof") is not None
 
 

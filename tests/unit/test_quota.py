@@ -338,3 +338,27 @@ def test_mark_does_not_clobber_budget_saved_between_read_and_write(db, qs: Quota
     b = repo.get_budget(db, dep.id)
     assert (b.type, b.limit_amount, b.window, b.reset_anchor) == ("usd", 20.0, "monthly", 5)
     assert b.exhausted_until == until == now + timedelta(seconds=60)
+
+
+# ---------------------------------------------------------------- 末端審查 M27:冷卻只延長不縮短
+
+
+def test_rate_limited_does_not_shorten_quota_exhausted_cooldown(db, qs: QuotaService) -> None:
+    # 並行:先拿到 insufficient_quota(冷卻到重置點),再拿到 429,冷卻仍是重置點(spec 5.3.2)
+    dep = _save(db, Budget(type="usd", limit_amount=10, window="monthly", reset_anchor=1))
+    now = T(2026, 10, 30, 12)
+    assert qs.mark(dep, "quota_exhausted", now) == T(2026, 11, 1)
+    assert qs.mark(dep, "rate_limited", now) == T(2026, 11, 1)
+    assert repo.get_budget(db, "a1").exhausted_until == T(2026, 11, 1)
+    # 手動清除後再 429:now + 60s
+    qs.clear(dep)
+    assert qs.mark(dep, "rate_limited", now) == now + timedelta(seconds=60)
+    assert repo.get_budget(db, "a1").exhausted_until == now + timedelta(seconds=60)
+
+
+def test_later_mark_extends_cooldown(db, qs: QuotaService) -> None:
+    dep = _save(db, None)
+    now = T(2026, 10, 30, 12)
+    assert qs.mark(dep, "rate_limited", now) == now + timedelta(seconds=60)
+    assert qs.mark(dep, "quota_exhausted", now) == now + timedelta(hours=1)
+    assert repo.get_budget(db, dep.id).exhausted_until == now + timedelta(hours=1)

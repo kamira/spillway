@@ -5,7 +5,7 @@
 護欄(對應 `tests/conftest.py`):
 - import litellm 之前設定 `LITELLM_LOCAL_MODEL_COST_MAP=True`(不連網抓價格表)。
 - 每個情境一個暫存 `SPILLWAY_HOME`(`tempfile.mkdtemp`),不是暫存目錄就中止;情境結束刪除。
-- 清除真實的 API key 環境變數;`SPILLWAY_TEST_KEY` 為假金鑰 `sk-test-0000`。
+- 清除真實的 API key 環境變數;`SPILLWAY_TEST_KEY` 為假金鑰 `sk-cred-behave-7777`(與 AC-15 prompt 字串不同)。
 - 假上游 `FakeApiServer` 只綁 127.0.0.1,整個 run 共用一個,每個情境前後 reset。
 
 驅動方式見 `tests/features/support/gateway.py`(與 `open_spillway` 同一方式:create_app + lifespan +

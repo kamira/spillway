@@ -97,6 +97,7 @@ __all__ = ["router"]
 
 LEDGER_PAGE_SIZE = 50
 LEDGER_PAGE_SIZE_MAX = 500
+LEDGER_PAGE_MAX = 1_000_000      # S2:offset 留在 SQLite int64 內;超過回 422
 CONTEXT_MAX_BYTES_MIN = 1024     # context_max_bytes 下限:小於 1 KiB 的 payload 已無檢視價值
 CONTEXT_RETENTION_DAYS_MAX = 36500   # 約 100 年;再大會讓 ledger._cutoff 溢位(審議 M25)
 TEST_PROMPT = "ping"
@@ -314,6 +315,17 @@ def _dep_out(d: Deployment) -> dict[str, Any]:
     }
 
 
+def _cooling_only(until: datetime | None) -> Budget:
+    """只為記錄冷卻而存在的 budgets 列(與 `QuotaService.mark` 自動建立的列同形)。"""
+    return Budget(type="none", limit_amount=None, window="none", exhausted_until=until)
+
+
+def _is_cooling_only(b_type: str | None, window: str | None, limit_amount: Any) -> bool:
+    """U10 (a):`type=none`、`window=none`、`limit_amount` NULL 的列只記冷卻,
+    儀表板口徑比照「沒有 budgets 列」(決策 48)。"""
+    return b_type == "none" and window == "none" and limit_amount is None
+
+
 def _load_dep(conn: sqlite3.Connection, dep_id: str) -> Deployment:
     dep = repo.load_deployment(conn, dep_id)
     if dep is None:
@@ -376,16 +388,20 @@ async def update_deployment(request: Request, dep_id: str, body: DeploymentIn) -
     """整筆取代(tags、budget 一併取代);不存在 → 404。
 
     budget 的 `exhausted_until` 不由 body 設定:保留既有值(編輯不清掉冷卻;清除請用 clear-cooldown);
-    body 的 `budget` 為 null 時刪除 budgets 列(冷卻一併消失)。
+    body 的 `budget` 為 null 時清除預算;冷卻尚未到期則保留(U10 (a)):budgets 列改為只記冷卻的
+    `type=none`、`window=none`、`limit_amount` NULL 列,不刪除;沒有未到期的冷卻時刪除 budgets 列。
     變更 provider 或 kind 時依新 (provider, kind) 的 cardinality 在同一交易內檢查(決策 22)。
     """
     if body.id is not None and body.id != dep_id:
         raise _invalid("body.id", "不可變更成員 id(必須與路徑相同)")
+    now = _clock(request).now()
     with _db(request) as conn:
         with transaction(conn):
             old = _load_dep(conn, dep_id)
             until = old.budget.exhausted_until if old.budget is not None else None
             dep = body.to_deployment(dep_id, until)
+            if dep.budget is None and until is not None and until > now:
+                dep = dataclasses.replace(dep, budget=_cooling_only(until))
             if dep.provider != old.provider or dep.kind != old.kind:
                 _check_cardinality(conn, request.app.state.registry, dep)
             repo.save_deployment(conn, dep)
@@ -916,13 +932,13 @@ async def list_ledger(
     deployment: str | None = None,
     route: str | None = None,
     status: StatusLit | None = None,
-    page: Annotated[int, Query(ge=1)] = 1,
+    page: Annotated[int, Query(ge=1, le=LEDGER_PAGE_MAX)] = 1,
     page_size: Annotated[int, Query(ge=1, le=LEDGER_PAGE_SIZE_MAX)] = LEDGER_PAGE_SIZE,
 ) -> dict[str, Any]:
     """帳本查詢(spec 9.2)。
 
     參數:`from`(含)、`to`(不含)為 ISO 8601 時間或日期(無時區視為 UTC);`deployment`、`route`、
-    `status` 為等值篩選;`page` 自 1 起;`page_size` 預設 50、上限 500(本筆另加的可選參數)。
+    `status` 為等值篩選;`page` 自 1 起、上限 1,000,000(超過回 422);`page_size` 預設 50、上限 500(本筆另加的可選參數)。
 
     分頁格式:`{items: [帳本列…], page, page_size, total, pages}`;`items` 依 `ts DESC, id DESC`
     (新到舊);`total` 為符合條件的總列數,`pages = ceil(total / page_size)`(total 為 0 時 0);
@@ -1031,6 +1047,8 @@ async def dashboard(request: Request) -> dict[str, Any]:
     - 本期花費 = 帳本該成員 `ts` ∈ [period_start, next_reset) 的 `cost_usd` 加總(不分 status,
       NULL 不計),與 `QuotaService.remaining()` 相同;window `none` 為累計(period_start、next_reset
       為 null)。沒有 budgets 列的成員以日曆月(1 日起)計本期花費,`window` 為 null。
+      只為記錄冷卻而存在的列(`type=none`、`window=none`、`limit_amount` NULL;U10 (a))比照沒有
+      budgets 列:日曆月計、`budget_type` 與 `window` 為 null;冷卻欄位照實回傳。
     - 無上限(無 budgets 列、type `none`、`limit_amount` NULL):`remaining` null、`unlimited` true、
       `ratio` 1。否則 `remaining = limit − 本期花費`(可為負)、`ratio` 夾在 0–1、上限 0 時 0。
     - `cooling_until`:`exhausted_until` 尚未到期時的值,否則 null;`cooling` 為其布林。
@@ -1053,7 +1071,7 @@ async def dashboard(request: Request) -> dict[str, Any]:
 
         periods: dict[str, tuple[str | None, str | None]] = {}
         for r in rows:
-            if r["has_budget"]:
+            if r["has_budget"] and not _is_cooling_only(r["b_type"], r["window"], r["limit_amount"]):
                 b = Budget(type=r["b_type"], limit_amount=r["limit_amount"], window=r["window"],
                            reset_anchor=r["reset_anchor"])
             else:
@@ -1090,7 +1108,9 @@ async def dashboard(request: Request) -> dict[str, Any]:
     for r in rows:
         key = periods[r["id"]]
         spend = spent[key].get(r["id"], 0.0)
-        unlimited = (not r["has_budget"]) or r["b_type"] == "none" or r["limit_amount"] is None
+        # U10 (a):只記冷卻的列與「沒有 budgets 列」同口徑(日曆月、budget_type 與 window 為 null)
+        budgeted = bool(r["has_budget"]) and not _is_cooling_only(r["b_type"], r["window"], r["limit_amount"])
+        unlimited = (not budgeted) or r["b_type"] == "none" or r["limit_amount"] is None
         if unlimited:
             remaining, ratio = None, 1.0
         else:
@@ -1106,8 +1126,9 @@ async def dashboard(request: Request) -> dict[str, Any]:
         out.append({
             "id": r["id"], "model_name": r["model_name"], "kind": r["kind"],
             "provider": r["provider"], "enabled": bool(r["enabled"]),
-            "budget_type": r["b_type"], "limit_amount": r["limit_amount"],
-            "window": r["window"] if r["has_budget"] else None,
+            "budget_type": r["b_type"] if budgeted else None,
+            "limit_amount": r["limit_amount"] if budgeted else None,
+            "window": r["window"] if budgeted else None,
             "period_start": key[0], "next_reset": key[1], "period_spend": spend,
             "remaining": remaining, "unlimited": unlimited, "ratio": ratio,
             "cooling": cooling_until is not None, "cooling_until": cooling_until,

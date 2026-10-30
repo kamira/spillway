@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
 
 from behave import step, use_step_matcher
 
-from tests.features.support.gateway import DEFAULT_MESSAGES
+from tests.features.support.gateway import DEFAULT_MESSAGES, TEST_KEY_ENV
 
 use_step_matcher("re")
 
@@ -89,6 +90,9 @@ def step_payload_status(context, status, code):
 
 @step(r'儲存的請求內容不含 "([^"]+)"')
 def step_payload_no_secret(context, secret):
+    # 守門(末端審查 M28):憑證值若等於 prompt 字串,Router 的 extra_secrets 也會遮掉它,
+    # 就驗不到 spec 2.4.4 的 `sk-` 樣式規則
+    assert os.environ[TEST_KEY_ENV] != secret, "憑證值不可與受測的 prompt 金鑰相同"
     gw = context.gw
     p = gw.ok(gw.get(f"/api/ledger/{gw.last_ledger_id}/payload"), 200)
     assert secret not in p["request_json"] and secret not in (p["response_text"] or ""), p

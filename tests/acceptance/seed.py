@@ -98,7 +98,7 @@ def seed_nfr_dataset(conn: sqlite3.Connection, now: datetime, fake_base_url: str
         dep = deps[i % len(deps)]
         ts = month_start + timedelta(seconds=int(rng.random() * span))
         status = STATUSES[int(rng.random() * len(STATUSES))] if dep.kind != "local" else "ok"
-        if dep in cloud and i % 50 == 0:
+        if dep.kind != "local" and i % 50 == 0:
             status = "skipped_precheck"
         ok = status == "ok"
         tokens_out = 20 + int(rng.random() * 4000) if ok else None
