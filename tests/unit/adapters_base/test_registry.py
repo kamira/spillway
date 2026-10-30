@@ -21,6 +21,18 @@ from tests.contract.fakemods import write_module
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(autouse=True)
+def _hide_builtin_modules(request, tmp_path, monkeypatch):
+    """機制測試只看 tmp 假模組;內建模組(例如宣告 fallback 的 litellm)另由合約測試涵蓋。"""
+    if request.node.name == "test_builtin_discovery_runs":
+        return
+    import spillway.adapters as pkg
+
+    empty = tmp_path / "builtin-empty"
+    empty.mkdir()
+    monkeypatch.setattr(pkg, "__file__", str(empty / "__init__.py"))
+
+
 @pytest.fixture
 def ctx():
     return AdapterContext(credentials=lambda ref: "sk-test-0000", clock=FakeClock())
