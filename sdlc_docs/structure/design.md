@@ -31,6 +31,8 @@
 | `McpConfigRenderer`(M4) | 模板渲染各工具設定 | `render(group, tool, embed_token) -> {content, path, env}` | 8.2 |
 | `McpApp`(M3) | 依 `<group>` 暴露 route;list_changed | MCP tools `ask`、`list_routes`、`quota_status` | 8.1 |
 | `Clock` / `Rng` | 時間與亂數來源;實作:`SystemClock`、`FakeClock`(`advance()`)、`SystemRng(seed=None)`、`SeqRng` | `now() -> datetime(UTC)`;`random() -> float` | 測試注入 |
+| `domain` 值物件 | `Deployment`、`Budget`、`ChatRequest`、`CallResult` 定義於基礎層 `spillway/domain.py`;`adapters.base` 轉匯出,adapter 模組照舊只 import base | dataclass(frozen) | 7.1;CHG-20261030-02 施工審議 M1 |
+| `probe_http` | local 端點健康探測(D18):對 URL 發一次 GET,任何 HTTP 回應即健康 | `async probe_http(url, timeout=2.0) -> bool`(不外拋、不跟隨轉址、不讀 proxy 環境變數) | 4.2.4;CHG-20261030-02 施工審議 M8 |
 
 ## 元件關係圖
 
