@@ -10,7 +10,7 @@ anthropic_api、openai_api、litellm 模組只經這裡呼叫 LiteLLM,不直接 
 - 每次呼叫前把 `litellm.set_verbose` 設 False、`suppress_debug_info` 設 True;
   不註冊任何 callback、不傳 `callbacks`。
 - 例外不外拋:轉成 `LiteLLMResult(ok=False, raw=...)`,`raw` 交給 `classify()`;
-  `raw["message"]` 中的 `api_key` 值已替換為 `***`。其他遮罩(`sk-`、Bearer)由應用層 Redactor 負責。
+  `raw["message"]` 中的 `api_key` 值(含去前後空白、JSON 跳脫後的形式)已替換為 `***`。其他遮罩(`sk-`、Bearer)由應用層 Redactor 負責。
 
 失敗時 `raw` 的欄位固定為:`http_status`(int|None)、`error_code`(str|None)、
 `message`(str)、`exception`(例外類別名)、`timeout`(bool)。
@@ -18,6 +18,7 @@ anthropic_api、openai_api、litellm 模組只經這裡呼叫 LiteLLM,不直接 
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -61,13 +62,24 @@ def _int_or_none(v: Any) -> int | None:
     return v if isinstance(v, int) and not isinstance(v, bool) else None
 
 
+_INT_RE = re.compile(r"[0-9]+")
+
+
+def _strict_int(v: str) -> int | None:
+    """只接受 ASCII 數字(`"²"` 之類 isdigit 為 True 的字元不算),失敗回 None 不外拋。"""
+    v = v.strip()
+    return int(v) if _INT_RE.fullmatch(v) else None
+
+
 def _status_of(exc: BaseException) -> int | None:
     for attr in ("status_code", "http_status"):
         v = getattr(exc, attr, None)
         if isinstance(v, int) and not isinstance(v, bool):
             return v
-        if isinstance(v, str) and v.isdigit():
-            return int(v)
+        if isinstance(v, str):
+            parsed = _strict_int(v)
+            if parsed is not None:
+                return parsed
     resp = getattr(exc, "response", None)
     v = getattr(resp, "status_code", None)
     return v if isinstance(v, int) else None
@@ -102,9 +114,18 @@ def _error_code(exc: BaseException, message: str) -> str | None:
     return None
 
 
+def _secret_variants(secret: str | None) -> list[str]:
+    """金鑰可能出現在上游回顯中的形式:原值、去前後空白、JSON 字串跳脫後的兩者。"""
+    if not secret:
+        return []
+    stripped = secret.strip()
+    variants = {secret, stripped, json.dumps(secret)[1:-1], json.dumps(stripped)[1:-1]}
+    return sorted((v for v in variants if v), key=len, reverse=True)
+
+
 def _scrub(text: str, secret: str | None) -> str:
-    if secret:
-        text = text.replace(secret, "***")
+    for v in _secret_variants(secret):   # 由長到短:避免短變體先替換後長變體只剩殘片
+        text = text.replace(v, "***")
     return text
 
 
@@ -138,6 +159,8 @@ async def litellm_call(
     `reasoning_effort` 為已經 `effort_to_upstream()` 轉換的上游值;None 時不傳。
     `extra` 為其餘 OpenAI 參數(例如 temperature),不可覆寫上列受保護參數(會被略過)。
     """
+    # 防線:任何進入點(不只 app lifespan)第一次 import litellm 前都改用本地價格表,不在 import 時連網
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     import litellm  # 延後載入:只 import adapters.base 不必付出 litellm 的載入成本
 
     _quiet(litellm)

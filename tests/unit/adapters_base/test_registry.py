@@ -267,6 +267,84 @@ def test_folders_without_init_and_private_are_skipped(tmp_path, ctx):
     assert {m.name for m in r.modules()} & {"notamodule", "_private"} == set()
 
 
+# ---- 單一模組壞掉不拖垮其他模組(審查 M7;spec 7.6.7)------------------------------------
+
+def _assert_others_fine(r):
+    assert r.get(dep("acme")) is not None
+    assert next(m for m in r.modules() if m.name == "acme_mod").available
+
+
+def test_big5_models_yaml_only_that_module_unavailable(tmp_path, ctx):
+    d = write_module(tmp_path, "big5_mod", providers=("big5",))
+    text = "- id: a\n  label: 測試模型\n  capabilities: {ctx: 1, tools: true, vision: false, efforts: []}\n"
+    data = text.encode("big5")
+    with pytest.raises(UnicodeDecodeError):
+        data.decode("utf-8")
+    (d / "models.yaml").write_bytes(data)
+    write_module(tmp_path, "acme_mod", providers=("acme",))
+    r = registry(ctx, tmp_path)
+    assert set(r.unavailable()) == {"big5"}
+    assert "models.yaml" in r.unavailable()["big5"] and "UTF-8" in r.unavailable()["big5"]
+    _assert_others_fine(r)
+
+
+def test_big5_models_yaml_raises_models_yaml_error(tmp_path):
+    from spillway.adapters.base import ModelsYamlError, load_models_yaml
+    p = tmp_path / "models.yaml"
+    p.write_bytes("- id: 測試\n".encode("big5"))
+    with pytest.raises(ModelsYamlError):
+        load_models_yaml(p)
+
+
+def test_sys_exit_at_import_only_that_module_unavailable(tmp_path, ctx):
+    write_module(tmp_path, "exit_mod", providers=("exiter",), pre_import="import sys\nsys.exit(3)\n")
+    write_module(tmp_path, "acme_mod", providers=("acme",))
+    r = registry(ctx, tmp_path)
+    assert set(r.unavailable()) == {"exiter"}
+    assert "SystemExit" in r.unavailable()["exiter"]
+    _assert_others_fine(r)
+
+
+def test_sys_exit_in_create_only_that_module_unavailable(tmp_path, ctx):
+    write_module(tmp_path, "exit_create", providers=("exitc",),
+                 adapter_source="import sys\nclass FakeAdapter:\n    def __init__(self, c):\n        sys.exit(3)\n")
+    write_module(tmp_path, "acme_mod", providers=("acme",))
+    r = registry(ctx, tmp_path)
+    assert "SystemExit" in r.unavailable()["exitc"]
+    _assert_others_fine(r)
+
+
+def test_keyboard_interrupt_at_import_still_propagates(tmp_path, ctx):
+    write_module(tmp_path, "kbi_mod", providers=("kbi",), pre_import="raise KeyboardInterrupt\n")
+    with pytest.raises(KeyboardInterrupt):
+        registry(ctx, tmp_path)
+
+
+def test_unexpected_error_after_import_only_that_module_unavailable(tmp_path, ctx):
+    write_module(tmp_path, "weird_mod", init_source=(
+        "def create(context):\n    return None\n"
+        "def __getattr__(name):\n    raise RuntimeError('weird lookup')\n"))
+    write_module(tmp_path, "acme_mod", providers=("acme",))
+    r = registry(ctx, tmp_path)
+    assert "weird lookup" in r.unavailable()["weird-mod"]
+    _assert_others_fine(r)
+
+
+def test_colliding_sanitized_names_get_distinct_import_names(tmp_path, ctx):
+    """S-T4-4:`a-b` 與 `a_b` 經 \\W→_ 後同名,不可互相 purge。"""
+    import sys
+    write_module(tmp_path, "a-b", providers=("pdash",))
+    write_module(tmp_path, "a_b", providers=("punder",))
+    r = registry(ctx, tmp_path)
+    infos = {m.name: m for m in r.modules()}
+    assert infos["a-b"].available and infos["a_b"].available
+    assert infos["a-b"].import_name != infos["a_b"].import_name
+    for info in infos.values():
+        assert sys.modules[info.import_name] is info.module
+        assert sys.modules[info.import_name + ".adapter"].__file__.startswith(str(info.path))
+    assert r.get(dep("pdash")) is not r.get(dep("punder"))
+
+
 # ---- 可用模型清單(spec 7.6.4)--------------------------------------------------------
 
 LIST_OK = """
@@ -316,3 +394,25 @@ async def test_available_models_failure_returns_static_with_reason(tmp_path, ctx
     listing = await available_models(info, ctx)
     assert [m.id for m in listing.models] == ["fake-small", "fake-large"]
     assert "endpoint down" in listing.error
+
+
+LIST_NONES = """
+async def list_models(context):
+    return [{"id": "none-caps", "label": None, "capabilities": None}, {"id": "plain"}]
+"""
+
+
+async def test_available_models_none_values_use_defaults(tmp_path, ctx):
+    """S-T4-3:執行期項目中值為 None 的鍵改用預設,不讓整份清單作廢。"""
+    from tests.contract.fakemods import manifest_source
+    init = ("from spillway.adapters.base import AdapterManifest\nfrom .adapter import FakeAdapter\n"
+            + manifest_source(providers=("dynn",)) + "\ndef create(context):\n    return FakeAdapter(context)\n"
+            + LIST_NONES)
+    write_module(tmp_path, "dynn_mod", init_source=init)
+    info = next(m for m in registry(ctx, tmp_path).modules() if m.name == "dynn_mod")
+    listing = await available_models(info, ctx)
+    assert listing.error is None
+    assert [m.id for m in listing.models] == ["fake-small", "fake-large", "none-caps", "plain"]
+    none_caps = listing.models[2]
+    assert none_caps.label == "none-caps"
+    assert none_caps.capabilities["efforts"] == ("low", "medium")

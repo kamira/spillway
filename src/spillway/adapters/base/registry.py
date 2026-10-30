@@ -4,7 +4,8 @@
 含 `__init__.py` 的子資料夾(略過 `base` 與 `_`、`.` 開頭者)。每個資料夾是一個模組。
 
 載入失敗(無法 import、沒有 `MANIFEST`/`create`、manifest 不合法、`contract_version` 不支援、
-`models.yaml` 無法解析、`create(context)` 失敗或回傳的實例 `call`/`health` 不是 async)
+`models.yaml` 無法解析或不是 UTF-8、`create(context)` 失敗或回傳的實例 `call`/`health` 不是 async;
+import 與 `create()` 時丟出的 `SystemExit` 等 BaseException 也算,只有 `KeyboardInterrupt` 照常外拋)
 → 該模組不註冊;其 provider 依決策 14 推得((1) ast 讀 `__init__.py` 中 `MANIFEST` 的
 `providers` 字面值,(2) 資料夾名 `_` 轉 `-`),列入 `unavailable()`,且**不**落到後備模組。
 
@@ -208,9 +209,10 @@ class AdapterRegistry:
         for d in _module_dirs(Path(pkg.__file__).parent):
             found.append(self._load(d, f"{BUILTIN_PACKAGE}.{d.name}", builtin=True))
         for i, root in enumerate(extra_paths):
-            for d in _module_dirs(Path(root)):
+            for j, d in enumerate(_module_dirs(Path(root))):
+                # 加上資料夾序號:`a-b` 與 `a_b` 經 \W→_ 後同名,不可互相 purge
                 safe = re.sub(r"\W", "_", d.name)
-                found.append(self._load(d, f"{_EXT_PREFIX}.p{i}_{safe}", builtin=False))
+                found.append(self._load(d, f"{_EXT_PREFIX}.p{i}_{j}_{safe}", builtin=False))
 
         self._check_conflicts(found)
         if self._context is not None:
@@ -245,10 +247,20 @@ class AdapterRegistry:
             _ensure_ext_parent()
         try:
             module = importlib.import_module(import_name) if builtin else _import_external(import_name, module_dir)
-        except Exception as exc:  # noqa: BLE001 — 任何 import 錯誤都是「無法 import」
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:  # noqa: BLE001 — 含 SystemExit:任何 import 錯誤都是「無法 import」
             return fail(f"無法 import({_short(exc)})")
         info.module = module
+        try:
+            return self._load_loaded(info, module, module_dir, fail)
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:  # noqa: BLE001 — 其餘意外一律只讓這個模組失敗(spec 7.6.7)
+            return fail(f"載入時發生未預期錯誤({_short(exc)})")
 
+    @staticmethod
+    def _load_loaded(info: ModuleInfo, module: ModuleType, module_dir: Path, fail: Any) -> ModuleInfo:
         raw_manifest = getattr(module, "MANIFEST", None)
         if raw_manifest is None:
             return fail("沒有匯出 MANIFEST")
@@ -288,14 +300,17 @@ class AdapterRegistry:
     def _instantiate(self, info: ModuleInfo) -> None:
         try:
             instance = info.module.create(self._context)  # type: ignore[union-attr]
-        except Exception as exc:  # noqa: BLE001
+            not_async = [m for m in ("call", "health")
+                         if not inspect.iscoroutinefunction(getattr(instance, m, None))]
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:  # noqa: BLE001 — 含 SystemExit
             info.available, info.reason = False, f"模組 {info.name} 載入失敗:create() 失敗({_short(exc)})"
             return
-        for meth in ("call", "health"):
-            if not inspect.iscoroutinefunction(getattr(instance, meth, None)):
-                info.available = False
-                info.reason = f"模組 {info.name} 載入失敗:{meth}() 必須是 async def"
-                return
+        if not_async:
+            info.available = False
+            info.reason = f"模組 {info.name} 載入失敗:{not_async[0]}() 必須是 async def"
+            return
         info.instance = instance
 
     # -- 查詢 --------------------------------------------------------------------------------
@@ -358,8 +373,8 @@ def _ensure_ext_parent() -> None:
 async def available_models(info: ModuleInfo, context: AdapterContext) -> ModelsListing:
     """`models.yaml` 加上可選 `list_models(context)` 的結果(spec 7.6.4)。
 
-    同 `id` 以 `models.yaml` 為準;執行期項目缺 `label` 時用 `id`、缺 `capabilities` 時
-    用 manifest 的 `default_capabilities`。查詢失敗只回 `models.yaml` 並附原因。
+    同 `id` 以 `models.yaml` 為準;執行期項目缺 `label`(或為 None)時用 `id`、缺 `capabilities`
+    (或為 None)時用 manifest 的 `default_capabilities`。查詢失敗只回 `models.yaml` 並附原因。
     """
     static = list(info.models)
     if not info.has_list_models:
@@ -376,7 +391,9 @@ async def available_models(info: ModuleInfo, context: AdapterContext) -> ModelsL
                 raise ModelsYamlError(f"[{i}]", "list_models() 每筆必須是含 id 的 dict")
             if item["id"] in known:
                 continue
-            entry = {"label": item["id"], "capabilities": defaults, **item}
+            # 值為 None 的鍵視同未提供,改用預設(不讓單筆的 None 作廢整份清單)
+            given = {k: v for k, v in item.items() if v is not None}
+            entry = {"label": item["id"], "capabilities": defaults, **given}
             merged.append(parse_model_entry(entry, f"list_models[{i}]"))
             known.add(item["id"])
         return ModelsListing(merged)

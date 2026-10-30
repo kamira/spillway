@@ -142,10 +142,13 @@ def resolve_signals(default_signals: Mapping[str, Any], params: Mapping[str, Any
     return merged
 
 
+_INT_STR_RE = re.compile(r"-?[0-9]+")
+
+
 def _as_int(v: Any) -> int | None:
     if _is_int(v):
         return v
-    if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+    if isinstance(v, str) and _INT_STR_RE.fullmatch(v.strip()):   # 只收 ASCII 整數字串,不外拋
         return int(v.strip())
     return None
 

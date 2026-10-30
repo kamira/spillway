@@ -152,3 +152,12 @@ def test_invalid_signals_raise(bad):
 def test_override_must_be_mapping():
     with pytest.raises(SignalsError):
         resolve_signals(API_DEFAULT_SIGNALS, {"signals": "402"})
+
+
+@pytest.mark.parametrize("status,expected", [
+    ("429", "rate_limited"), (" 402 ", "quota_exhausted"), ("--5", "error"), ("²", "error"),
+    ("-", "error"), ("4 29", "error"), ("١٢٣", "error"),
+])
+def test_string_http_status_parsed_strictly_never_raises(status, expected):
+    """S-T4-2:字串 status 只收 ASCII 整數;`isdigit()` 為 True 但 int() 失敗的值不外拋。"""
+    assert classify({"http_status": status}, API_DEFAULT_SIGNALS) == expected

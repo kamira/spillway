@@ -1,8 +1,9 @@
 """Adapter 模組分層檢查(spec 7.6.3;design 規則 2;Global Constraints「分層」)。
 
-`spillway.adapters.<module>` 只可 import `spillway.adapters.base`、自己模組內的檔案、
-標準庫與第三方套件;不可 import 其他 `spillway.*`(credentials、clock、routing、store、
-api、mcp、其他 adapter 模組),也不可直接 import `litellm`(一律經 `adapters.base.litellm_call`)。
+白名單:`spillway.adapters.<module>` 只可 import `spillway.adapters.base`、自己模組內的檔案、
+標準庫(`sys.stdlib_module_names`)與 `yaml`(pyyaml)。不可 import 其他 `spillway.*`(credentials、
+clock、routing、store、api、mcp、其他 adapter 模組),也不可 import 任何其他第三方套件:
+`litellm` 一律經 `adapters.base.litellm_call`,HTTP 探測經 `adapters.base.probe_http`。
 以 AST 掃描,不執行模組程式。
 """
 from __future__ import annotations
@@ -64,6 +65,13 @@ def _check(tmp_path, src: str, rel: str = "adapter.py") -> list[str]:
         "import importlib\nimportlib.import_module('spillway.credentials')\n",
         "__import__('litellm')\n",
         "def f():\n    import spillway.store\n",
+        "import httpx\n",
+        "from httpx import AsyncClient\n",
+        "import requests\n",
+        "import pydantic\n",
+        "import fastapi\n",
+        "import yaml_extras\n",
+        "import importlib\nimportlib.import_module('httpx')\n",
     ],
 )
 def test_forbidden_imports_are_reported(tmp_path, src):
@@ -85,7 +93,10 @@ def test_forbidden_imports_are_reported(tmp_path, src):
         "from . import helper\n",
         "import spillway.adapters.fake_mod.helper\n",
         "import yaml\nimport json\nimport re\nimport asyncio\n",
-        "import httpx\n",
+        "from yaml import safe_load\nimport yaml.constructor\n",
+        "from __future__ import annotations\nimport os.path\nfrom collections.abc import Mapping\n",
+        "import importlib\nimportlib.import_module('.helper', __package__)\n",
+        "from spillway.adapters.base import probe_http\n",
     ],
 )
 def test_allowed_imports_pass(tmp_path, src):

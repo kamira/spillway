@@ -2,7 +2,7 @@
 
 匯出:值物件(types)、`Adapter` Protocol 與 `AdapterContext`、`AdapterManifest` 與驗證、
 `models.yaml` 解析、`classify` 與 signals 規則、`effort_to_upstream`、`litellm_call`、
-`AdapterRegistry` 與合約檢查。
+`AdapterRegistry` 與合約檢查、HTTP 存活探測 `probe_http`。
 """
 from spillway.adapters.base.contract import contract_problems, layering_violations
 from spillway.adapters.base.effort import effort_to_upstream
@@ -19,6 +19,7 @@ from spillway.adapters.base.manifest import (
     parse_models,
     validate_manifest,
 )
+from spillway.adapters.base.probe import PROBE_TIMEOUT, probe_http
 from spillway.adapters.base.protocol import Adapter, AdapterContext, CredentialResolver
 from spillway.adapters.base.registry import (
     AdapterConflictError,
@@ -57,6 +58,8 @@ __all__ = [
     # signals / effort / litellm
     "API_DEFAULT_SIGNALS", "SignalsError", "classify", "resolve_signals", "validate_signals",
     "effort_to_upstream", "DEFAULT_TIMEOUT", "LiteLLMResult", "litellm_call",
+    # 健康探測(決策 10)
+    "PROBE_TIMEOUT", "probe_http",
     # registry / contract
     "AdapterConflictError", "AdapterRegistry", "AdapterUnavailableError", "ModelsListing",
     "ModuleInfo", "available_models", "contract_problems", "layering_violations",

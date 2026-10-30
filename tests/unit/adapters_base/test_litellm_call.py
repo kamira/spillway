@@ -4,12 +4,15 @@
 """
 from __future__ import annotations
 
+import json
+import os
 from types import SimpleNamespace
 
 import litellm
 import pytest
 
 from spillway.adapters.base import API_DEFAULT_SIGNALS, LiteLLMResult, classify, litellm_call
+from spillway.adapters.base.litellm_call import _scrub, exception_to_raw
 
 pytestmark = pytest.mark.anyio
 
@@ -188,3 +191,81 @@ async def test_raw_dict_keys(monkeypatch):
     raising(monkeypatch, ConnectionError("x"))
     r = await litellm_call(model="openai/x", messages=MSGS, api_key=KEY)
     assert set(r.raw) == {"http_status", "error_code", "message", "exception", "timeout"}
+
+
+# ---- 金鑰遮罩的變體(審查 M6):上游回顯的金鑰形式不一定等於原值 -------------------------
+
+LEAKY_KEYS = [
+    pytest.param(" KEYzzz0002 ", id="surrounding-space"),
+    pytest.param("KEYzzz0003\n", id="trailing-newline"),
+    pytest.param('KEY"zz/0004', id="contains-quote"),
+    pytest.param('  KEY"zz0005\t', id="quote-and-space"),
+]
+
+
+def _leak_forms(key: str) -> set[str]:
+    core = key.strip()
+    return {core, json.dumps(core)[1:-1], key, json.dumps(key)[1:-1]} - {""}
+
+
+@pytest.mark.parametrize("model,base_suffix", [
+    ("anthropic/claude-sonnet-4-5", ""),
+    ("openai/gpt-4o-mini", "/v1"),
+])
+@pytest.mark.parametrize("key", LEAKY_KEYS)
+async def test_echoed_key_variants_are_scrubbed(fake_api, model, base_suffix, key):
+    fake_api.set_mode("*", "echo_auth")
+    r = await litellm_call(model=model, messages=MSGS, api_key=key,
+                           api_base=fake_api.base_url + base_suffix, timeout=10)
+    assert not r.ok
+    msg = r.raw["message"]
+    if model.startswith("openai/") and key.endswith("\n"):
+        # OpenAI SDK 拒絕送出含換行的 header,請求沒到上游(Connection error);仍不可含金鑰
+        assert "invalid credential" not in msg
+    else:
+        assert "invalid credential" in msg and "***" in msg   # 確實有回顯,且已被遮
+    for form in _leak_forms(key):
+        assert form not in r.raw["message"], (form, r.raw["message"])
+        assert form not in repr(r)
+
+
+@pytest.mark.parametrize("key", [" sk-a ", "sk-b\n", 'sk-"c"', '\tsk-"d"\\e '])
+def test_scrub_masks_all_variants(key):
+    core = key.strip()
+    text = f"raw={key} core={core} json={json.dumps(core)} jsonraw={json.dumps(key)}"
+    out = _scrub(text, key)
+    for form in _leak_forms(key):
+        assert form not in out, (form, out)
+
+
+def test_scrub_replaces_longest_variant_first():
+    # 原值 " sk-x " 比 strip 後的 "sk-x" 長:先換長的,不會留下孤立的前後空白片段以外的殘片
+    assert _scrub("[ sk-x ][sk-x]", " sk-x ") == "[***][***]"
+
+
+def test_scrub_skips_empty_variants():
+    assert _scrub("hello world", "") == "hello world"
+    assert _scrub("hello world", None) == "hello world"
+    assert _scrub("a  b", "  ") == "a***b"   # strip 後為空的變體略過,不會在每個位置插入遮罩
+
+
+async def test_local_cost_map_guard_set_before_import(monkeypatch, captured):
+    """延後 import litellm 前以 setdefault 設本地價格表(S-T4-1),已設定的值不覆寫。"""
+    monkeypatch.delenv("LITELLM_LOCAL_MODEL_COST_MAP", raising=False)
+    await litellm_call(model="openai/x", messages=MSGS, api_key=KEY)
+    assert os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"
+    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "true")
+    await litellm_call(model="openai/x", messages=MSGS, api_key=KEY)
+    assert os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] == "true"
+
+
+# ---- 嚴格整數解析(S-T4-2):怪異 status 不可讓 exception_to_raw 外拋 ------------------------
+
+@pytest.mark.parametrize("value,expected", [
+    ("429", 429), (" 500 ", 500), ("²", None), ("--5", None), ("", None), ("4x", None), ("١٢٣", None),
+])
+def test_exception_to_raw_status_string_never_raises(value, expected):
+    class E(Exception):
+        status_code = value
+
+    assert exception_to_raw(E("boom"))["http_status"] == expected

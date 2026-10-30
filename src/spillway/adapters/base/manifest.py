@@ -247,6 +247,8 @@ def load_models_yaml(path: Path | str) -> list[ModelInfo]:
         text = p.read_text(encoding="utf-8")
     except OSError as e:
         raise ModelsYamlError(p.name, f"無法讀取:{e.strerror or e}") from None
+    except UnicodeDecodeError as e:
+        raise ModelsYamlError(p.name, f"不是 UTF-8 編碼:{e.reason}(位置 {e.start})") from None
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as e:

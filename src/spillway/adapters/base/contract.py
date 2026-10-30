@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import sys
 from pathlib import Path
 
 from spillway.adapters.base.protocol import AdapterContext
@@ -15,19 +16,26 @@ from spillway.adapters.base.types import EFFORTS
 
 REQUIRED_FILES = ("__init__.py", "adapter.py", "models.yaml", "README.md")
 ALLOWED_SPILLWAY_PREFIX = "spillway.adapters.base"
-FORBIDDEN_THIRD_PARTY = ("litellm",)
+# Global Constraints「分層」:第三方套件只放行 pyyaml;其餘(含 litellm、httpx)一律不可
+ALLOWED_THIRD_PARTY = ("yaml",)
 
 
 def _under(name: str, prefix: str) -> bool:
     return name == prefix or name.startswith(prefix + ".")
 
 
-def _forbidden(name: str, own_package: str) -> bool:
+def _allowed(name: str, own_package: str) -> bool:
+    """白名單:自己的套件、`spillway.adapters.base`、標準庫、`yaml`。"""
     if _under(name, own_package) or _under(name, ALLOWED_SPILLWAY_PREFIX):
-        return False
-    if _under(name, "spillway"):
         return True
-    return any(_under(name, p) for p in FORBIDDEN_THIRD_PARTY)
+    top = name.split(".", 1)[0]
+    if not top or top == "spillway":
+        return False
+    return top in sys.stdlib_module_names or top in ALLOWED_THIRD_PARTY
+
+
+def _forbidden(name: str, own_package: str) -> bool:
+    return not _allowed(name, own_package)
 
 
 def _resolve_relative(package: str, level: int, module: str | None) -> str:
@@ -44,9 +52,10 @@ def _resolve_relative(package: str, level: int, module: str | None) -> str:
 def layering_violations(module_dir: Path, package_name: str) -> list[str]:
     """以 AST 掃描模組資料夾內所有 .py 的 import,回傳違規描述(`檔案:行: 說明`)。
 
-    允許:`spillway.adapters.base`(含子模組)、自己模組內的檔案、標準庫與第三方套件。
-    禁止:其他 `spillway.*`、直接 import `litellm`;`importlib.import_module("…")`、
-    `__import__("…")` 的字面值同樣檢查。
+    白名單(Global Constraints「分層」):`spillway.adapters.base`(含子模組)、自己模組內的
+    檔案、標準庫(`sys.stdlib_module_names`)與 `yaml`。其餘一律報錯:其他 `spillway.*`、
+    `litellm`、`httpx` 等任何第三方套件(需要 HTTP 探測請用 `adapters.base.probe_http`)。
+    `importlib.import_module("…")`、`__import__("…")` 的字面值同樣檢查(`.` 開頭視為相對)。
     """
     module_dir = Path(module_dir)
     out: list[str] = []
@@ -74,10 +83,13 @@ def layering_violations(module_dir: Path, package_name: str) -> list[str]:
                 fname = fn.attr if isinstance(fn, ast.Attribute) else fn.id if isinstance(fn, ast.Name) else ""
                 if fname in ("import_module", "__import__") and node.args \
                         and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                    targets = [node.args[0].value]
+                    lit = node.args[0].value
+                    level = len(lit) - len(lit.lstrip("."))
+                    targets = [_resolve_relative(package, level, lit[level:] or None) if level else lit]
             for t in targets:
                 if _forbidden(t, package_name):
-                    out.append(f"{where}:{node.lineno}: 不可 import {t}(只可 import spillway.adapters.base)")
+                    out.append(f"{where}:{node.lineno}: 不可 import {t}"
+                               f"(只可 import spillway.adapters.base、標準庫與 yaml)")
     return out
 
 
