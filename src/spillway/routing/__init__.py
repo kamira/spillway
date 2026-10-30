@@ -32,7 +32,7 @@ __all__ = [
     "members_of", "matches", "selector_of",
     "Resolver", "RouteNotFound", "Target", "LOCAL_PREFIX", "ROUTE_PREFIX", "TARGET_KINDS",
     "CandidateFilter", "Candidate", "Excluded", "FilterResult", "HealthCache", "HEALTH_TTL",
-    "HEALTH_PROBE_TIMEOUT",    "HEALTHY", "HEALTH_UNKNOWN", "EXCLUDE_REASONS", "CLOUD_KINDS",
+    "HEALTH_PROBE_TIMEOUT", "HEALTHY", "HEALTH_UNKNOWN", "EXCLUDE_REASONS", "CLOUD_KINDS",
     "OrderPlanner", "Slot", "SlotEntry", "DEFAULT_WEIGHT",
     "SlotSelector", "WEIGHT_VALUES",
 ]
