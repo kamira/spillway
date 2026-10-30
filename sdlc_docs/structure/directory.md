@@ -59,6 +59,8 @@ spillway/
 └── tests/
     ├── fakes/
     │   ├── api_upstream/        # 假 API 上游(OpenAI 相容與 Anthropic 協定;三個內建 API 模組共用,M2)
+    │   ├── plugin.py            # `fake_api` pytest fixture(由 tests/conftest.py 以 pytest_plugins 載入)
+    │   ├── test_api_upstream.py # 假上游自身的測試
     │   └── <module>/            # 其他 adapter 模組自己的假上游(假 claude、codex 腳本,M3)
     ├── contract/                # 對所有被發現的 adapter 模組參數化執行的合約測試(test_adapter_contract.py、test_call_status.py)、分層檢查(test_layering.py)
     ├── unit/                    # 對應 src 模組

@@ -7,13 +7,13 @@
 
 | 層 | 模組 | 職責 | 依賴 | 回應需求 |
 |----|------|------|------|----------|
-| 介面層 | `api.openai` | `/v1/chat/completions`、`/v1/models`;回應 header(帳本由 Router 寫入,本模組只做 HTTP 轉換) | `routing`、`store`(`/v1/models` 讀清單)、`redact`(503 訊息防線) | FR-2、FR-13 |
+| 介面層 | `api.openai` | `/v1/chat/completions`、`/v1/models`;回應 header(帳本由 Router 寫入,本模組只做 HTTP 轉換) | `routing`、`store`(`/v1/models` 讀清單)、`redact`(503 訊息防線)、`domain` | FR-2、FR-13 |
 | 介面層 | `api.admin` | `/api/*` 管理端點(CRUD、order、dry-run、estimate、ledger、config〔M4〕、settings、`/api/adapters` 模組與可用模型) | `store`、`routing`、`estimate`、`quota`、`ledger`、`credentials`、`redact`、`domain`、`clock`、`configio`〔M4〕、`mcpconf`〔M4〕、`adapters.base` | FR-13、FR-21、FR-24 |
 | 介面層 | `mcp.server`(M3) | `/mcp/<group>` Streamable HTTP;`ask`/`list_routes`/`quota_status`;遞迴防護 | `routing`、`quota`、`store` | FR-18 |
 | 介面層 | `mcp.bridge`(M3) | `spillway mcp-stdio`:stdio ↔ HTTP 轉發,`SPILLWAY_DEPTH` → header | (只依 HTTP) | FR-18 |
 | 介面層 | `web`(M4) | 7 個畫面(伺服端渲染 + 少量 JS),只呼叫 `/api/*` | `api.admin`(經 HTTP) | FR-20、FR-22 |
 | 介面層 | `cli` | `spillway serve`(M2)/ `mcp-stdio`、`init`(M3) | `app`、`mcp.bridge` | — |
-| 應用層 | `routing` | 請求解析 → 候選篩選 → 順序決定 → slot 內選擇 → 呼叫與 fallback | `quota`、`estimate`、`effort`、`adapters`、`ledger`、`store` | FR-2–FR-7 |
+| 應用層 | `routing` | 請求解析 → 候選篩選 → 順序決定 → slot 內選擇 → 呼叫與 fallback | `quota`、`estimate`、`effort`、`adapters`、`ledger`、`store`、`credentials`(當次憑證值作遮罩用)、`redact`、`domain`、`clock` | FR-2–FR-7 |
 | 應用層 | `quota` | 計算期間、剩餘額度與比例、冷卻設定與清除(上游訊號判定已移至 `adapters.base` 的 `classify`) | `store`、`clock` | FR-8 |
 | 應用層 | `estimate` | token 與花費預估(P50/P90) | `store`、`adapters.base`(`model_string`、`load_litellm`)、LiteLLM | FR-9 |
 | 應用層 | `effort` | 五級 effort 的來源優先序與降級 | `domain` | FR-10 |
