@@ -1,0 +1,15 @@
+# litellm 通用後備模組的可用模型清單(spec 7.6.4;design D12)。
+# 只列少量常見的其他供應商模型;provider 欄是成員要填的 provider,呼叫時模型字串為 <provider>/<id>。
+# local 端點(Ollama、vLLM…)的模型由 list_models() 執行期查詢,不列在這裡。
+- id: deepseek-chat
+  label: DeepSeek Chat
+  provider: deepseek
+  capabilities: {ctx: 131072, tools: true, vision: false, efforts: []}
+- id: deepseek-reasoner
+  label: DeepSeek Reasoner
+  provider: deepseek
+  capabilities: {ctx: 131072, tools: false, vision: false, efforts: []}
+- id: gemini-2.5-flash
+  label: Gemini 2.5 Flash
+  provider: gemini
+  capabilities: {ctx: 1048576, tools: true, vision: true, efforts: [low, medium, high]}

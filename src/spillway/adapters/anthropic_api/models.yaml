@@ -1,0 +1,15 @@
+# anthropic_api 可用模型清單(spec 7.6.4;design D12)。
+# id 為 Anthropic API 的模型名(LiteLLM 價格表有定價);呼叫時模型字串為 anthropic/<id>。
+# efforts:LiteLLM 把 reasoning_effort 轉成 Anthropic 的 thinking / output_config.effort。
+- id: claude-opus-5-5
+  label: Claude Opus 5.5
+  capabilities: {ctx: 1000000, tools: true, vision: true, efforts: [low, medium, high, max]}
+- id: claude-sonnet-5-5
+  label: Claude Sonnet 5.5
+  capabilities: {ctx: 1000000, tools: true, vision: true, efforts: [low, medium, high, max]}
+- id: claude-haiku-5-5
+  label: Claude Haiku 5.5
+  capabilities: {ctx: 1000000, tools: true, vision: true, efforts: [low, medium, high, max]}
+- id: claude-sonnet-4-5
+  label: Claude Sonnet 4.5
+  capabilities: {ctx: 200000, tools: true, vision: true, efforts: [low, medium, high, max]}

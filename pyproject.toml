@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spillway"
+version = "0.1.0"
+description = "單人使用的 LLM 路由閘道"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "litellm>=1.50,<2",
+  "pyyaml>=6",
+  "pydantic>=2.6",
+  "platformdirs>=4",
+  "keyring>=24",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "behave>=1.2.6"]
+
+[project.scripts]
+spillway = "spillway.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+spillway = ["**/*.sql", "**/*.yaml", "**/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
