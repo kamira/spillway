@@ -28,10 +28,16 @@ async def test_delete_cascades_config_and_keeps_ledger(open_spillway, fake_api):
         h.add_route(repo.Route(name="solo", target={"tags": {"all": ["solo"]}}, record_context=True),
                     [repo.RouteTarget("gone", 1, 0)])
 
+        h.add_route(repo.Route(name="other", target={"tags": {"all": ["other"]}}))
+
         r = await h.client.post("/v1/chat/completions", json={"model": "solo", "messages": MSGS})
         assert r.status_code == 200, r.text
-        (row,) = h.ledger()
-        assert row.deployment_id == "gone"
+        # 另一個成員的帳本列:讓下方 `?deployment=gone` 篩選確實排除一列
+        r_other = await h.client.post("/v1/chat/completions", json={"model": "other", "messages": MSGS})
+        assert r_other.status_code == 200, r_other.text
+        assert r_other.headers["X-Spillway-Served-By"] == "stay"
+        (row,) = h.ledger(deployment_id="gone")
+        assert len(h.ledger()) == 2
 
         with h.db() as conn:
             def count(table: str) -> int:

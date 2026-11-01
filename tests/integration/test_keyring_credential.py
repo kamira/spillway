@@ -26,7 +26,7 @@ MSGS = [{"role": "user", "content": "hello"}]
 
 
 class MemoryKeyring(KeyringBackend):
-    """測試用記憶體 keyring 後端(同 tests/unit/test_credentials.py)。"""
+    """測試用記憶體 keyring 後端:tests/unit/test_credentials.py 版本的簡化複本,T11 併入 tests/helpers.py。"""
 
     priority = 1  # type: ignore[assignment]
 
@@ -71,6 +71,7 @@ def seen_auth(monkeypatch):
 
 async def test_keyring_credential_reaches_upstream_and_stays_out_of_storage(
         open_spillway, fake_api, memory_keyring, seen_auth, monkeypatch):
+    # 移除 env 憑證來源,確保請求帶到上游的金鑰只可能來自 keyring
     monkeypatch.delenv("SPILLWAY_TEST_KEY", raising=False)
     keyring.set_password(SERVICE, ACCOUNT, KEY)
     async with open_spillway() as h:

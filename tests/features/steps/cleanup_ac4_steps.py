@@ -19,6 +19,6 @@ def step_unseeded_rng(context):
     gw.seed = None
     gw.rng = SystemRng()
     gw.start(gw.extra_paths)
+    # 新 app 與其 Router 都使用這個未給 seed 的 rng(不是固定 seed 的那一個)
     assert gw.app.state.rng is gw.rng
-    assert isinstance(gw.rng, SystemRng)
-    assert gw.seed is None
+    assert gw.app.state.router.rng is gw.rng
