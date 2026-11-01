@@ -49,6 +49,7 @@ from __future__ import annotations
 # 匯入順序 = 端點註冊順序(與原 admin.py 相同)
 from . import deployments, groups, routes, planning, ledger, settings, dashboard, adapters  # noqa: F401
 from .common import ApiError, router
+# 以下轉匯出供既有測試與向後相容使用(與子模組內為同一物件);公開 API 仍只有 router
 from .deployments import TEST_TEXT_PREVIEW, QuotaService, test_deployment
 from .ledger import StatusLit
 from .models import DeploymentIn

@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import ast
 import importlib
 import logging
 from pathlib import Path
@@ -103,7 +104,17 @@ def test_submodule_logger_name(name):
     for attr, value in vars(mod).items():
         if isinstance(value, logging.Logger):
             assert value.name == LOGGER_NAME, f"{name}.{attr}"
-    assert 'getLogger(__name__)' not in Path(mod.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        callee = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+        if callee != "getLogger":
+            continue
+        args = node.args
+        assert (len(args) == 1 and not node.keywords and isinstance(args[0], ast.Constant)
+                and args[0].value == LOGGER_NAME), f"{name}.py:{node.lineno} getLogger 參數"
 
 
 def test_deployments_logger_is_admin_logger():
