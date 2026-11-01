@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
 import sys
 from pathlib import Path
 
@@ -18,6 +19,11 @@ REQUIRED_FILES = ("__init__.py", "adapter.py", "models.yaml", "README.md")
 ALLOWED_SPILLWAY_PREFIX = "spillway.adapters.base"
 # Global Constraints「分層」:第三方套件只放行 pyyaml;其餘(含 litellm、httpx)一律不可
 ALLOWED_THIRD_PARTY = ("yaml",)
+# CHG-20261101-03 Global Constraints「分層」:模組不可自行起子行程,只能經 `AdapterContext.cli_runner`。
+# `import asyncio`、`os`、`tempfile` 本身仍允許;禁的是下列模組與函式。
+SUBPROCESS_MODULES = ("subprocess", "pty", "asyncio.subprocess")
+_OS_SPAWN = re.compile(r"^(system|popen|spawn\w*|exec\w*|posix_spawn\w*)$")
+_CREATE_SUBPROCESS = re.compile(r"^create_subprocess_\w+$")
 
 
 def _under(name: str, prefix: str) -> bool:
@@ -49,6 +55,55 @@ def _resolve_relative(package: str, level: int, module: str | None) -> str:
     return base
 
 
+def _subprocess_violations(tree: ast.AST, where: str) -> list[str]:
+    """子行程禁用規則:`subprocess`、`pty`、`asyncio.subprocess` 的 import,`os.system`、
+    `os.popen`、`os.spawn*`、`os.exec*`、`os.posix_spawn*`(含 `from os import …` 與 `import os as x`),
+    以及任何 `create_subprocess_*`(`asyncio.create_subprocess_exec` 等)。"""
+    out: list[str] = []
+    os_aliases: set[str] = set()
+    hint = "(模組不可自行起子行程,只能經 AdapterContext.cli_runner)"
+
+    def bad(node: ast.AST, what: str) -> None:
+        out.append(f"{where}:{getattr(node, 'lineno', 0)}: 不可使用 {what}{hint}")
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if any(_under(a.name, m) for m in SUBPROCESS_MODULES):
+                    bad(node, a.name)
+                elif a.name == "os":
+                    os_aliases.add(a.asname or "os")
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            mod = node.module or ""
+            if any(_under(mod, m) for m in SUBPROCESS_MODULES):
+                bad(node, mod)
+                continue
+            for a in node.names:
+                full = f"{mod}.{a.name}" if mod else a.name
+                if any(_under(full, m) for m in SUBPROCESS_MODULES):
+                    bad(node, full)
+                elif mod == "os" and _OS_SPAWN.match(a.name):
+                    bad(node, full)
+                elif _CREATE_SUBPROCESS.match(a.name):
+                    bad(node, full)
+        elif isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id in ("import_module", "__import__") or \
+                    isinstance(fn, ast.Attribute) and fn.attr in ("import_module", "__import__"):
+                if node.args and isinstance(node.args[0], ast.Constant) \
+                        and isinstance(node.args[0].value, str) \
+                        and any(_under(node.args[0].value, m) for m in SUBPROCESS_MODULES):
+                    bad(node, node.args[0].value)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            if _CREATE_SUBPROCESS.match(node.attr):
+                bad(node, node.attr)
+            elif isinstance(node.value, ast.Name) and node.value.id in os_aliases \
+                    and _OS_SPAWN.match(node.attr):
+                bad(node, f"os.{node.attr}")
+    return out
+
+
 def layering_violations(module_dir: Path, package_name: str) -> list[str]:
     """以 AST 掃描模組資料夾內所有 .py 的 import,回傳違規描述(`檔案:行: 說明`)。
 
@@ -56,6 +111,7 @@ def layering_violations(module_dir: Path, package_name: str) -> list[str]:
     檔案、標準庫(`sys.stdlib_module_names`)與 `yaml`。其餘一律報錯:其他 `spillway.*`、
     `litellm`、`httpx` 等任何第三方套件(需要 HTTP 探測請用 `adapters.base.probe_http`)。
     `importlib.import_module("…")`、`__import__("…")` 的字面值同樣檢查(`.` 開頭視為相對)。
+    另檢查子行程禁用規則(`_subprocess_violations`)。
     """
     module_dir = Path(module_dir)
     out: list[str] = []
@@ -69,6 +125,7 @@ def layering_violations(module_dir: Path, package_name: str) -> list[str]:
         except SyntaxError as exc:
             out.append(f"{where}:{exc.lineno}: 語法錯誤,無法檢查 import")
             continue
+        out.extend(_subprocess_violations(tree, where))
         for node in ast.walk(tree):
             targets: list[str] = []
             if isinstance(node, ast.Import):

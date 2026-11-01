@@ -42,7 +42,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from spillway import credentials, settings
-from spillway.adapters.base import AdapterContext, AdapterRegistry, load_litellm
+from spillway.adapters.base import AdapterContext, AdapterRegistry, CliRunner, load_litellm
 from spillway.api import install_error_handlers
 from spillway.api import admin
 from spillway.api import openai as openai_api
@@ -149,6 +149,7 @@ def create_app(
     rnd: Rng = rng if rng is not None else SystemRng()
     path = Path(db_path) if db_path is not None else settings.db_path()
     extra = tuple(extra_adapter_paths)
+    cli_runner = CliRunner()   # CHG-20261101-03 T2:一個 app 一個,注入 AdapterContext.cli_runner(決策 8)
 
     def conn_factory() -> sqlite3.Connection:
         return connect(path)
@@ -158,7 +159,7 @@ def create_app(
         load_litellm()
         path.parent.mkdir(parents=True, exist_ok=True)
         conn_factory().close()   # migration(D3)
-        registry = AdapterRegistry(AdapterContext(credentials=credentials.resolve, clock=clk))
+        registry = AdapterRegistry(AdapterContext(credentials=credentials.resolve, clock=clk, cli_runner=cli_runner))
         registry.discover(extra)   # AdapterConflictError → 啟動失敗(7.6.6)
         app.state.registry = registry
         app.state.router = Router(conn_factory, registry, clk, rnd, close_conn=True)
