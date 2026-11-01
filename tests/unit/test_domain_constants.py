@@ -58,7 +58,7 @@ def test_cloud_kinds_defined_only_in_domain():
     src = Path(spillway.__file__).parent
     offenders = [
         str(p.relative_to(src)) for p in src.rglob("*.py")
-        if p.name != "domain.py" and re.search(r"^CLOUD_KINDS\s*=", p.read_text("utf-8"), re.M)
+        if p.name != "domain.py" and re.search(r"^\s*CLOUD_KINDS\s*(:[^=]*)?=", p.read_text("utf-8"), re.M)
     ]
     assert offenders == []
 

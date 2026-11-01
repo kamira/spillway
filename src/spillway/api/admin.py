@@ -923,6 +923,7 @@ def _ledger_out(r: repo.LedgerRow) -> dict[str, Any]:
     return {"id": d.pop("id"), **d}
 
 
+# 須與 domain.LEDGER_STATUSES 一致,由 tests/unit/test_domain_constants.py 釘住(決策 6)
 StatusLit = Literal["ok", "error", "quota_exhausted", "rate_limited", "skipped_precheck"]
 assert set(StatusLit.__args__) == LEDGER_STATUSES  # type: ignore[attr-defined]
 

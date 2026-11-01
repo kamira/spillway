@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 from spillway.clock import Clock
-from spillway.domain import LEDGER_STATUSES
+from spillway.domain import LEDGER_STATUSES  # 轉匯出,同一物件(CHG-20261101-02 決策 6)
 from spillway.redact import REDACTOR, Redactor
 from spillway.store import repo
 from spillway.store.db import transaction
@@ -46,8 +46,6 @@ __all__ = [
     "RetentionJob",
     "payload_status",
 ]
-
-# 契約清單 `usage_ledger.status`:定義在 `spillway.domain`,此處轉匯出(同一物件;CHG-20261101-02 決策 6)
 
 PayloadStatus = Literal["ok", "expired", "never_recorded"]
 
