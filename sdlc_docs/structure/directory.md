@@ -1,6 +1,6 @@
 # 目錄結構 — Spillway
 
-- 專案:spillway · 分支:main · 版本:v1.1(2026-10-30,CHG-20261030-02:M2 施工檔案同步,SignalMatcher 移至 adapters/base,標註里程碑;使用者於 CHG 確認閘確認,2026-10-30) · 前版 v1.0 已確認(2026-10-29,使用者) · 日期:2026-10-30(UTC+0)
+- 專案:spillway · 分支:main · 版本:v1.2(2026-11-01,CHG-20261101-02:`api/admin/` 套件、`api/deps.py`、`routing/outcome.py`、`adapters/base/api_adapter.py`、`tests/helpers.py`、`m2c_cleanup.feature` 與 `cleanup_*_steps.py`、`artifacts/m2c/`;移除 tests/contract、tests/unit/adapters、tests/unit/adapters_base、tests/unit/routing 的 conftest;使用者於 CHG 確認閘確認,2026-11-01) · 前版 v1.1 已確認(2026-10-30,CHG-20261030-02) · 前前版 v1.0 已確認(2026-10-29,使用者) · 日期:2026-11-01(UTC+0)
 - 依據:sdlc_docs/structure/logical.md、design.md
 
 ## 樹狀
@@ -14,40 +14,45 @@ spillway/
 ├── docs/                        # 企劃書、規格書、UI 設計稿(需求來源,不放帳本)
 ├── sdlc_docs/                   # 治理帳本
 ├── artifacts/                   # 驗收與量測產物(不進版控,M2 起)
+│   ├── m2/                      # CHG-20261030-02 的驗收產物
+│   └── m2c/                     # CHG-20261101-02 的驗收產物(integration.xml、contract.xml、http-log.jsonl)
 ├── src/spillway/
 │   ├── __main__.py / cli.py     # spillway serve(M2) | mcp-stdio、init(M3)
 │   ├── app.py                   # FastAPI 組裝、lifespan(背景清理工作)
 │   ├── settings.py              # 資料目錄、埠號、綁定常數(M2 不依賴 store);token(M3)
 │   ├── clock.py                 # Clock、Rng
-│   ├── domain.py                # 跨層值物件 Deployment、Budget、ChatRequest、CallResult(adapters.base 轉匯出)
+│   ├── domain.py                # 跨層值物件 Deployment、Budget、ChatRequest、CallResult(adapters.base 轉匯出);共用常數 KINDS、CLOUD_KINDS、CALL_STATUSES、LEDGER_STATUSES、COOLING_STATUSES、STATUS_SKIPPED_PRECHECK
 │   ├── store/
-│   │   ├── db.py                # 連線、PRAGMA、migration(user_version)
+│   │   ├── db.py                # 連線、PRAGMA、migration(user_version)、ConnSource / use_conn(不關閉連線)
 │   │   ├── schema.sql           # 與 spec 2.3 一致
-│   │   └── repo.py              # 各表存取
+│   │   └── repo.py              # 各表存取(全專案的 SQL 只在 store/)
 │   ├── credentials.py
-│   ├── redact.py
+│   ├── redact.py                # Redactor、共用實例 REDACTOR
 │   ├── routing/
 │   │   ├── target.py            # route 目標(group / tags)→ 成員集合
 │   │   ├── resolver.py
-│   │   ├── filter.py
+│   │   ├── filter.py            # CandidateFilter、HealthCache(invalidate)
 │   │   ├── planner.py
 │   │   ├── selector.py
-│   │   └── router.py
+│   │   ├── outcome.py           # RouteOutcome、AttemptInfo、Plan、PlanSlot、PlanEntry、PlanExcluded
+│   │   └── router.py            # Router(invalidate_health)
 │   ├── quota.py                 # QuotaService(上游訊號判定 `classify` 在 adapters/base/)
 │   ├── estimate.py
-│   ├── effort.py
+│   ├── effort.py                # EffortMapper、normalize_effort、InvalidEffort
 │   ├── ledger.py                # LedgerWriter、RetentionJob
 │   ├── adapters/
-│   │   ├── base/                # 共用契約:Adapter、CallResult、AdapterContext、AdapterManifest、registry(自動發現)、classify(上游訊號歸類)、effort_to_upstream、litellm_call;cli_runner(M3)
-│   │   ├── litellm/             # 通用後備(api/local);每個模組:__init__.py(MANIFEST、create)、adapter.py、models.yaml、README.md
+│   │   ├── base/                # 共用契約:Adapter、CallResult、AdapterContext、AdapterManifest、registry(自動發現)、classify(上游訊號歸類)、effort_to_upstream、litellm_call、api_adapter.py(LiteLLMApiAdapter,三個 API 模組共用的基底);cli_runner(M3)
+│   │   ├── litellm/             # 通用後備(api/local);每個模組:__init__.py(MANIFEST、create)、adapter.py、models.yaml、README.md(API 模組的 adapter.py 為 LiteLLMApiAdapter 子類別)
 │   │   ├── claude_cli/          # 訂閱 CLI · single(M3)
 │   │   ├── codex_cli/           # 訂閱 CLI · single(M3)
 │   │   ├── anthropic_api/       # API · multiple
 │   │   └── openai_api/          # API · multiple
 │   ├── configio.py              # M4
 │   ├── api/
+│   │   ├── __init__.py          # ApiError、錯誤格式工具、ALLOWED_CHAT_PARAMS(U8 白名單)
+│   │   ├── deps.py              # request_conn(每次開一條連線、離開時關閉)
 │   │   ├── openai.py
-│   │   └── admin.py
+│   │   └── admin/               # 管理 API 套件:__init__.py(組 router)、common.py、models.py、secrets.py、deployments.py、groups.py、routes.py、planning.py、ledger.py、settings.py、dashboard.py、adapters.py
 │   ├── mcp/                     # M3
 │   │   ├── server.py
 │   │   ├── bridge.py
@@ -57,17 +62,19 @@ spillway/
 │   │   └── web/*.html           # UI-1–UI-7
 │   └── static/                  # 少量 JS 與 CSS(M4)
 └── tests/
+    ├── conftest.py              # anyio_backend(全 tests/ 唯一定義)、載入 tests/fakes/plugin.py
+    ├── helpers.py               # 測試輔助:假金鑰 fixture、成員建構器、MemoryKeyring、dead_base
     ├── fakes/
     │   ├── api_upstream/        # 假 API 上游(OpenAI 相容與 Anthropic 協定;三個內建 API 模組共用,M2)
     │   ├── plugin.py            # `fake_api` pytest fixture(由 tests/conftest.py 以 pytest_plugins 載入)
     │   ├── test_api_upstream.py # 假上游自身的測試
     │   └── <module>/            # 其他 adapter 模組自己的假上游(假 claude、codex 腳本,M3)
-    ├── contract/                # 對所有被發現的 adapter 模組參數化執行的合約測試(test_adapter_contract.py、test_call_status.py)、分層檢查(test_layering.py)
-    ├── unit/                    # 對應 src 模組
-    ├── integration/             # HTTP、MCP、CLI 子行程(假上游)
-    │   └── admin/               # 管理 API 整合測試(M2)
-    ├── features/                # behave 行為情境(m2_*.feature)
-    │   ├── steps/               # 步驟檔(T15 撰寫)
+    ├── contract/                # 對所有被發現的 adapter 模組參數化執行的合約測試(test_adapter_contract.py、test_call_status.py)、分層與 SQL 位置檢查(test_layering.py)、公開匯入路徑(test_public_imports*.py);無 conftest
+    ├── unit/                    # 對應 src 模組;只有 unit/conftest.py(子目錄 adapters/、adapters_base/、routing/ 無 conftest)
+    ├── integration/             # HTTP、MCP、CLI 子行程(假上游);integration/conftest.py
+    │   └── admin/               # 管理 API 整合測試(M2);conftest.py 的 make_app 呼叫 create_app()
+    ├── features/                # behave 行為情境(m2_*.feature;m2c_cleanup.feature,CHG-20261101-02)
+    │   ├── steps/               # 步驟檔(m2_*:CHG-20261030-02 T15;cleanup_admin_steps.py、cleanup_health_steps.py、cleanup_ac4_steps.py:CHG-20261101-02)
     │   ├── support/             # 行程內驅動 app 的 gateway(與 open_spillway 同方式)
     │   └── environment.py
     └── acceptance/              # AC-7 與 NFR 量測、test_operation.py(操作驗收,L4);輔助 seed.py、perf.py、procs.py、results.py
@@ -77,7 +84,7 @@ spillway/
 
 | 路徑 | 職責 | 對應邏輯模組 |
 |------|------|--------------|
-| `src/spillway/api/` | HTTP 介面 | `api.openai`、`api.admin` |
+| `src/spillway/api/` | HTTP 介面;`admin/` 為管理 API 套件 | `api.openai`、`api.admin`、`api.deps` |
 | `src/spillway/mcp/` | MCP server、stdio 橋接、設定產生 | `mcp.server`、`mcp.bridge`、`mcpconf` |
 | `src/spillway/templates/web`、`static/` | Web UI | `web` |
 | `src/spillway/routing/` | 路由管線 | `routing` |
@@ -87,7 +94,7 @@ spillway/
 | `src/spillway/store/` | SQLite | `store` |
 | `tests/fakes/` | 假上游(Guideline Q1);API 共用 `api_upstream/` | — |
 | `tests/features/` | behave 行為情境與步驟 | — |
-| `artifacts/` | 驗收與量測產物,不進版控 | — |
+| `artifacts/` | 驗收與量測產物,不進版控;每筆 CHG 一個子目錄(`m2/`、`m2c/`) | — |
 | `tests/acceptance/` | 驗收項,檔名帶 AC 編號 | — |
 
 ## 命名與放置規則

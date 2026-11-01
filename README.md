@@ -32,6 +32,15 @@
 
 Python · FastAPI · LiteLLM SDK · SQLite（WAL）
 
+## 相容性
+
+`/v1/chat/completions` 除了 `model`、`messages`、`stream`、`max_tokens`、`reasoning_effort`、`tools`、`metadata` 這些明列欄位，其他參數只轉交白名單內的 OpenAI 標準參數（`spillway.api.ALLOWED_CHAT_PARAMS`），名單外的鍵一律靜默丟棄、不報錯。
+
+| 參數 | 處理 |
+| --- | --- |
+| `functions`、`function_call`（OpenAI 舊版函式呼叫） | 丟棄，不轉交上游；請改用 `tools` 與 `tool_choice` |
+| 其他不在白名單內的參數 | 丟棄，不轉交上游 |
+
 ## 使用範圍
 
 僅供擁有者本人在本機使用。訂閱帳號只透過官方 CLI 呼叫，不讀取、不轉發 OAuth token，不集中多個帳號。

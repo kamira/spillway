@@ -1,22 +1,23 @@
 # 設計結構 — Spillway
 
-- 專案:spillway · 分支:main · 版本:v1.2(2026-10-30,CHG-20261030-02:元件表與契約同步 M2 施工設計,SignalMatcher 移至 adapters.base,D9 依使用者決定 B1 修訂,新增 D16–D24;使用者於 CHG 確認閘確認,2026-10-30) · 前版 v1.1 已確認(2026-10-29,使用者;含 D11 adapter 模組化;v1.1 於 2026-10-30 確認 D8、D9、D13 手動輸入,CHG-20261030-01) · 日期:2026-10-30(UTC+0)
+- 專案:spillway · 分支:main · 版本:v1.3(2026-11-01,CHG-20261101-02:M2 整理——`REDACTOR` 共用實例、`normalize_effort` 移至 effort.py、`LiteLLMApiAdapter` 共用基底、健康快取失效、新增 D25–D27;使用者於 CHG 確認閘確認,2026-11-01) · 前版 v1.2 已確認(2026-10-30,CHG-20261030-02:元件表與契約同步 M2 施工設計,SignalMatcher 移至 adapters.base,D9 依使用者決定 B1 修訂,新增 D16–D24) · 前前版 v1.1 已確認(2026-10-29,使用者;含 D11 adapter 模組化) · 日期:2026-11-01(UTC+0)
 - 依據:sdlc_docs/ai-guideline.md v1.4;docs/spec.md;sdlc_docs/structure/logical.md
 
 ## 關鍵元件
 
 | 元件 | 責任 | 對外介面 / 契約 | 規格 |
 |------|------|-----------------|------|
-| `Router` | 單次請求的完整路由:解析、篩選、排序、選擇、fallback | `Router(conn_factory, registry, clock, rng, *, close_conn=False, …)`;`async route(req) -> RouteOutcome`;`async dry_run(route_name_or_model, req) -> Plan`(不呼叫 adapter、不寫帳本);conn_factory 每請求呼叫一次、以 contextvar 共用,內建元件只在 route()/dry_run() 期間可用(CHG-20261030-02 施工審議 M19) | 4 |
+| `Router` | 單次請求的完整路由:解析、篩選、排序、選擇、fallback | `Router(conn_factory, registry, clock, rng, *, close_conn=False, …)`;`async route(req) -> RouteOutcome`;`async dry_run(route_name_or_model, req) -> Plan`(不呼叫 adapter、不寫帳本);conn_factory 每請求呼叫一次、以 contextvar 共用,內建元件只在 route()/dry_run() 期間可用(CHG-20261030-02 施工審議 M19);`invalidate_health(dep_id)` 移除該成員的健康快取結果(CHG-20261101-02 決策 12);回傳型別定義於 `routing.outcome`,`spillway.routing` 與 `spillway.routing.router` 轉匯出(決策 10) | 4 |
 | `Resolver` | `model` 字串 → `local/` 直呼 / route / 隱含 route / 404 | `resolve(model) -> Target` | 4.1 |
 | `CandidateFilter` | 依 enabled、能力、mode、額度、冷卻、健康、預估篩選 | `async filter(target, req, *, probe=True, now=None) -> FilterResult(candidates, excluded)`;local 健康探測上限 2 秒、結果快取 10 秒(D20) | 4.2 |
+| `HealthCache` | local 健康結果快取(D20),與 `Router` 共用同一實例;只有經 route 的請求讀寫,`local/` 直呼不讀 | `get(dep_id)`、`put(dep_id, healthy)`、`invalidate(dep_id)`(CHG-20261101-02 決策 12:管理 API 對成員 PUT〔含 `enabled` 變更〕、DELETE 成功後經 `Router.invalidate_health` 呼叫)、`clear()` | 4.2.4 |
 | `OrderPlanner` | 手動 slot 或預設層級 → slot 清單;標示「未排序」 | `plan(route_targets, candidates, members=None) -> list[Slot]`;預設層級固定編號:cli 為 base、api 為 base+1、local 自 base+2 起(CHG-20261030-02 決策 38) | 4.3 |
 | `SlotSelector` | slot 內加權隨機選雲端(權重 = 優先權重值 × `ratio()`)、失敗重選、再依 position 試 local | `SlotSelector(quota, rng).iterate(slot, now)`(generator,失敗後於剩餘成員重新加權) | 4.4 |
 | `QuotaService` | 本期起點、下一重置點、剩餘額度與比例、冷卻判定、設定與清除;不含上游訊號判定(已移至 `adapters.base.classify`,D12 修訂) | `period_start(budget, now)`、`next_reset(budget, now)`、`remaining(dep, now)`、`ratio(dep, now)`、`is_cooling(dep, now)`、`mark(dep, status, now)`、`clear(dep)` | 5.1–5.3 |
 | `classify`(原 `SignalMatcher`,位於 `adapters.base`) | 純函式:依成員 `params.signals` 或模組 `default_signals` 將上游輸出歸類;由 adapter 在 `call()` 內呼叫並回傳 status(CHG-20261030-02 決策 12) | `classify(raw, signals) -> ok / quota_exhausted / rate_limited / error` | 5.3.1、7.6.3、7.6.8 |
 | `Estimator` | 輸入 token、輸出 P50/P90、P90 花費 | `estimate(dep, req, route_name) -> Estimate` | 5.4 |
 | `Estimate` | 預估值物件 | `tokens_in`、`out_p50`、`out_p90`、`cost_usd_p90`(無定價時為 None) | 5.4 |
-| `EffortMapper` | 來源優先序與降級(通用);上游參數值由各 adapter 模組的 manifest 提供,經 `adapters.base.effort_to_upstream(manifest, level)` 轉換(`none` 對應 None 時不傳) | `pick(route_target_effort, req_effort, caps_efforts) -> str \| None` | 6 |
+| `EffortMapper`(`spillway/effort.py`) | 來源優先序與降級(通用);同模組另含 `normalize_effort(value) -> str \| None` 與 `InvalidEffort`(CHG-20261101-02 決策 8,自 router 移入;`spillway.routing`、`spillway.routing.router` 轉匯出);上游參數值由各 adapter 模組的 manifest 提供,經 `adapters.base.effort_to_upstream(manifest, level)` 轉換(`none` 對應 None 時不傳) | `pick(route_target_effort, req_effort, caps_efforts) -> str \| None` | 6 |
 | `Adapter`(Protocol) | 呼叫上游與健康檢查 | `async call(dep, req, effort) -> CallResult`;`async health(dep) -> bool`(CHG-20261030-02 決策 5,spec 7.1 同步改 async) | 7.1 |
 | `AdapterContext` | `create(context)` 注入給模組的物件;新增欄位不算破壞契約、不升 `contract_version`(決策 13) | `credentials`(解析器)、`clock`、`cli_runner`(M2 為 None) | 7.6 |
 | `AdapterManifest` | 每個 adapter 模組的宣告資料(見下方「Adapter 模組契約」) | dataclass,模組層級常數 `MANIFEST` | 6.3、5.3.1、7 |
@@ -26,14 +27,15 @@
 | `Plan` | dry-run 結果:slots(每個候選含 deployment、kind、weight、effort、`Estimate`、健康狀態)、`excluded[]`(deployment、原因,含 `adapter_unavailable`、`skipped_precheck`)、`unsorted[]`、依 Rng 本次抽出的第一順位 | 型別,由 `Router.dry_run` 回傳 | 4 |
 | `LedgerWriter` | 每次嘗試一列(呼叫後與結果同列一次寫入,D24);payload 先遮罩再截斷 | `record(attempt) -> ledger_id`;`payload_status(ledger_id, now) -> ok \| expired \| never_recorded` | 2.4、4.5.1 |
 | `RetentionJob` | 每小時刪除過期 payload | `run_once(now)` | 2.4.5 |
-| `Redactor` | 遮罩 `sk-…`、`Bearer` 後值、`extra_secrets` 中的每個值 | `redact(text, extra_secrets=()) -> (text, hit: bool)`;`matches(text) -> bool`(供寫入驗證) | 2.4.4 |
+| `Redactor` | 遮罩 `sk-…`、`Bearer` 後值、`extra_secrets` 中的每個值;無狀態,全站共用單一實例 `spillway.redact.REDACTOR`(`extra_secrets` 每次呼叫傳入;`LedgerWriter(redactor=None)` 預設用它,測試仍可傳入自己的實例;CHG-20261101-02 決策 7) | `redact(text, extra_secrets=()) -> (text, hit: bool)`;`matches(text) -> bool`(供寫入驗證) | 2.4.4 |
 | `ConfigIO`(M4) | YAML ↔ 資料庫 | `export() -> str`;`import_(yaml, mode)`,失敗回欄位路徑 | 3 |
 | `McpConfigRenderer`(M4) | 模板渲染各工具設定 | `render(group, tool, embed_token) -> {content, path, env}` | 8.2 |
 | `McpApp`(M3) | 依 `<group>` 暴露 route;list_changed | MCP tools `ask`、`list_routes`、`quota_status` | 8.1 |
 | `Clock` / `Rng` | 時間與亂數來源;實作:`SystemClock`、`FakeClock`(`advance()`)、`SystemRng(seed=None)`、`SeqRng` | `now() -> datetime(UTC)`;`random() -> float` | 測試注入 |
 | `domain` 值物件 | `Deployment`、`Budget`、`ChatRequest`、`CallResult` 定義於基礎層 `spillway/domain.py`;`adapters.base` 轉匯出,adapter 模組照舊只 import base | dataclass(frozen) | 7.1;CHG-20261030-02 施工審議 M1 |
 | `probe_http` | local 端點健康探測(D18):對 URL 發一次 GET,任何 HTTP 回應即健康 | `async probe_http(url, timeout=2.0) -> bool`(不外拋、不跟隨轉址、不讀 proxy 環境變數) | 4.2.4;CHG-20261030-02 施工審議 M8 |
-| `model_string` / `load_litellm` | 統一的 LiteLLM 模型字串規則(provider 為 `litellm` 時原樣使用 model,其他一律 `<provider>/<model>`,spec 7.2.1);LiteLLM 單一載入點(本地價格表、關閉 verbose 與遙測、不下載 HF tokenizer) | `model_string(dep) -> str`;`load_litellm() -> module` | 7.2.1;CHG-20261030-02 施工審議 M11、M13、M14 |
+| `LiteLLMApiAdapter`(`adapters.base.api_adapter`) | anthropic_api、openai_api、litellm 三個模組共用的 adapter 基底(行為與去重前的 adapter.py 相同);各模組 `adapter.py` 保留,內容為 `class LiteLLMAdapter(LiteLLMApiAdapter)`,不覆寫 `call`/`health`,`__init__.py` 不變。**`_seam` 替換點規則**(CHG-20261101-02 決策 11,施工審議修訂):`litellm_call`、`model_string`、`probe_http` 於呼叫當下先查實際類別(`type(self)`)定義所在的那一個模組(只查一層,不沿繼承鏈往上找),該模組有同名屬性且可呼叫就用它,否則退回 `adapters.base` 的實作;各模組 `adapter.py` 轉匯出這三個名稱,所以在某模組替換它們只影響該模組 | `LiteLLMApiAdapter(context, manifest)`;`async call(dep, req, effort) -> CallResult`;`async health(dep) -> bool` | 7.1、7.2 |
+| `model_string` / `load_litellm` | 統一的 LiteLLM 模型字串規則(provider 為 `litellm` 時原樣使用 model,其他一律 `<provider>/<model>`,spec 7.2.1);LiteLLM 單一載入點(本地價格表、關閉 verbose 與遙測、不下載 HF tokenizer;`LiteLLM`、`LiteLLM Router`、`LiteLLM Proxy`、`openai`、`anthropic`、`httpx`、`httpcore` 七個 logger 等級低於 INFO〔含 NOTSET、DEBUG、自訂 1–19〕時設為 INFO,INFO 以上與 propagate、handler 不動,CHG-20261101-02 決策 13) | `model_string(dep) -> str`;`load_litellm() -> module` | 7.2.1;CHG-20261030-02 施工審議 M11、M13、M14 |
 | `CallResult` 工具呼叫欄位 | `tool_calls`(OpenAI 格式 dict 清單)、`finish_reason`,皆可選 | spec 7.1(CHG-20261030-02 決策 28) | 7.1 |
 | litellm 模組 `list_models` | 查 local 端點可用模型;端點取參數 `api_base`,未給時取環境變數 `SPILLWAY_LOCAL_API_BASE`,再無則 Ollama 預設 `http://127.0.0.1:11434/v1`(M2 暫行設定,M4 UI-2 改用既有 local 成員的 api_base) | `list_models(context, api_base=None)` | 7.6.4;CHG-20261030-02 決策 25 |
 
@@ -61,6 +63,8 @@ classDiagram
   Router --> EffortMapper
   Router --> AdapterRegistry
   Router --> LedgerWriter
+  Router --> HealthCache : invalidate_health
+  CandidateFilter --> HealthCache
   Router --> QuotaService : mark(status)
   CandidateFilter --> QuotaService
   CandidateFilter --> Estimator
@@ -71,7 +75,8 @@ classDiagram
   Router --> Plan : dry_run
   LedgerWriter --> Attempt
   AdapterRegistry --> Adapter
-  Adapter <|.. LiteLLMAdapter
+  Adapter <|.. LiteLLMApiAdapter
+  LiteLLMApiAdapter <|-- LiteLLMAdapter : 三個 API 模組各一
   Adapter <|.. ClaudeCliAdapter
   Adapter <|.. CodexCliAdapter
   AdapterRegistry --> AdapterManifest : discover()
@@ -79,7 +84,7 @@ classDiagram
   CodexCliAdapter --> CliRunner : M3
   ClaudeCliAdapter --> classify
   CodexCliAdapter --> classify
-  LiteLLMAdapter --> classify
+  LiteLLMApiAdapter --> classify
   AdapterRegistry --> AdapterContext : create(context)
   LedgerWriter --> Redactor
   RetentionJob --> Clock
@@ -205,6 +210,9 @@ Web 後台建立與編輯成員時以選單取代自由輸入,資料來源是新
 | D22 | 管理 API 錯誤碼與寫入驗證:新增 `validation_error`(422)、`not_found`(404)、`conflict`(409),422 一律轉成 spec 9.1.2 格式、欄位路徑寫在 `message`;`GET /api/ledger/{id}/payload` 以 `usage_ledger.ts` + 保存天數判斷,已過期回 410 `payload_expired`,從未記錄回 404 `not_found`;寫入時 `credential_ref` 必須為 `env:…` 或 `keyring:…:…`(否則 422 且不回顯值)、`params` 任何值命中 Redactor 樣式回 422 且不回顯、刪除仍被 route 參照的群組回 409 `conflict`、`PUT` 變更 provider 時於同一交易依 cardinality 檢查(違反回 409 `provider_single`)、`reset_anchor` 須為 1–28 | 新增錯誤碼 vs 沿用 FastAPI 預設 `{"detail": [...]}` | FastAPI 預設格式不符 spec 9.1.2;刪除 payload 後無法以 payload 列是否存在區分「過期」與「從未記錄」,故改以 ts 判斷;擋住金鑰本體被存進資料庫;spec 2.1.4 只寫「建立與匯入」,PUT 變更 provider 也檢查是補漏。**代使用者決定**(CHG-20261030-02 決策 16、17、22)。 |
 | D23 | `local/` 直呼:`X-Spillway-Slot` 回 `direct`,帳本 `route_name` 為 NULL;隱含 route(spec 4.1.3):帳本 `route_name` 寫入該 `model_name` | — | spec 9.1.3 要求一律帶 Slot header;spec 5.4.3 依「同一 route」統計,隱含 route 需要穩定的統計鍵。**代使用者決定**(CHG-20261030-02 決策 18)。 |
 | D24 | 帳本寫入:呼叫前計算預估,呼叫後與結果同列一次寫入 | 先插入再更新 vs 一次寫入 | `usage_ledger.status` 為 NOT NULL,五個值沒有 pending;崩潰時不留下不完整的列。對 spec 5.4.1「呼叫前計算並寫入」的解讀。並行請求可能同時看到同一份剩餘額度而超支,記為已知限制(單人使用)。**代使用者決定**(CHG-20261030-02 決策 19)。 |
+| D25 | OpenAI 舊版參數 `functions`、`function_call` 依 U8 白名單丟棄:`/v1/chat/completions` 只轉交 `spillway.api.ALLOWED_CHAT_PARAMS` 內的參數,名單外的鍵(含這兩個)靜默丟棄、不報錯;工具呼叫請用 `tools`/`tool_choice`。此事寫入 README「相容性」小節 | README + design vs spec 9.1 修訂 | spec 9.1 未列舉白名單;白名單是實作細節(U8 = a,使用者決定 2026-10-30) | 不動規格書。**代使用者決定**(CHG-20261101-02 決策 15)。 |
+| D26 | 管理 API 寫入時的憑證鍵名比對改為「正規化後比對」:鍵名轉小寫並去掉 `-`、`_`、`.`、空白後,(a) 完全等於 `apikey`、`apikeys`、`xapikey`、`key`、`token`、`secret`、`password`、`passwd`、`passphrase`、`authorization`、`bearer`、`credential`、`credentials` 之一,或 (b) 以複合字根 `apikey`、`apikeys`、`secret`、`password`、`passwd`、`passphrase`、`secretkey`、`privatekey`、`accesskey`、`apitoken`、`accesstoken`、`authtoken`、`sessiontoken`、`refreshtoken`、`idtoken`、`bearertoken` 之一結尾 → 422 `validation_error`,不回顯值(`api.admin.secrets`);`key`、`token` 只做完全比對,不擋 `max_tokens`、`cache_key`。整棵 `params` 含 `params.signals` 一律比對鍵名與值樣式、**不豁免**;寫入 `params` 時另以 `validate_signals(params["signals"], "params.signals")` 驗證格式,不合法回 422;`signals` 為 null 或未給視為不覆寫模組預設,不驗證 | (a) 擋變體 / (b) 維持完全比對;複合字根 (a) 不加 / (b) 加 / (c) 再加 `key` 結尾;signals (a) 不豁免 / (b) 只豁免結構層 / (c) 整棵豁免 | 原規則(D22、U9)只擋 8 個完全相同的鍵名;誤擋的代價只是一次明確的 422;spec 5.3.1 的結構鍵沒有一個會被擋到 | 已知限制:「供應商名 + key/token」(`openai_key`、`hf_token`)不擋;`match`/`equals` 若要比對名稱就叫 `token`、`secret` 的上游欄位會 422。**使用者決定**(2026-11-01,CHG-20261101-02 決策 1、4,含決策審議 B1、B2)。 |
+| D27 | 連線取得統一:基礎層 `store.db.ConnSource`(`sqlite3.Connection` 或零參數 callable)與 `store.db.use_conn(source)` context manager 取代 resolver、quota、estimate 各自的 `_conn()`;**`use_conn` 一律不關閉連線**(傳入 Connection 直接交回;傳入 callable 呼叫一次並交回),關閉責任留在開啟者(Router 的 `close_conn`、API 層的 `request_conn`)。API 層以 `api.deps.request_conn(request)` context manager 取得連線:每次呼叫讀 `request.app.state.conn_factory()` 開一條、離開 `with` 時關閉(含例外),在 async handler 內於事件迴圈執行緒執行;不使用 FastAPI `Depends`。SQL 字串只出現在 `src/spillway/store/`(`tests/contract/test_layering.py` 檢查) | `Depends(get_conn)` vs context manager vs 保留現狀 | 連線以預設 `check_same_thread=True` 開啟,同步 generator dependency 會在 threadpool 開連線;既有測試以 `SimpleNamespace(app=app)` 直接呼叫 handler、或在建 app 後替換 `conn_factory` | context manager 與原 admin `_db(request)` 開關時機相同(回應建立前關閉)、執行緒不變。Router 的 contextvar 不動(NFR-1 依賴它);`LedgerWriter`、`RetentionJob` 維持收 Connection。**代使用者決定**(CHG-20261101-02 決策 5)。 |
 
 ## 採用模式
 
