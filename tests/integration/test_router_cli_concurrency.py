@@ -108,3 +108,59 @@ async def test_cli_output_with_member_env_credential_is_masked(
     assert SECRET not in resp.text
     rows = [r for r in h.ledger() if r.deployment_id == "claude-sub"]
     assert rows[0].status == "error" and SECRET not in (rows[0].error or "")
+
+
+# ---------------------------------------------------------------- 管理 API test-call(審議修正)
+
+
+async def test_admin_test_call_refused_when_slot_full(spillway, fake_api, fake_cli, monkeypatch):
+    h = spillway
+    await _setup(h, fake_api, monkeypatch)
+    runner = h.app.state.cli_runner
+    assert runner.try_acquire("claude-sub", 1)
+    try:
+        r = await h.client.post("/api/deployments/claude-sub/test")
+    finally:
+        runner.release("claude-sub")
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert (out["status"], out["ok"], out["error"], out["ledger_id"]) == (
+        "error", False, "concurrency_full", None)
+    assert fake_cli.records("claude") == [] and h.ledger() == []
+    with h.db() as conn:
+        assert repo.get_cooldown(conn, "claude-sub") is None
+
+
+async def test_admin_test_call_refused_while_shutting_down(spillway, fake_api, fake_cli,
+                                                           monkeypatch):
+    h = spillway
+    await _setup(h, fake_api, monkeypatch)
+    h.app.state.shutting_down = True
+    r = await h.client.post("/api/deployments/claude-sub/test")
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert (out["status"], out["ok"], out["error"], out["ledger_id"]) == (
+        "error", False, "shutting_down", None)
+    assert fake_cli.records("claude") == [] and h.ledger() == []
+    assert h.app.state.cli_runner.in_flight("claude-sub") == 0
+
+
+async def test_admin_test_call_removes_member_env_and_masks(spillway, fake_api, fake_cli,
+                                                            monkeypatch):
+    h = spillway
+    await _setup(h, fake_api, monkeypatch)
+    fake_cli.set("claude", "ok", result=f"echo {SECRET}")
+    r = await h.client.post("/api/deployments/claude-sub/test")
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["ok"] is True and SECRET not in r.text
+    (rec,) = fake_cli.wait_for_records("claude", 1, finished=True)
+    assert rec["env_present"]["OPENAI_API_KEY"] is False
+    assert h.app.state.cli_runner.in_flight("claude-sub") == 0
+
+    fake_cli.set("claude", "error", result=f"failed with {SECRET}")
+    r = await h.client.post("/api/deployments/claude-sub/test")
+    out = r.json()
+    assert out["ok"] is False and SECRET not in r.text
+    (row,) = h.ledger(status="error")
+    assert row.deployment_id == "claude-sub" and SECRET not in (row.error or "")

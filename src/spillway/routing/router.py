@@ -6,8 +6,10 @@ health_cache=None, close_conn=False, cli_runner=None, shutdown_flag=None)`
 - `await route(req) -> RouteOutcome`:解析 → 篩選(probe=True)→ 排序 → 逐 slot 選擇並呼叫。
 - `await dry_run(route_name_or_model, req) -> Plan`:同一管線到 SlotSelector 為止(probe=False);
   不呼叫 adapter、不寫帳本、不設冷卻。
-- `shutting_down`(屬性,CHG-20261101-03 決策 16):`shutdown_flag()`(app 傳入讀
-  `app.state.shutting_down` 的函式)為真、或直接把屬性設為 True 時為真。
+- `shutting_down`(唯讀屬性,CHG-20261101-03 決策 16):`shutdown_flag()` 的值(app 傳入讀
+  `app.state.shutting_down` 的函式;未給或讀取丟例外時為 False)。
+- `cli_attempt(dep, conn=None, *, fallback=())`(context manager,決策 7、9、16):一次 CLI 嘗試的共用
+  守門,Router 與管理 API 的 test-call 都經它;見下方規則 6。
 - `invalidate_health(dep_id)`:移除該成員的健康快取結果,下一次經 route 的請求重新探測
   (管理 API 修改或刪除成員後呼叫;CHG-20261101-02 決策 12)。
 - `normalize_effort(value)`:請求 `reasoning_effort` 正規化(決策 29);定義在 `spillway.effort`,
@@ -58,14 +60,13 @@ route() 規則:
    - adapter 呼叫中被取消(`CancelledError`)時,同步寫一列 `status=error`、`error="cancelled"`
      (不跨 await),再重新丟出(施工審議 S2;上游可能已計費)。
    - 停機(CHG-20261101-03 決策 16):`shutting_down` 為真時寫 `error="shutdown"`(status 仍為 error)。
-6. CLI 成員(CHG-20261101-03 決策 7、9;`cli_runner` 有給時):
-   - 篩選以 `cli_runner.in_flight` 排除名額已滿者(`concurrency_full`)。輪到它時(呼叫 adapter 之前,
-     同步、不跨 await)`cli_runner.try_acquire(dep.id, max_concurrency(dep))`;失敗 → 記入 excluded
-     `concurrency_full`、不寫帳本、不算 fallback 深度,換下一位。取得後在 `finally`(含
-     `CancelledError` 與例外)`release`。
-   - 每次 CLI 嘗試前,以全部成員(含停用者)的 `credential_ref` 為 `env:<名>` 的變數名設定
-     `cli_runner.extra_env_remove`(子行程看不到任何成員的 API 金鑰),這些變數目前的值(strip 後非空)
-     併入該次嘗試的 `extra_secrets`,遮罩帳本、payload 與 AttemptInfo.error。
+6. CLI 成員(CHG-20261101-03 決策 7、9、16;`cli_runner` 有給時),篩選以 `cli_runner.in_flight` 排除
+   名額已滿者(`concurrency_full`);輪到它時經 `cli_attempt()`(同步進入,不 await):
+   ① `shutting_down` 為真 → 拒絕 `shutting_down`;② `cli_runner.try_acquire(dep.id, max_concurrency(dep))`
+   失敗 → 拒絕 `concurrency_full`;③ 以全部成員(含停用者)`credential_ref` 為 `env:<名>` 的變數名設定
+   `cli_runner.extra_env_remove`(子行程看不到任何成員的 API 金鑰),這些變數目前的值(strip 後非空)
+   作為 `CliAttempt.secrets` 併入該次嘗試的 `extra_secrets`;離開時(含例外與 `CancelledError`)
+   `release`。拒絕時不呼叫 adapter、不寫帳本、不算 fallback 深度,記入 excluded 並換下一位。
 7. 停機(決策 16):`shutting_down` 為真時不開始新的嘗試——請求開始時即為真則不篩選、不寫帳本,
    全部成員記入 excluded `shutting_down`;嘗試之間變為真則其餘成員記為 `shutting_down`。
    `local/` 直呼同理(excluded 一筆 `shutting_down`)。結果為 no_candidate(T13 回 503)。
@@ -79,11 +80,11 @@ import contextvars
 import dataclasses
 import json
 import logging
-import re
 import sqlite3
 import time
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
+from typing import Any, Protocol
 
 from spillway import credentials
 from spillway.adapters.base import AdapterUnavailableError
@@ -140,8 +141,25 @@ ConnFactory = Callable[[], sqlite3.Connection]
 
 _log = logging.getLogger(__name__)
 
-# `credential_ref` 的 env 形式(與 spillway.credentials 相同的變數名規則)
-_ENV_REF = re.compile(r"env:([A-Za-z_][A-Za-z0-9_]*)")
+
+
+class CliSlots(Protocol):
+    """Router 用到的 `CliRunner` 介面(決策 7、9)。"""
+
+    extra_env_remove: set[str]
+
+    def try_acquire(self, key: str, limit: int) -> bool: ...
+    def release(self, key: str) -> None: ...
+    def in_flight(self, key: str) -> int: ...
+
+
+@dataclasses.dataclass(frozen=True)
+class CliAttempt:
+    """`Router.cli_attempt()` 的結果:`refused` 為拒絕原因(`shutting_down`/`concurrency_full`)或 None;
+    `secrets` 為所有成員 env 憑證的值(遮罩該次輸出用)。"""
+
+    refused: str | None
+    secrets: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------- Router
@@ -156,20 +174,17 @@ def _resolve_secret(dep: Deployment) -> tuple[str, ...]:
         return ()
 
 
-def _env_credentials(deps: Any) -> tuple[frozenset[str], tuple[str, ...]]:
-    """成員 `credential_ref` 為 `env:<名>` 的變數名集合,與其目前的值(strip 後非空者)。"""
-    names: set[str] = set()
-    for dep in deps:
-        m = _ENV_REF.fullmatch(dep.credential_ref) if isinstance(dep.credential_ref, str) else None
-        if m:
-            names.add(m.group(1))
+def _env_credentials(deps: Iterable[Deployment]) -> tuple[frozenset[str], tuple[str, ...]]:
+    """成員 `credential_ref` 為 `env:<名>` 的變數名集合,與其目前的值(`credentials.resolve`:strip 後
+    非空者;未設定或為空時略過)。"""
+    names = frozenset(n for n in (credentials.env_ref_name(d.credential_ref) for d in deps) if n)
     values: list[str] = []
     for name in sorted(names):
         try:
             values.append(credentials.resolve(f"env:{name}"))
-        except Exception:  # noqa: BLE001 — 未設定:沒有值可遮罩
+        except credentials.CredentialError:
             continue
-    return frozenset(names), tuple(values)
+    return names, tuple(values)
 
 
 def _pick_effort(entry_effort: str | None, req_effort: str | None, dep: Deployment) -> str | None:
@@ -211,13 +226,12 @@ class Router:
         ledger: LedgerWriter | None = None,
         health_cache: HealthCache | None = None,
         close_conn: bool = False,
-        cli_runner: Any = None,
+        cli_runner: CliSlots | None = None,
         shutdown_flag: Callable[[], bool] | None = None,
     ) -> None:
         self._factory = conn_factory
         self.cli_runner = cli_runner
         self._shutdown_flag = shutdown_flag
-        self._shutting_down = False
         self._close_conn = close_conn
         self._current: contextvars.ContextVar[sqlite3.Connection | None] = contextvars.ContextVar(
             f"spillway_router_conn_{id(self)}", default=None
@@ -240,8 +254,6 @@ class Router:
 
     @property
     def shutting_down(self) -> bool:
-        if self._shutting_down:
-            return True
         if self._shutdown_flag is None:
             return False
         try:
@@ -249,9 +261,34 @@ class Router:
         except Exception:  # noqa: BLE001 — 讀不到旗標時視為未停機
             return False
 
-    @shutting_down.setter
-    def shutting_down(self, value: bool) -> None:
-        self._shutting_down = bool(value)
+    # -- CLI 嘗試守門(決策 7、9、16)---------------------------------------------------------
+
+    @contextmanager
+    def cli_attempt(self, dep: Deployment, conn: sqlite3.Connection | None = None, *,
+                    fallback: Iterable[Deployment] = ()) -> Iterator[CliAttempt]:
+        """一次 CLI 嘗試的守門;非 cli 成員或沒有 `cli_runner` 時不做事(`CliAttempt(None)`)。
+
+        `conn` 用來讀全部成員(未給時用 route()/dry_run() 期間的連線);讀取失敗時退回 `fallback`。
+        不變式:進入(取得名額、設定 `extra_env_remove`)到 adapter 呼叫 `cli_runner.run()` 組環境之間
+        不可有 await——單一事件迴圈下名額不會被搶、`extra_env_remove` 不會被其他請求改掉
+        (各請求算出的集合本來就相同,都是全部成員)。呼叫端進入後應直接 await adapter。
+        """
+        runner = self.cli_runner
+        if dep.kind != "cli" or runner is None:
+            yield CliAttempt(None)
+            return
+        if self.shutting_down:
+            yield CliAttempt(EXCLUDE_SHUTTING_DOWN)
+            return
+        if not runner.try_acquire(dep.id, max_concurrency(dep)):
+            yield CliAttempt(EXCLUDE_CONCURRENCY_FULL)
+            return
+        try:
+            names, values = _env_credentials(self._all_members(conn, fallback))
+            runner.extra_env_remove = set(names)
+            yield CliAttempt(None, values)
+        finally:
+            runner.release(dep.id)
 
     # -- 連線 -------------------------------------------------------------------------------
 
@@ -351,19 +388,15 @@ class Router:
                 if dep.kind in CLOUD_KINDS and self._cooling_now(dep):
                     excluded.append((dep.id, "cooling"))
                     continue
-                # 決策 7:取得名額與呼叫 adapter 之間不可有 await;被搶走時不寫帳本、換下一位
-                runner = self.cli_runner if dep.kind == "cli" else None
-                if runner is not None and not runner.try_acquire(dep.id, max_concurrency(dep)):
-                    excluded.append((dep.id, EXCLUDE_CONCURRENCY_FULL))
-                    continue
-                try:
+                # 決策 7:被拒(名額被搶走、停機)時不寫帳本、換下一位;進入後直接 await adapter
+                with self.cli_attempt(dep, fallback=target.members) as guard:
+                    if guard.refused is not None:
+                        excluded.append((dep.id, guard.refused))
+                        continue
                     effort = _pick_effort(entry.effort, req.reasoning_effort, dep)
                     result, info = await self._attempt(
                         dep, req, effort, entry.estimate, ledger, target,
-                        slot=slot.number, depth=depth)
-                finally:
-                    if runner is not None:
-                        runner.release(dep.id)
+                        slot=slot.number, depth=depth, extra_secrets=guard.secrets)
                 attempts.append(info)
                 depth += 1
                 if result.status == "ok":
@@ -404,12 +437,9 @@ class Router:
         *,
         slot: int | None,
         depth: int,
+        extra_secrets: tuple[str, ...] = (),
     ) -> tuple[CallResult, AttemptInfo]:
-        secrets = _resolve_secret(dep)
-        if dep.kind == "cli" and self.cli_runner is not None:
-            names, values = _env_credentials(self._all_members(target))
-            self.cli_runner.extra_env_remove = set(names)
-            secrets = tuple(dict.fromkeys((*secrets, *values)))
+        secrets = tuple(dict.fromkeys((*_resolve_secret(dep), *extra_secrets)))
         ts = self.clock.now()
         start = time.perf_counter()
         try:
@@ -447,13 +477,14 @@ class Router:
             error, _ = self.redactor.redact(result.error, secrets)
         return result, AttemptInfo(dep.id, status, slot, error, latency_ms)
 
-    def _all_members(self, target: Target) -> list[Deployment]:
-        """全部成員(含停用者;決策 9 的 env 憑證清單);讀取失敗時退回本次 target 的成員。"""
+    def _all_members(self, conn: sqlite3.Connection | None,
+                     fallback: Iterable[Deployment]) -> list[Deployment]:
+        """全部成員(含停用者;決策 9 的 env 憑證清單);讀取失敗時退回 `fallback`。"""
         try:
-            return repo.list_deployments(self._conn())
+            return repo.list_deployments(conn if conn is not None else self._conn())
         except Exception as exc:  # noqa: BLE001 — 讀不到成員清單不可中斷嘗試
-            _log.warning("讀取成員清單失敗(%s),env 憑證清單只取本次 route 成員", type(exc).__name__)
-            return list(target.members)
+            _log.warning("讀取成員清單失敗(%s),env 憑證清單只取本次相關成員", type(exc).__name__)
+            return list(fallback)
 
     def _record(
         self,

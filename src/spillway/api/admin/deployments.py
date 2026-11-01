@@ -192,6 +192,9 @@ async def test_deployment(request: Request, dep_id: str) -> dict[str, Any]:
     回應:`{deployment, status, ok, latency_ms, tokens_in, tokens_out, cost_usd, text, error,
     ledger_id}`;`text` 為回應文字先遮罩、再取前 200 字元,`error` 已遮罩。模組不可用時 status 為
     `adapter_unavailable`(`error` 為經 Redactor 的原因),不呼叫、不寫帳本(`ledger_id` null)。
+    CLI 成員經 `Router.cli_attempt()`(CHG-20261101-03 決策 7、9、16):停機中或名額已滿時 status 為
+    `error`、`error` 為 `shutting_down` / `concurrency_full`,不呼叫、不寫帳本、不設冷卻;呼叫時移除所有
+    成員的 env 憑證變數,並以其值遮罩 `text`、`error` 與帳本。
     """
     clock = _clock(request)
     registry = request.app.state.registry
@@ -214,47 +217,55 @@ async def test_deployment(request: Request, dep_id: str) -> dict[str, Any]:
                 secrets = (credentials.resolve(dep.credential_ref),)
             except credentials.CredentialError:
                 secrets = ()
-        writer = LedgerWriter(conn, _REDACTOR)
-        ts = clock.now()
-        start = time.perf_counter()
+        # CLI 成員(CHG-20261101-03 決策 7、9、16):與 Router 共用守門——停機中或名額已滿時不起子行程、
+        # 不寫帳本、不設冷卻;其他成員的 env 憑證不進子行程,其值併入遮罩。進入後到 adapter 呼叫之間不 await。
+        with request.app.state.router.cli_attempt(dep, conn, fallback=(dep,)) as guard:
+            if guard.refused is not None:
+                return {"deployment": dep.id, "status": "error", "ok": False,
+                        "latency_ms": None, "tokens_in": None, "tokens_out": None,
+                        "cost_usd": None, "text": None, "error": guard.refused, "ledger_id": None}
+            secrets = tuple(dict.fromkeys((*secrets, *guard.secrets)))
+            writer = LedgerWriter(conn, _REDACTOR)
+            ts = clock.now()
+            start = time.perf_counter()
 
-        def elapsed_ms() -> int:
-            return max(0, int((time.perf_counter() - start) * 1000))
+            def elapsed_ms() -> int:
+                return max(0, int((time.perf_counter() - start) * 1000))
 
-        def record(res: CallResult, status: str, latency_ms: int) -> int:
-            return writer.record(Attempt(
-                ts=ts, status=status, route_name=None, deployment_id=dep.id, effort=None,
-                tokens_in=res.tokens_in, tokens_out=res.tokens_out, cost_usd=res.cost_usd,
-                slot=None, fallback_depth=0, latency_ms=latency_ms,
-                est_tokens_in=est.tokens_in, est_tokens_out_p50=est.out_p50,
-                est_tokens_out_p90=est.out_p90, est_cost_usd_p90=est.cost_usd_p90,
-                error=None if status == "ok" else (res.error or f"status {res.status}"),
-                request_text=json.dumps(req.messages, ensure_ascii=False),
-                response_text=res.text or None, extra_secrets=secrets,
-                route_record_context=None,
-            ))
+            def record(res: CallResult, status: str, latency_ms: int) -> int:
+                return writer.record(Attempt(
+                    ts=ts, status=status, route_name=None, deployment_id=dep.id, effort=None,
+                    tokens_in=res.tokens_in, tokens_out=res.tokens_out, cost_usd=res.cost_usd,
+                    slot=None, fallback_depth=0, latency_ms=latency_ms,
+                    est_tokens_in=est.tokens_in, est_tokens_out_p50=est.out_p50,
+                    est_tokens_out_p90=est.out_p90, est_cost_usd_p90=est.cost_usd_p90,
+                    error=None if status == "ok" else (res.error or f"status {res.status}"),
+                    request_text=json.dumps(req.messages, ensure_ascii=False),
+                    response_text=res.text or None, extra_secrets=secrets,
+                    route_record_context=None,
+                ))
 
-        try:
-            result = await adapter.call(dep, req, None)
-            if not isinstance(result, CallResult):
-                raise TypeError(f"adapter 回傳 {type(result).__name__},不是 CallResult")
-        except Exception as exc:  # noqa: BLE001 — 與 Router 相同:例外視為 error
-            result = CallResult(ok=False, text="", tokens_in=None, tokens_out=None,
-                                cost_usd=None, status="error", error=f"{type(exc).__name__}: {exc}")
-        except asyncio.CancelledError:
-            # 比照 routing/router.py:上游可能已收到請求,同步補一列帳本(不跨 await)後重新丟出
-            record(CallResult(ok=False, text="", tokens_in=None, tokens_out=None, cost_usd=None,
-                              status="error", error="cancelled"), "error", elapsed_ms())
-            raise
-        latency_ms = elapsed_ms()
-        status = result.status if result.status in CALL_STATUSES else "error"
-        if status in COOLING_STATUSES and dep.kind in CLOUD_KINDS:
             try:
-                QuotaService(conn, clock).mark(dep, status)
-            except Exception as exc:  # noqa: BLE001 — 冷卻設定失敗不可中斷帳本(決策 35;同 Router M18)
-                _log.warning("QuotaService.mark 失敗(%s),本次測試呼叫未設冷卻",
-                             type(exc).__name__)
-        ledger_id = record(result, status, latency_ms)
+                result = await adapter.call(dep, req, None)
+                if not isinstance(result, CallResult):
+                    raise TypeError(f"adapter 回傳 {type(result).__name__},不是 CallResult")
+            except Exception as exc:  # noqa: BLE001 — 與 Router 相同:例外視為 error
+                result = CallResult(ok=False, text="", tokens_in=None, tokens_out=None,
+                                    cost_usd=None, status="error", error=f"{type(exc).__name__}: {exc}")
+            except asyncio.CancelledError:
+                # 比照 routing/router.py:上游可能已收到請求,同步補一列帳本(不跨 await)後重新丟出
+                record(CallResult(ok=False, text="", tokens_in=None, tokens_out=None, cost_usd=None,
+                                  status="error", error="cancelled"), "error", elapsed_ms())
+                raise
+            latency_ms = elapsed_ms()
+            status = result.status if result.status in CALL_STATUSES else "error"
+            if status in COOLING_STATUSES and dep.kind in CLOUD_KINDS:
+                try:
+                    QuotaService(conn, clock).mark(dep, status)
+                except Exception as exc:  # noqa: BLE001 — 冷卻設定失敗不可中斷帳本(決策 35;同 Router M18)
+                    _log.warning("QuotaService.mark 失敗(%s),本次測試呼叫未設冷卻",
+                                 type(exc).__name__)
+            ledger_id = record(result, status, latency_ms)
     text = None
     if result.text:
         # 先遮罩再截斷:先截斷會讓橫跨第 200 字元的金鑰只剩前半段而漏遮(審議 M24)

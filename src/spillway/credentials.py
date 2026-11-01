@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import re
 
-__all__ = ["CredentialError", "resolve", "validate_ref"]
+__all__ = ["CredentialError", "env_ref_name", "resolve", "validate_ref"]
 
 _ENV_RE = re.compile(r"env:([A-Za-z_][A-Za-z0-9_]*)")
 _KEYRING_RE = re.compile(r"keyring:([^:]+):(.+)", re.DOTALL)
@@ -39,6 +39,13 @@ def _parse(ref: object) -> tuple[str, tuple[str, ...]]:
     if m:
         return "keyring", (m.group(1), m.group(2))
     raise CredentialError("credential_ref 格式無效:必須為 env:變數名 或 keyring:服務:帳號")
+
+
+def env_ref_name(ref: object) -> str | None:
+    """``env:VAR`` 形式的參照回傳變數名 ``VAR``;其他形式(含 keyring、格式錯誤、非字串)回 None。
+    不讀取環境變數(CHG-20261101-03 決策 9:Router 以它列出所有成員的 env 憑證變數名)。"""
+    m = _ENV_RE.fullmatch(ref) if isinstance(ref, str) else None
+    return m.group(1) if m else None
 
 
 def validate_ref(ref: str) -> None:

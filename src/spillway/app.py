@@ -188,7 +188,7 @@ def create_app(
         app.state.registry = registry
         # CHG-20261101-03 T6(決策 7、9、16):名額與 env 清理用同一個 CliRunner;停機旗標讀 app.state
         app.state.router = Router(conn_factory, registry, clk, rnd, close_conn=True, cli_runner=runner,
-                                  shutdown_flag=lambda: bool(getattr(app.state, "shutting_down", False)))
+                                  shutdown_flag=lambda: app.state.shutting_down)
         retention = RetentionScheduler(conn_factory, clk, interval_seconds=retention_interval_seconds,
                                        poll_seconds=retention_poll_seconds)
         app.state.retention = retention

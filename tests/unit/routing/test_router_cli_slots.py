@@ -13,13 +13,13 @@ from datetime import timedelta
 import pytest
 
 from spillway.adapters.base import CliRunner
-from spillway.domain import CallResult, ChatRequest, Deployment
+from spillway.clock import SeqRng
+from spillway.domain import ChatRequest, Deployment
 from spillway.quota import QuotaService
 from spillway.redact import REDACTOR
 from spillway.routing import CandidateFilter, Resolver
 from spillway.routing.filter import DEFAULT_MAX_CONCURRENCY, max_concurrency
-from spillway.routing.router import Router
-from spillway.clock import SeqRng
+from spillway.routing.router import CliAttempt, Router
 from spillway.store import repo
 from spillway.store.repo import Route
 
@@ -228,12 +228,12 @@ async def _cancel_inflight(db, clock, *, shutting_down: bool):
         await asyncio.Event().wait()
 
     reg.hooks["sub"] = hook
-    rt = router(db, clock, reg, runner)
+    flag = {"on": False}
+    rt = router(db, clock, reg, runner, shutdown_flag=lambda: flag["on"])
     task = asyncio.ensure_future(rt.route(req()))
     await started.wait()
     assert runner.in_flight("sub") == 1
-    if shutting_down:
-        rt.shutting_down = True
+    flag["on"] = shutting_down
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -276,10 +276,11 @@ async def test_shutdown_between_attempts_stops_fallback(db, clock):
     make_dep(db, "b", tags=("r",))
     make_route(db, targets=[("a", 1, 0), ("b", 2, 0)])
     reg = HookRegistry()
-    rt = router(db, clock, reg, CliRunner())
+    flag = {"on": False}
+    rt = router(db, clock, reg, CliRunner(), shutdown_flag=lambda: flag["on"])
 
     async def hook(dep):
-        rt.shutting_down = True
+        flag["on"] = True
         return fail()
 
     reg.hooks["a"] = hook
@@ -293,8 +294,7 @@ async def test_shutdown_between_attempts_stops_fallback(db, clock):
 async def test_shutting_down_direct_local_is_no_candidate(db, clock):
     make_dep(db, "loc", kind="local")
     reg = ScriptedRegistry()
-    rt = router(db, clock, reg, CliRunner())
-    rt.shutting_down = True
+    rt = router(db, clock, reg, CliRunner(), shutdown_flag=lambda: True)
     out = await rt.route(ChatRequest(model="local/loc", messages=MSGS))
     assert not out.ok and out.excluded == (("loc", "shutting_down"),)
     assert reg.calls == [] and ledger(db) == []
@@ -366,3 +366,79 @@ async def test_cli_runner_merges_extra_env_remove(monkeypatch, tmp_path):
             "print(os.environ.get('SPILLWAY_T6_KEEP','<none>'))")
     out = await runner.run([sys.executable, "-I", "-c", code], cwd=tmp_path, timeout=30)
     assert out.stdout.split() == ["<none>", "kept"]
+
+
+def test_shutting_down_is_read_only(db, clock):
+    rt = router(db, clock, ScriptedRegistry(), None)
+    assert rt.shutting_down is False
+    with pytest.raises(AttributeError):
+        rt.shutting_down = True  # type: ignore[misc]
+
+
+# ================================================================== cli_attempt 共用守門
+
+
+def test_cli_attempt_is_noop_for_non_cli_members(db, clock):
+    api = make_dep(db, "api", tags=("r",))
+    runner = CliRunner()
+    rt = router(db, clock, ScriptedRegistry(), runner, shutdown_flag=lambda: True)
+    with rt.cli_attempt(api, db) as guard:
+        assert guard == CliAttempt(None)
+        assert runner.in_flight("api") == 0
+
+
+def test_cli_attempt_refuses_when_shutting_down_without_taking_slot(db, clock):
+    sub = cli_dep(db, "sub")
+    runner = CliRunner()
+    rt = router(db, clock, ScriptedRegistry(), runner, shutdown_flag=lambda: True)
+    with rt.cli_attempt(sub, db) as guard:
+        assert guard.refused == "shutting_down"
+        assert runner.in_flight("sub") == 0
+
+
+def test_cli_attempt_refuses_when_slot_full(db, clock):
+    sub = cli_dep(db, "sub")
+    runner = CliRunner()
+    runner.try_acquire("sub", 1)
+    rt = router(db, clock, ScriptedRegistry(), runner)
+    with rt.cli_attempt(sub, db) as guard:
+        assert guard.refused == "concurrency_full"
+    assert runner.in_flight("sub") == 1          # 別人的名額不被釋放
+
+
+def test_cli_attempt_sets_env_removal_and_releases_on_error(db, clock, monkeypatch):
+    monkeypatch.setenv("SPILLWAY_T6_A", SECRET_A)
+    sub = cli_dep(db, "sub")
+    with_cred(db, make_dep(db, "a", tags=("other",), enabled=False), "env:SPILLWAY_T6_A")
+    runner = CliRunner()
+    rt = router(db, clock, ScriptedRegistry(), runner)
+    with pytest.raises(RuntimeError):
+        with rt.cli_attempt(sub, db) as guard:
+            assert guard == CliAttempt(None, (SECRET_A,))
+            assert runner.extra_env_remove == {"SPILLWAY_T6_A"}
+            assert runner.in_flight("sub") == 1
+            raise RuntimeError("adapter bug")
+    assert runner.in_flight("sub") == 0
+
+
+def test_cli_attempt_falls_back_when_member_list_unreadable(db, clock, monkeypatch):
+    monkeypatch.setenv("SPILLWAY_T6_A", SECRET_A)
+    sub = with_cred(db, cli_dep(db, "sub"), "env:SPILLWAY_T6_A")
+    runner = CliRunner()
+    rt = router(db, clock, ScriptedRegistry(), runner)
+    broken = db.__class__(":memory:")   # 沒有 deployments 表:讀取失敗
+    try:
+        with rt.cli_attempt(sub, broken, fallback=(sub,)) as guard:
+            assert guard.secrets == (SECRET_A,)
+            assert runner.extra_env_remove == {"SPILLWAY_T6_A"}
+    finally:
+        broken.close()
+
+
+@pytest.mark.parametrize(("ref", "want"), [
+    ("env:SPILLWAY_T6_A", "SPILLWAY_T6_A"), ("keyring:svc:acct", None), ("env:1BAD", None),
+    ("env:A B", None), (None, None), (42, None),
+])
+def test_env_ref_name(ref, want):
+    from spillway.credentials import env_ref_name
+    assert env_ref_name(ref) == want
