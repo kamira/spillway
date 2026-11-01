@@ -3,6 +3,8 @@
 量測方式依 spec 11:檢查 `usage_ledger` 欄位;保存天數設為 1 並推進系統時間 2 天,確認過期列已刪除。
 這裡的「執行清理」由 app 的 RetentionScheduler 背景排程完成(不手動呼叫 run_once):輪詢間隔設為
 0.05 秒(真實時間),推進 FakeClock 後等待排程的 `runs` 增加。
+「過期起 ≤ 1 小時刪除」測試(CHG-20261101-02 T9)則把 `spillway.app` 的 `asyncio.sleep` 換成
+`_SteppedSleep`,在固定相位下由排程本身的輪詢推進 FakeClock 並觸發清理。
 """
 from __future__ import annotations
 
@@ -114,6 +116,9 @@ class _AppAsyncio:
 
 async def test_nfr5_payload_deleted_within_one_hour_of_expiry(open_spillway, fake_api, clock,
                                                               monkeypatch):
+    # 本測試端到端驗證 NFR-5(過期起 ≤ 1 小時刪除),但提前量為 1 × poll 或 0 時同樣會通過,
+    # 因此分辨不出新舊 `due()`;決策 14(2 × poll)只由 tests/integration/test_retention_schedule.py
+    # 的 L1 抖動測試佐證。固定相位(E − poll/2)也不是最壞情況。
     import spillway.app as app_module
 
     stepped = _SteppedSleep(clock)
@@ -143,7 +148,7 @@ async def test_nfr5_payload_deleted_within_one_hour_of_expiry(open_spillway, fak
 
         assert has_payload()
         # 固定相位:排程在 T + 1 天前一個 poll 內(T + 1 天 − poll/2)剛清理過
-        pinned = expires_at - timedelta(seconds=NFR5_POLL // 2)
+        pinned = expires_at - timedelta(seconds=NFR5_POLL / 2)   # 不要求 poll 為偶數
         clock.set(pinned - timedelta(seconds=NFR5_POLL))
         runs = sched.runs
         await stepped.step()                             # 由排程本身的輪詢觸發這次清理
