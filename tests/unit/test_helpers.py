@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -36,9 +37,7 @@ def test_api_member_uses_fake_key_env():
     assert dep.params == {"api_base": "http://127.0.0.1:9/v1"}
 
 
-def test_fake_key_env_fixture(fake_key_env, monkeypatch):
-    import os
-
+def test_fake_key_env_fixture(fake_key_env):
     assert fake_key_env == TEST_KEY == os.environ[TEST_KEY_ENV]
 
 

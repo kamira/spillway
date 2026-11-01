@@ -5,9 +5,9 @@ import keyring
 import pytest
 
 from spillway.credentials import CredentialError, resolve, validate_ref
-from tests.helpers import MemoryKeyring, memory_keyring  # noqa: F401 — fixture 註冊
+from tests.helpers import TEST_KEY, MemoryKeyring, memory_keyring  # noqa: F401 — fixture 註冊
 
-FAKE_KEY = "sk-test-0000"
+FAKE_KEY = TEST_KEY
 
 
 class BrokenKeyring(MemoryKeyring):

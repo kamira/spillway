@@ -40,7 +40,6 @@ from spillway.store.db import connect
 BASE_URL = "http://spillway.test"
 
 
-
 @dataclass
 class SpillwayHarness:
     app: Any
@@ -76,6 +75,7 @@ class SpillwayHarness:
 
 
 OpenSpillway = Callable[..., Any]
+
 
 @pytest.fixture
 def open_spillway(clock: FakeClock) -> OpenSpillway:
