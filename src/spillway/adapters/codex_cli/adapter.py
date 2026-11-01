@@ -8,6 +8,7 @@ CHG-20261101-03 決策 9、11、12)。完整說明見 README.md。
   或裸位置引數(`_extra_args_problem`)。子行程只經 `AdapterContext.cli_runner.run()` 啟動。
 - `-o` 暫存檔以 `tempfile.mkstemp`(0600)建立,`finally` 刪除。環境移除 `ENV_REMOVE`、設 `SPILLWAY_DEPTH=1`
   (其他成員 `env:` 憑證變數由 Router 移除)。
+- prompt 以 `adapters.base.messages_to_prompt` 串成(決策 12a);為空時回 `error`、不起子行程。
 - 結束碼 ≠ 0 時 stderr 與 stdout JSONL 的錯誤訊息一併交 `classify()`(spec 5.3.1)。
 """
 from __future__ import annotations
@@ -29,6 +30,7 @@ from spillway.adapters.base import (
     SignalsError,
     classify,
     effort_to_upstream,
+    messages_to_prompt,
     resolve_signals,
 )
 
@@ -41,38 +43,9 @@ MCP_OFF = ("-c", "mcp_servers={}")                                    # 決策 1
 WORK_SUBDIR = ("work", "codex")
 _ERROR_TAIL = 1000   # 錯誤訊息只留最後這麼多字元
 
-_HEADERS = {"system": "[System]", "developer": "[System]", "user": "[User]",
-            "assistant": "[Assistant]"}
-
-
 def _error(message: str) -> CallResult:
     return CallResult(ok=False, text="", tokens_in=None, tokens_out=None, cost_usd=None,
                       status="error", error=message)
-
-
-def _content_text(content: Any) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = [p.get("text") for p in content
-                 if isinstance(p, Mapping) and p.get("type") in ("text", "input_text")]
-        return "\n".join(p for p in parts if isinstance(p, str))
-    return str(content)
-
-
-def messages_to_prompt(messages: list[dict[str, Any]]) -> str:
-    """spec 7.5.1:依序串成純文字,每段以 `[System]`、`[User]`、`[Assistant]` 標頭開頭。
-
-    `developer` 視同 `system`;其他角色(tool 等)不送 CLI(含 tools 的請求已由 4.2.2 篩除)。
-    """
-    out = []
-    for m in messages:
-        header = _HEADERS.get(str(m.get("role", "")))
-        if header is not None:
-            out.append(f"{header}\n{_content_text(m.get('content'))}")
-    return "\n\n".join(out)
 
 
 def _extra_args_problem(extra: Any) -> str | None:
@@ -192,10 +165,12 @@ class CodexCliAdapter:
         problem = _extra_args_problem(extra)
         if problem is not None:
             return _error(problem)
+        prompt = messages_to_prompt(req.messages)   # adapters.base 共用轉換(spec 7.5.1;決策 12a)
+        if not prompt:
+            return _error("沒有可送出的文字訊息")
         cwd = self._cwd(params)
         if isinstance(cwd, str):
             return _error(cwd)
-        prompt = messages_to_prompt(req.messages)
 
         try:
             fd, out_path = tempfile.mkstemp(prefix="spillway-codex-", suffix=".txt")   # 0600

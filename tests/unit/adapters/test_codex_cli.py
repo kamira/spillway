@@ -165,6 +165,26 @@ def test_messages_to_prompt_7_5_1():
         "[System]\nbe brief\n\n[User]\npart a\npart b\n\n[Assistant]\nok\n\n[User]\ngo")
 
 
+def test_uses_shared_prompt_converter():
+    import spillway.adapters.base as base
+    import spillway.adapters.codex_cli.adapter as mod
+    assert mod.messages_to_prompt is base.messages_to_prompt      # 決策 12a
+    assert not hasattr(mod, "_content_text") and not hasattr(mod, "_HEADERS")
+
+
+@pytest.mark.parametrize("messages", [
+    [{"role": "user", "content": "   "}],
+    [{"role": "tool", "content": "x"}],
+    [{"role": "assistant", "content": None}],
+], ids=["blank", "tool-only", "no-text"])
+async def test_empty_prompt_is_error_without_process(home, messages):
+    spy = SpyRunner()
+    result = await create(ctx(spy, home)).call(dep(), req(messages), None)
+    assert result.status == "error" and not result.ok
+    assert spy.calls == []
+    assert not (home / "work" / "codex").exists()
+
+
 # ---- 環境與工作目錄(決策 9、11)--------------------------------------------------------------
 
 async def test_env_remove_and_depth(home):
