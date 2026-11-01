@@ -7,6 +7,8 @@
 - 記錄檔:每次呼叫一個 `$SPILLWAY_HOME/fake_cli/records/<name>-<ns>-<pid>-<rand>.json`;開始時寫一次
   (`finished=false`,可作為「已開始」的訊號),結束前以 rename 原子覆寫(`finished=true`、`exit_code`)。
   只記指定變數「是否存在」,不記值。
+- 等待(延遲、`timeout`、`hold_until_release`、孫行程)期間控制目錄消失即結束;`hold_until_release` 最多等
+  `HOLD_MAX_SECONDS`(120 秒)。
 """
 from __future__ import annotations
 
@@ -40,6 +42,7 @@ CODEX_MESSAGES = {
 }
 
 POLL_SECONDS = 0.02
+HOLD_MAX_SECONDS = 120.0
 
 
 def _control_dir() -> Path:
@@ -53,8 +56,6 @@ def _control_dir() -> Path:
 def _read_control(cdir: Path, name: str) -> dict:
     try:
         data = json.loads((cdir / f"{name}.json").read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
@@ -81,20 +82,41 @@ def _write_json_atomic(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
-def _sleep(seconds: float) -> None:
-    if seconds and seconds > 0:
-        time.sleep(seconds)
+def _gone(cdir: Path) -> None:
+    """控制目錄消失(測試已結束、暫存目錄已刪)時立即結束,不留孤兒行程。"""
+    if not cdir.is_dir():
+        sys.exit(96)
+
+
+def _sleep(seconds: float, cdir: Path) -> None:
+    deadline = time.monotonic() + max(0.0, float(seconds or 0))
+    while (left := deadline - time.monotonic()) > 0:
+        _gone(cdir)
+        time.sleep(min(POLL_SECONDS * 10, left))
 
 
 def _hold(cdir: Path, name: str) -> None:
+    deadline = time.monotonic() + HOLD_MAX_SECONDS
     while not _read_control(cdir, name).get("released"):
+        _gone(cdir)
+        if time.monotonic() > deadline:
+            sys.stderr.write("fake cli: hold_until_release 超過上限仍未放行\n")
+            sys.exit(95)
         time.sleep(POLL_SECONDS)
 
 
-def _spawn_grandchild(seconds: float) -> int:
-    # 繼承 stdout/stderr 的孫行程:父行程結束後 stdout 仍未 EOF。
+_GRANDCHILD = """\
+import os, sys, time
+cdir, deadline = sys.argv[1], time.monotonic() + float(sys.argv[2])
+while time.monotonic() < deadline and os.path.isdir(cdir):
+    time.sleep(0.2)
+"""
+
+
+def _spawn_grandchild(seconds: float, cdir: Path) -> int:
+    # 繼承 stdout/stderr 的孫行程:父行程結束後 stdout 仍未 EOF;控制目錄消失即結束。
     proc = subprocess.Popen(
-        [sys.executable, "-I", "-c", f"import time; time.sleep({float(seconds)!r})"],
+        [sys.executable, "-I", "-c", _GRANDCHILD, str(cdir), repr(float(seconds))],
         stdin=subprocess.DEVNULL,
     )
     return proc.pid
@@ -187,15 +209,15 @@ def main(argv: list[str]) -> int:
     rpath = rdir / f"{name}-{time.time_ns()}-{os.getpid()}-{secrets.token_hex(4)}.json"
     _write_json_atomic(rpath, record)
 
-    _sleep(float(ctl.get("delay_seconds", 0) or 0))
+    _sleep(float(ctl.get("delay_seconds", 0) or 0), cdir)
 
     if scenario == "timeout":
-        _sleep(float(ctl.get("timeout_sleep_seconds", 3600)))
+        _sleep(float(ctl.get("timeout_sleep_seconds", 3600)), cdir)
         return 0
     if scenario == "hold_until_release":
         _hold(cdir, name)
     if scenario == "grandchild_holds_stdout":
-        record["grandchild_pid"] = _spawn_grandchild(float(ctl.get("grandchild_sleep_seconds", 3600)))
+        record["grandchild_pid"] = _spawn_grandchild(float(ctl.get("grandchild_sleep_seconds", 3600)), cdir)
 
     if scenario == "non_json":
         out, err, code = "this is not json {{{\n", "", 0

@@ -243,7 +243,7 @@ def test_timeout_never_answers(fake_cli, tmp_path, name):
     finally:
         os.killpg(proc.pid, signal.SIGKILL)
         proc.communicate()
-    rec = fake_cli.records(name)[0]
+    (rec,) = fake_cli.wait_for_records(name, 1)
     assert rec["finished"] is False
 
 
@@ -467,3 +467,76 @@ def test_behave_guard_fails_scenario_that_puts_real_cli_on_path(tmp_path):
     assert bad.returncode != 0, out
     assert "RealCliFound" in out
     assert "SIMULATED-REAL-CLI-MUST-NOT-RUN" not in out
+
+
+# ---- 審議修正:不安全的 PATH 項目、孤兒行程 ----
+
+@pytest.mark.parametrize("kind", ["tilde", "relative", "dot", "empty"])
+def test_guard_drops_tilde_relative_and_empty_entries(tmp_path, monkeypatch, kind):
+    home = tmp_path / "fake-user-home"
+    _simulated_real(home / "bin")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(home / "bin" if kind in ("dot", "empty") else home)
+    entry = {"tilde": "~/bin", "relative": "bin", "dot": ".", "empty": ""}[kind]
+    raw = os.pathsep.join([entry, os.environ["PATH"]])
+    assert entry in real_cli_dirs(raw)
+    with pytest.raises(RealCliFound):
+        assert_only_fakes(raw)
+    clean = sanitize_path(raw)
+    assert entry not in clean.split(os.pathsep)
+    assert assert_only_fakes(clean) == {"claude": None, "codex": None}
+    env = safe_subprocess_env({**os.environ, "PATH": raw})
+    assert entry not in env["PATH"].split(os.pathsep)
+
+
+def test_unsafe_entries_dropped_even_without_cli(tmp_path):
+    raw = os.pathsep.join(["~/nothing-here", "rel/dir", "", str(tmp_path)])
+    assert sanitize_path(raw).split(os.pathsep) == [str(tmp_path)]
+
+
+@pytest.mark.parametrize("scenario", ["hold_until_release", "timeout"])
+def test_waiting_fake_exits_when_control_dir_removed(fake_cli, scenario):
+    fake_cli.set("claude", scenario)
+    proc = subprocess.Popen(["claude", *_claude_args()], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        proc.stdin.write(b"hi")
+        proc.stdin.close()
+        fake_cli.wait_for_records("claude", 1)
+        shutil.rmtree(fake_cli.control_dir)
+        assert proc.wait(timeout=10) != 0
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+
+
+def test_grandchild_exits_when_control_dir_removed(fake_cli):
+    fake_cli.set("claude", "grandchild_holds_stdout", grandchild_sleep_seconds=60)
+    proc = subprocess.Popen(["claude", *_claude_args()], stdin=subprocess.PIPE,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=True)
+    gpid = None
+    try:
+        proc.stdin.write(b"hi")
+        proc.stdin.close()
+        assert proc.wait(timeout=10) == 0
+        (rec,) = fake_cli.wait_for_records("claude", 1, finished=True)
+        gpid = rec["grandchild_pid"]
+        shutil.rmtree(fake_cli.control_dir)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                os.kill(gpid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("孫行程在控制目錄刪除後沒有結束")
+        gpid = None
+    finally:
+        if gpid is not None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass

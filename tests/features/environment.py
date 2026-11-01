@@ -8,7 +8,8 @@
 - 清除真實的 API key 環境變數;`SPILLWAY_TEST_KEY` 為假金鑰 `sk-cred-behave-7777`(與 AC-15 prompt 字串不同)。
 - 假上游 `FakeApiServer` 只綁 127.0.0.1,整個 run 共用一個,每個情境前後 reset。
 - 真實 CLI 護欄(CHG-20261101-03 T3;決策 19):`before_all` 把 PATH 中含真實 `claude`、`codex` 的目錄移除並
-  斷言;每個情境開始與結束都再斷言一次(情境中把真實執行檔放回 PATH 會讓該情境失敗),結束後還原 PATH。
+  斷言;每個情境開始與結束都再斷言一次(情境中把真實執行檔放回 PATH 會讓該情境失敗),結束後還原成情境開始
+  時已清理過的 PATH。
 - 假 CLI:`before_all` 在暫存目錄產生假 `claude`、`codex`(`context.fake_cli_bin`,預設不在 PATH 上);
   每個情境的 `context.fake_cli` 為 `FakeCli(SPILLWAY_HOME, context.fake_cli_bin)`,步驟自行把
   `context.fake_cli_bin` 放到 PATH 最前面。
