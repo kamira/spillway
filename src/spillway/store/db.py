@@ -21,7 +21,8 @@ schema v2(CHG-20261101-03 決策 3、4、5):冷卻移到 `cooldowns` 表,`budget
    `acquire_data_dir_lock()` 取得並持有到行程結束)。取不到丟 `DataDirLockedError`,不 migrate。
 2. 在 `BEGIN IMMEDIATE` 之前以 SQLite backup API 複製為 `spillway.db.v1.bak`(已存在時加 UTC 時間戳記
    後綴、不覆寫)。備份失敗:刪除殘檔、不 migrate,丟 `MigrationError`。
-3. `BEGIN IMMEDIATE` 後重讀 `user_version`,再套用;完成後 `PRAGMA foreign_key_check` 必須為空。
+3. 備份前先做唯讀 `PRAGMA foreign_key_check`:舊庫已有違反時不備份、不升級,丟 `MigrationError`。
+4. `BEGIN IMMEDIATE` 後重讀 `user_version`,再套用;完成後 `PRAGMA foreign_key_check` 必須為空。
    失敗回滾(原檔不變),丟 `MigrationError`(訊息含備份位置)。
 空庫(`user_version = 0`)不需要鎖與備份,直接在一個交易內套用 v1、v2。
 
@@ -246,15 +247,34 @@ def _upgrade(conn: sqlite3.Connection, path: Path, clock: Clock | None) -> None:
         _check_version(current)
         if current == SCHEMA_VERSION:
             return
+        # 唯讀前置檢查:舊庫本身已有外鍵違反時不備份、不升級(否則必然在交易末端失敗)
+        problems = _foreign_key_problems(conn)
+        if problems:
+            raise MigrationError(
+                f"資料庫 schema v{current} 已有外鍵違反({problems}),未備份、未升級"
+                f"(schema 仍為 v{current});請先修正資料。{_STOP_OLD_SERVE_HINT}"
+            )
         backup = _backup(conn, path, current, clock)
         try:
             _migrate_tx(conn, from_empty_only=False)
-        except BaseException as exc:
+        except Exception as exc:   # BaseException(KeyboardInterrupt 等)回滾後原樣往外丟
             raise MigrationError(
                 f"資料庫 schema v{current} → v{SCHEMA_VERSION} 升級失敗,已回滾、原檔不變;"
-                f"升級前備份:{backup}({type(exc).__name__}: {exc})",
+                f"升級前備份:{backup}({type(exc).__name__}: {exc})。{_STOP_OLD_SERVE_HINT}",
                 backup,
             ) from exc
+
+
+_STOP_OLD_SERVE_HINT = "重試前請先停止舊版 serve(舊版程式不使用 spillway.lock)"
+
+
+def _foreign_key_problems(conn: sqlite3.Connection) -> str:
+    """`PRAGMA foreign_key_check` 的違反摘要:「子表→父表 N 列」以頓號相接;沒有違反時為空字串。"""
+    counts: dict[tuple[str, str], int] = {}
+    for row in conn.execute("PRAGMA foreign_key_check").fetchall():
+        key = (row[0], row[2])   # (table, rowid, parent, fkid)
+        counts[key] = counts.get(key, 0) + 1
+    return "、".join(f"{child}→{parent} {n} 列" for (child, parent), n in sorted(counts.items()))
 
 
 def _migrate_tx(conn: sqlite3.Connection, *, from_empty_only: bool) -> bool:
@@ -274,9 +294,9 @@ def _migrate_tx(conn: sqlite3.Connection, *, from_empty_only: bool) -> bool:
             if version > current:
                 _apply_migration(conn, version, sql)
         if current < SCHEMA_VERSION:
-            problems = conn.execute("PRAGMA foreign_key_check").fetchall()
+            problems = _foreign_key_problems(conn)
             if problems:
-                raise sqlite3.IntegrityError(f"foreign_key_check 不為空:{len(problems)} 列")
+                raise sqlite3.IntegrityError(f"foreign_key_check 不為空:{problems}")
         conn.execute("COMMIT")
         return True
     except BaseException:
@@ -314,6 +334,8 @@ def _backup(conn: sqlite3.Connection, path: Path, version: int, clock: Clock | N
         _copy_database(conn, target)
     except BaseException as exc:
         _remove_backup_files(target)
+        if not isinstance(exc, Exception):
+            raise
         raise MigrationError(
             f"升級前備份失敗,未升級(schema 仍為 v{version}):{type(exc).__name__}: {exc}"
         ) from exc
@@ -321,9 +343,12 @@ def _backup(conn: sqlite3.Connection, path: Path, version: int, clock: Clock | N
 
 
 def _copy_database(conn: sqlite3.Connection, target: Path) -> None:
+    """backup API 會一併讀入來源尚未 checkpoint 的 WAL 內容;複製後把備份改為 rollback journal
+    (`journal_mode=DELETE`),讓 `.bak` 是單一自足的檔案(不需要 -wal、-shm)。"""
     dst = sqlite3.connect(str(target))
     try:
         conn.backup(dst)
+        dst.execute("PRAGMA journal_mode=DELETE")
     finally:
         dst.close()
 

@@ -314,3 +314,45 @@ async def test_test_call_429_without_budget_creates_no_budget_row(client, db, fa
     assert repo.get_budget(db, "a") is None                       # 決策 6:不再建暫行列
     out = (await client.get("/api/deployments/a")).json()
     assert out["cooling_reason"] == "rate_limited" and out["cooling_until"] is not None
+
+
+async def test_put_budget_null_on_migrated_placeholder_keeps_cooldown(tmp_path, make_client, clock):
+    """v1 暫行列(決策 59)經 migration 保留;PUT budget: null 只刪 budgets 列,冷卻仍在頂層。"""
+    import sqlite3
+
+    from spillway.app import create_app
+    from spillway.clock import SeqRng
+    from spillway.store import db as store_db
+
+    path = tmp_path / "v1" / "spillway.db"
+    path.parent.mkdir()
+    raw = sqlite3.connect(str(path), isolation_level=None)
+    raw.execute("BEGIN")
+    for stmt in store_db._split_statements(store_db.MIGRATIONS[0][1]):
+        raw.execute(stmt)
+    raw.execute("PRAGMA user_version = 1")
+    raw.execute("INSERT INTO deployments(id, model_name, kind, provider, model, credential_ref, "
+                "capabilities) VALUES ('a', 'a', 'api', 'openai', 'gpt-4o-mini', "
+                "'env:SPILLWAY_TEST_KEY', '{}')")
+    raw.execute("INSERT INTO budgets(deployment_id, type, limit_amount, window, exhausted_until) "
+                "VALUES ('a', 'none', NULL, 'none', '2026-10-30T13:00:00Z')")
+    raw.execute("INSERT INTO usage_ledger(ts, deployment_id, status) "
+                "VALUES ('2026-10-30T11:59:00Z', 'a', 'rate_limited')")
+    raw.execute("COMMIT")
+    raw.close()
+
+    app = create_app(clock=clock, rng=SeqRng([0.0]), db_path=path)
+    async with make_client(app) as c:
+        got = (await c.get("/api/deployments/a")).json()
+        assert got["budget"] == {"type": "none", "limit_amount": None, "window": "none",
+                                 "reset_anchor": None}
+        assert got["cooling_until"] == "2026-10-30T13:00:00Z"
+        assert got["cooling_reason"] == "rate_limited"
+        body = {k: v for k, v in got.items() if k not in ("id", "cooling_until", "cooling_reason")}
+        body["budget"] = None
+        r = await c.put("/api/deployments/a", json=body)
+        assert r.status_code == 200, r.text
+        out = r.json()
+        assert out["budget"] is None
+        assert out["cooling_until"] == "2026-10-30T13:00:00Z" and out["cooling_reason"] == "rate_limited"
+    assert (path.parent / "spillway.db.v1.bak").exists()

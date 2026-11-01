@@ -27,7 +27,6 @@ class Budget:
     limit_amount: float | None
     window: str = "monthly"         # monthly | weekly | daily | none
     reset_anchor: int | None = None  # monthly 的重置日,1–28
-    # 冷卻不屬於額度設定:存在 `cooldowns` 表(schema v2;CHG-20261101-03 決策 3、6)
 
 
 @dataclass(frozen=True)

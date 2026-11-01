@@ -192,12 +192,62 @@ def test_migration_failure_rolls_back_and_reports_backup(v1, tmp_path, monkeypat
     assert _dump(bak) == before
 
 
-def test_foreign_key_violation_rolls_back(tmp_path):
+def test_preexisting_orphan_blocks_before_backup(tmp_path):
+    """審議修正:舊庫已有外鍵違反 → 備份前唯讀檢查即停,不留 .bak、仍為 v1;訊息指出子表→父表與列數。"""
     path = tmp_path / "spillway.db"
     _make_v1(path, fk_violation=True)
-    with pytest.raises(MigrationError, match="foreign_key_check"):
-        connect(path)
-    assert _version(path) == 1
+    before = _dump(path)
+    for _ in range(2):
+        with pytest.raises(MigrationError, match="deployment_tags→deployments 1 列") as ei:
+            connect(path)
+        assert ei.value.backup_path is None
+        assert "先停止舊版 serve" in str(ei.value)
+        assert _baks(tmp_path) == []
+        assert _version(path) == 1
+    assert _dump(path) == before
+
+
+def test_post_migration_foreign_key_check_names_tables(v1, tmp_path, monkeypatch):
+    # 以 defer_foreign_keys 讓違反留到交易末端,由 migration 後的 foreign_key_check 攔下
+    bad_v2 = ("PRAGMA defer_foreign_keys = ON;\n" + store_db.MIGRATIONS[1][1]
+              + "\nINSERT INTO cooldowns VALUES ('ghost', '2026-10-30T12:00:00Z', 'rate_limited');\n")
+    monkeypatch.setattr(store_db, "MIGRATIONS", (store_db.MIGRATIONS[0], (2, bad_v2)))
+    with pytest.raises(MigrationError, match="cooldowns→deployments 1 列") as ei:
+        connect(v1)
+    assert ei.value.backup_path == tmp_path / "spillway.db.v1.bak"
+    assert _version(v1) == 1
+
+
+def test_base_exception_propagates_unchanged_and_rolls_back(v1, monkeypatch):
+    def interrupted(conn, version, sql):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(store_db, "_apply_migration", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        connect(v1)
+    assert _version(v1) == 1
+
+
+def test_backup_includes_uncheckpointed_wal_and_is_single_file(tmp_path):
+    path = tmp_path / "spillway.db"
+    _make_v1(path)
+    writer = _raw(path)
+    writer.execute("PRAGMA wal_autocheckpoint = 0")
+    writer.execute("INSERT INTO settings(key, value) VALUES ('only_in_wal', 'yes')")
+    try:
+        assert Path(str(path) + "-wal").stat().st_size > 0      # 寫入只在 WAL,尚未 checkpoint
+        connect(path).close()
+    finally:
+        writer.close()
+    bak = tmp_path / "spillway.db.v1.bak"
+    assert not Path(str(bak) + "-wal").exists() and not Path(str(bak) + "-shm").exists()
+    c = _raw(bak)
+    try:
+        assert c.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert c.execute("SELECT value FROM settings WHERE key = 'only_in_wal'").fetchone()[0] == "yes"
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 1
+    finally:
+        c.close()
 
 
 def test_locked_data_dir_does_not_migrate(v1, tmp_path):

@@ -236,20 +236,6 @@ def mark_cooldown(conn: sqlite3.Connection, dep_id: str, until: datetime, reason
         )
 
 
-def set_cooldown(conn: sqlite3.Connection, dep_id: str, until: datetime, reason: str) -> None:
-    """直接設定(可縮短)成員的冷卻列;測試與管理用。一般路徑請用 `mark_cooldown`。"""
-    with transaction(conn):
-        conn.execute(
-            """
-            INSERT INTO cooldowns (deployment_id, exhausted_until, reason) VALUES (?, ?, ?)
-            ON CONFLICT(deployment_id) DO UPDATE SET
-              exhausted_until = excluded.exhausted_until,
-              reason = excluded.reason
-            """,
-            (dep_id, to_iso(until), reason),
-        )
-
-
 def clear_cooldown(conn: sqlite3.Connection, dep_id: str) -> bool:
     """刪除成員的冷卻列(spec 5.3.3);回傳是否有刪到。"""
     with transaction(conn):

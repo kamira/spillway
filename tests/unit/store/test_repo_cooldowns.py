@@ -42,10 +42,12 @@ def test_mark_keeps_later_time_and_its_reason(db):
     assert repo.get_cooldown(db, "d1") == repo.Cooldown(T0 + timedelta(hours=2), "rate_limited")
 
 
-def test_set_cooldown_may_shorten(db):
+def test_clear_then_mark_can_shorten(db):
+    """縮短冷卻只能先手動清除(5.3.3)再設定。"""
     _save(db)
     repo.mark_cooldown(db, "d1", T0 + timedelta(hours=1), "quota_exhausted")
-    repo.set_cooldown(db, "d1", T0 - timedelta(seconds=1), "rate_limited")
+    repo.clear_cooldown(db, "d1")
+    repo.mark_cooldown(db, "d1", T0 - timedelta(seconds=1), "rate_limited")
     assert repo.get_cooldown(db, "d1") == repo.Cooldown(T0 - timedelta(seconds=1), "rate_limited")
 
 
