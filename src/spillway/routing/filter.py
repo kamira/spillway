@@ -42,13 +42,12 @@ from typing import Any, Protocol
 
 from spillway.adapters.base import AdapterUnavailableError
 from spillway.clock import Clock
-from spillway.domain import ChatRequest, Deployment
+from spillway.domain import CLOUD_KINDS, STATUS_SKIPPED_PRECHECK, ChatRequest, Deployment
 from spillway.estimate import Estimate
 from spillway.routing.resolver import Target
 
 HEALTH_TTL = timedelta(seconds=10)
 HEALTH_PROBE_TIMEOUT = 2.0   # 秒;單次 local 健康探測上限(決策 20)
-CLOUD_KINDS = ("cli", "api")
 
 HEALTHY = "healthy"
 HEALTH_UNKNOWN = "health_unknown"
@@ -63,7 +62,7 @@ EXCLUDE_REASONS = (
     "cooling",
     "quota_exhausted",
     "unhealthy",
-    "skipped_precheck",
+    STATUS_SKIPPED_PRECHECK,
 )
 
 
@@ -204,7 +203,7 @@ class CandidateFilter:
                 and est.cost_usd_p90 is not None
                 and est.cost_usd_p90 > remaining
             ):
-                excluded.append(Excluded(dep.id, "skipped_precheck", dep, est))
+                excluded.append(Excluded(dep.id, STATUS_SKIPPED_PRECHECK, dep, est))
                 continue
             candidates.append(Candidate(dep, est, health))
 

@@ -77,19 +77,22 @@ from spillway.api import (
     validation_message,
 )
 from spillway.clock import to_iso
-from spillway.domain import CALL_STATUSES, Budget, CallResult, ChatRequest, Deployment
-from spillway.estimate import Estimate, Estimator
-from spillway.ledger import LEDGER_STATUSES, Attempt, LedgerNotFound, LedgerWriter, payload_status
-from spillway.quota import QuotaService
-from spillway.redact import Redactor
-from spillway.routing import (
+from spillway.domain import (
+    CALL_STATUSES,
     CLOUD_KINDS,
-    InvalidEffort,
-    Plan,
-    RouteNotFound,
-    members_of,
-    normalize_effort,
+    COOLING_STATUSES,
+    LEDGER_STATUSES,
+    Budget,
+    CallResult,
+    ChatRequest,
+    Deployment,
 )
+from spillway.effort import InvalidEffort, normalize_effort
+from spillway.estimate import Estimate, Estimator
+from spillway.ledger import Attempt, LedgerNotFound, LedgerWriter, payload_status
+from spillway.quota import QuotaService
+from spillway.redact import REDACTOR
+from spillway.routing import Plan, RouteNotFound, members_of
 from spillway.store import repo
 from spillway.store.db import transaction
 
@@ -109,7 +112,7 @@ CREDENTIAL_KEY_NAMES = frozenset({
     "api_key", "apikey", "key", "token", "access_token", "secret", "password", "authorization",
 })
 
-_REDACTOR = Redactor()
+_REDACTOR = REDACTOR
 _log = logging.getLogger(__name__)
 
 
@@ -497,7 +500,7 @@ async def test_deployment(request: Request, dep_id: str) -> dict[str, Any]:
             raise
         latency_ms = elapsed_ms()
         status = result.status if result.status in CALL_STATUSES else "error"
-        if status in ("quota_exhausted", "rate_limited") and dep.kind in CLOUD_KINDS:
+        if status in COOLING_STATUSES and dep.kind in CLOUD_KINDS:
             try:
                 QuotaService(conn, clock).mark(dep, status)
             except Exception as exc:  # noqa: BLE001 — 冷卻設定失敗不可中斷帳本(決策 35;同 Router M18)

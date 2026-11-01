@@ -6,7 +6,8 @@ health_cache=None, close_conn=False)`
 - `await route(req) -> RouteOutcome`:解析 → 篩選(probe=True)→ 排序 → 逐 slot 選擇並呼叫。
 - `await dry_run(route_name_or_model, req) -> Plan`:同一管線到 SlotSelector 為止(probe=False);
   不呼叫 adapter、不寫帳本、不設冷卻。
-- `normalize_effort(value)`:請求 `reasoning_effort` 正規化(決策 29)。
+- `normalize_effort(value)`:請求 `reasoning_effort` 正規化(決策 29);定義在 `spillway.effort`,
+  此處轉匯出(CHG-20261101-02 決策 8)。
 
 連線(design D2「每請求一連線」;施工審議波次 3 建議修):
     `conn_factory` 是零參數函式,回傳 `sqlite3.Connection`。每次 `route()` / `dry_run()` 只呼叫
@@ -69,14 +70,21 @@ from typing import Any
 from spillway import credentials
 from spillway.adapters.base import AdapterUnavailableError
 from spillway.clock import Clock, Rng
-from spillway.domain import CALL_STATUSES, EFFORTS, CallResult, ChatRequest, Deployment
-from spillway.effort import EffortMapper
+from spillway.domain import (
+    CALL_STATUSES,
+    CLOUD_KINDS,
+    COOLING_STATUSES,
+    STATUS_SKIPPED_PRECHECK,
+    CallResult,
+    ChatRequest,
+    Deployment,
+)
+from spillway.effort import EffortMapper, InvalidEffort, normalize_effort
 from spillway.estimate import Estimate, Estimator
 from spillway.ledger import Attempt, LedgerWriter
 from spillway.quota import QuotaService
-from spillway.redact import Redactor
+from spillway.redact import REDACTOR
 from spillway.routing.filter import (
-    CLOUD_KINDS,
     Candidate,
     CandidateFilter,
     FilterResult,
@@ -101,36 +109,6 @@ __all__ = [
 ConnFactory = Callable[[], sqlite3.Connection]
 
 _log = logging.getLogger(__name__)
-
-_EFFORT_ALIASES = {"minimal": "none"}
-
-
-class InvalidEffort(ValueError):
-    """請求的 `reasoning_effort` 不在五級內(決策 29;T13 轉 422 `validation_error`)。
-
-    訊息不回顯原值以外的內容;原值放在 `value`。
-    """
-
-    def __init__(self, value: object) -> None:
-        super().__init__(
-            f"reasoning_effort 不合法:{value!r},只可為 {', '.join(EFFORTS)}(或 minimal)"
-        )
-        self.value = value
-
-
-def normalize_effort(value: object) -> str | None:
-    """決策 29:None 或空白字串 → None;不分大小寫;`minimal` → `none`;其餘不在五級內丟 `InvalidEffort`。"""
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise InvalidEffort(value)
-    v = value.strip().lower()
-    if not v:
-        return None
-    v = _EFFORT_ALIASES.get(v, v)
-    if v not in EFFORTS:
-        raise InvalidEffort(value)
-    return v
 
 
 # ---------------------------------------------------------------- 回傳型別
@@ -277,7 +255,7 @@ class Router:
         self.filter = CandidateFilter(registry, self.quota, self.estimator, clock, self.health_cache)
         self.planner = OrderPlanner()
         self.selector = SlotSelector(self.quota, rng)
-        self.redactor = Redactor()
+        self.redactor = REDACTOR
 
     # -- 連線 -------------------------------------------------------------------------------
 
@@ -335,15 +313,15 @@ class Router:
         slots, skipped_slot = self._plan(target, fres)
         attempts: list[AttemptInfo] = []
         excluded = [(e.deployment_id, e.reason) for e in fres.excluded
-                    if e.reason != "skipped_precheck"]
+                    if e.reason != STATUS_SKIPPED_PRECHECK]
 
         for ex in fres.excluded:
-            if ex.reason != "skipped_precheck":
+            if ex.reason != STATUS_SKIPPED_PRECHECK:
                 continue
             slot = skipped_slot.get(ex.deployment_id)
             est = ex.estimate
             ledger.record(Attempt(
-                ts=self.clock.now(), status="skipped_precheck", route_name=target.route_name,
+                ts=self.clock.now(), status=STATUS_SKIPPED_PRECHECK, route_name=target.route_name,
                 deployment_id=ex.deployment_id, slot=slot, fallback_depth=0,
                 est_tokens_in=est.tokens_in if est else None,
                 est_tokens_out_p50=est.out_p50 if est else None,
@@ -351,7 +329,7 @@ class Router:
                 est_cost_usd_p90=est.cost_usd_p90 if est else None,
                 route_record_context=target.record_context,
             ))
-            attempts.append(AttemptInfo(ex.deployment_id, "skipped_precheck", slot))
+            attempts.append(AttemptInfo(ex.deployment_id, STATUS_SKIPPED_PRECHECK, slot))
 
         depth = 0
         for slot in slots:
@@ -382,7 +360,7 @@ class Router:
     def _plan(self, target: Target, fres: FilterResult) -> tuple[list[Slot], dict[str, int]]:
         """候選的 slot;另以「假設未被跳過」排一次,取得 skipped_precheck 成員的 slot 編號。"""
         slots = self.planner.plan(target.route_targets, fres.candidates, members=target.members)
-        skipped = [e for e in fres.excluded if e.reason == "skipped_precheck"]
+        skipped = [e for e in fres.excluded if e.reason == STATUS_SKIPPED_PRECHECK]
         if not skipped:
             return slots, {}
         pseudo = list(fres.candidates) + [
@@ -429,7 +407,7 @@ class Router:
             result = dataclasses.replace(
                 result, ok=False, status="error",
                 error=result.error or f"adapter 回傳未知 status {result.status!r}")
-        if status in ("quota_exhausted", "rate_limited") and dep.kind in CLOUD_KINDS:
+        if status in COOLING_STATUSES and dep.kind in CLOUD_KINDS:
             try:
                 self.quota.mark(dep, status)
             except Exception as exc:  # noqa: BLE001 — 冷卻設定失敗不可中斷帳本與 fallback(M18)

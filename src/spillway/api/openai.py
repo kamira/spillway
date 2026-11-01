@@ -32,8 +32,9 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from spillway.api import ApiError, filter_chat_params, redact_echo
 from spillway.domain import CallResult, ChatRequest
-from spillway.redact import Redactor
-from spillway.routing import InvalidEffort, RouteNotFound, RouteOutcome, normalize_effort
+from spillway.effort import InvalidEffort, normalize_effort
+from spillway.redact import REDACTOR
+from spillway.routing import RouteNotFound, RouteOutcome
 from spillway.store import repo
 
 __all__ = ["router"]
@@ -41,7 +42,7 @@ __all__ = ["router"]
 _log = logging.getLogger(__name__)
 
 router = APIRouter()
-_REDACTOR = Redactor()
+_REDACTOR = REDACTOR
 
 HEADER_SERVED_BY = "X-Spillway-Served-By"
 HEADER_SLOT = "X-Spillway-Slot"

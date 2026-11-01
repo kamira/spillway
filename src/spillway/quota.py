@@ -11,7 +11,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from spillway.clock import Clock, to_iso
-from spillway.domain import Budget, Deployment
+from spillway.domain import COOLING_STATUSES, Budget, Deployment
 from spillway.store import repo
 
 RATE_LIMIT_COOLDOWN = timedelta(seconds=60)   # spec 4.5.2
@@ -158,7 +158,7 @@ class QuotaService:
         只為記錄冷卻;依決策 6 這等同「無上限」,不改變額度判斷(施工審議代決)。
         """
         now = self._now(now)
-        if status not in ("quota_exhausted", "rate_limited"):
+        if status not in COOLING_STATUSES:
             budget = self._budget(dep)
             return budget.exhausted_until if budget else None
         # 讀不到 budget 時視為 window none;寫入用單一原子敘述,不覆寫其他欄位(審查 M12)

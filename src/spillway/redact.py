@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-__all__ = ["MASK", "MIN_SECRET_LEN", "Redactor"]
+__all__ = ["MASK", "MIN_SECRET_LEN", "REDACTOR", "Redactor"]
 
 MASK = "[REDACTED]"
 MIN_SECRET_LEN = 4
@@ -78,3 +78,8 @@ class Redactor:
     def matches(self, text: str) -> bool:
         """文字是否命中 ``sk-`` 或 ``Bearer`` 規則(供寫入驗證,不含 extra_secrets)。"""
         return bool(_SK_RE.search(text) or _BEARER_RE.search(text))
+
+
+# 共用實例(CHG-20261101-02 決策 7):Redactor 無狀態,`extra_secrets` 每次呼叫傳入。
+# src 內一律用它,不另建實例;測試仍可自行建構 `Redactor()` 注入。
+REDACTOR = Redactor()

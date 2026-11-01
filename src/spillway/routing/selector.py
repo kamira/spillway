@@ -22,11 +22,10 @@ from datetime import datetime
 from typing import Protocol
 
 from spillway.clock import Rng
-from spillway.domain import Deployment
+from spillway.domain import CLOUD_KINDS, Deployment
 from spillway.routing.planner import Slot, SlotEntry
 
 WEIGHT_VALUES = {"high": 3, "medium": 2, "low": 1}
-CLOUD_KINDS = ("cli", "api")
 
 
 class _Quota(Protocol):

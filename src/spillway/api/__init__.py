@@ -30,7 +30,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from spillway.redact import Redactor
+from spillway.redact import REDACTOR
 
 __all__ = [
     "ALLOWED_CHAT_PARAMS",
@@ -44,7 +44,7 @@ __all__ = [
 ]
 
 _log = logging.getLogger(__name__)
-_REDACTOR = Redactor()
+_REDACTOR = REDACTOR
 
 _HTTP_CODES = {404: "not_found", 405: "method_not_allowed"}
 

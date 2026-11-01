@@ -83,3 +83,36 @@ def test_pick_through_effort_to_upstream(target, req, caps, expected_level, expe
     assert effort_to_upstream(m, level) == expected_upstream
     if level is not None:
         assert effort_to_upstream(m, level) == m.effort_map[level]
+
+
+# ---------------------------------------------------------------- CHG-20261101-02 T1:normalize_effort 移入(決策 8)
+
+
+def test_normalize_effort_minimal_maps_to_none():
+    from spillway.effort import normalize_effort
+
+    assert normalize_effort("minimal") == "none"
+    assert normalize_effort(" HIGH ") == "high"
+    assert normalize_effort(None) is None
+    assert normalize_effort("  ") is None
+
+
+@pytest.mark.parametrize("bad", ["extreme", "minimalx", 3, ["low"]])
+def test_normalize_effort_invalid_raises(bad):
+    from spillway.effort import InvalidEffort, normalize_effort
+
+    with pytest.raises(InvalidEffort) as ei:
+        normalize_effort(bad)
+    assert ei.value.value == bad
+    assert isinstance(ei.value, ValueError)
+
+
+def test_normalize_effort_same_object_across_paths():
+    import spillway.effort as effort
+    import spillway.routing as routing
+    import spillway.routing.router as router
+
+    assert routing.normalize_effort is effort.normalize_effort
+    assert router.normalize_effort is effort.normalize_effort
+    assert routing.InvalidEffort is effort.InvalidEffort
+    assert router.InvalidEffort is effort.InvalidEffort
