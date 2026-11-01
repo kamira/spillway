@@ -131,6 +131,7 @@ async def update_deployment(request: Request, dep_id: str, body: DeploymentIn) -
     body 的 `budget` 為 null 時清除預算;冷卻尚未到期則保留(U10 (a)):budgets 列改為只記冷卻的
     `type=none`、`window=none`、`limit_amount` NULL 列,不刪除;沒有未到期的冷卻時刪除 budgets 列。
     變更 provider 或 kind 時依新 (provider, kind) 的 cardinality 在同一交易內檢查(決策 22)。
+    成功後呼叫 `router.invalidate_health(dep_id)`(含 `enabled` 變更;CHG-20261101-02 決策 12)。
     """
     if body.id is not None and body.id != dep_id:
         raise _invalid("body.id", "不可變更成員 id(必須與路徑相同)")
@@ -145,15 +146,19 @@ async def update_deployment(request: Request, dep_id: str, body: DeploymentIn) -
             if dep.provider != old.provider or dep.kind != old.kind:
                 _check_cardinality(conn, request.app.state.registry, dep)
             repo.save_deployment(conn, dep)
+        # 交易已提交:健康結果可能依舊設定(api_base、enabled 等)而來,讓下一次經 route 的請求重新探測(決策 12)
+        request.app.state.router.invalidate_health(dep_id)
         return _dep_out(_load_dep(conn, dep_id))
 
 
 @router.delete("/deployments/{dep_id}", status_code=204)
 async def delete_deployment(request: Request, dep_id: str) -> Response:
-    """刪除成員;tags、budget、route_targets 串聯刪除,帳本列保留(孤兒列)。回 204。"""
+    """刪除成員;tags、budget、route_targets 串聯刪除,帳本列保留(孤兒列)。回 204。
+    成功後呼叫 `router.invalidate_health(dep_id)`(CHG-20261101-02 決策 12)。"""
     with request_conn(request) as conn:
         if not repo.delete_deployment(conn, dep_id):
             raise _not_found(f"成員 {dep_id}")
+    request.app.state.router.invalidate_health(dep_id)   # 決策 12:不留已刪除成員的健康結果
     return Response(status_code=204)
 
 

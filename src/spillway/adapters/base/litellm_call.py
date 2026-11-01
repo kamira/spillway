@@ -12,6 +12,9 @@ anthropic_api、openai_api、litellm 模組只經這裡呼叫 LiteLLM,不直接 
   `disable_hf_tokenizer_download=True`(token_counter 遇到 llama 系模型名不從 HuggingFace 下載
   tokenizer,退回 tiktoken;CHG-20261030-02 M13)。應用層的 `estimate` 也用同一個函式。
   不註冊任何 callback、不傳 `callbacks`。
+- `load_litellm()` 另把 `LOG_FLOOR_LOGGERS` 七個 logger(LiteLLM 與它呼叫的 SDK、HTTP 程式庫)的
+  等級在 DEBUG 或 NOTSET 時設為 INFO,其他等級不動,不改 `propagate` 與 handler
+  (CHG-20261101-02 決策 13):prompt 回顯與 request options 只在 DEBUG 輸出。
 - 模型字串一律經 `model_string(dep)`(spec 7.2.1;M11、M14):provider 為 `litellm`(直通)時原樣
   使用 `dep.model`(必須含 `/`),其他 provider 一律 `<provider>/<model>`,即使 model 已以
   `<provider>/` 開頭也照補(例如 vLLM 以 HF id `openai/gpt-oss-20b` 對外提供的模型)。
@@ -25,6 +28,7 @@ anthropic_api、openai_api、litellm 模組只經這裡呼叫 LiteLLM,不直接 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from collections.abc import Mapping
@@ -44,6 +48,9 @@ PROTECTED_KEYS = frozenset(
      "base_url", "custom_llm_provider", "mock_response", "extra_headers", "api_version",
      "organization", "deployment_id"}
 )
+# 決策 13:root logger 為 DEBUG 時也不讓這些 logger 輸出 DEBUG(會含 prompt 原文)
+LOG_FLOOR_LOGGERS = ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy", "openai", "anthropic",
+                     "httpx", "httpcore")
 _CODE_RE = re.compile(r"""['"]code['"]\s*:\s*['"]([A-Za-z_][\w.\-]*)['"]""")
 
 
@@ -89,7 +96,7 @@ def load_litellm() -> Any:
     """載入並設定 LiteLLM(adapters.base 與應用層 estimate 共用的唯一入口)。
 
     每次呼叫都重設下列旗標(便宜,且防止其他程式碼改回):本地價格表、不 verbose、
-    不印 debug 資訊、不送遙測、不從 HuggingFace 下載 tokenizer。
+    不印 debug 資訊、不送遙測、不從 HuggingFace 下載 tokenizer;並套用七個 logger 的 INFO 下限(決策 13)。
     """
     # 防線:任何進入點第一次 import litellm 前都改用本地價格表,不在 import 時連網
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
@@ -100,7 +107,16 @@ def load_litellm() -> Any:
     if hasattr(litellm, "telemetry"):
         litellm.telemetry = False
     litellm.disable_hf_tokenizer_download = True
+    _floor_loggers()
     return litellm
+
+
+def _floor_loggers() -> None:
+    """`LOG_FLOOR_LOGGERS` 的等級為 DEBUG 或 NOTSET 時改為 INFO;其他等級、propagate、handler 不動。"""
+    for name in LOG_FLOOR_LOGGERS:
+        logger = logging.getLogger(name)
+        if logger.level in (logging.NOTSET, logging.DEBUG):
+            logger.setLevel(logging.INFO)
 
 
 def _get(obj: Any, name: str) -> Any:

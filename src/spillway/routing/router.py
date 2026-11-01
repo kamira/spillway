@@ -6,6 +6,8 @@ health_cache=None, close_conn=False)`
 - `await route(req) -> RouteOutcome`:解析 → 篩選(probe=True)→ 排序 → 逐 slot 選擇並呼叫。
 - `await dry_run(route_name_or_model, req) -> Plan`:同一管線到 SlotSelector 為止(probe=False);
   不呼叫 adapter、不寫帳本、不設冷卻。
+- `invalidate_health(dep_id)`:移除該成員的健康快取結果,下一次經 route 的請求重新探測
+  (管理 API 修改或刪除成員後呼叫;CHG-20261101-02 決策 12)。
 - `normalize_effort(value)`:請求 `reasoning_effort` 正規化(決策 29);定義在 `spillway.effort`,
   此處轉匯出(CHG-20261101-02 決策 8)。
 - 回傳型別 `RouteOutcome`、`AttemptInfo`、`Plan`、`PlanSlot`、`PlanEntry`、`PlanExcluded` 定義在
@@ -209,6 +211,13 @@ class Router:
 
     def _ledger_for(self, conn: sqlite3.Connection) -> LedgerWriter:
         return self._ledger if self._ledger is not None else LedgerWriter(conn, self.redactor)
+
+    # -- 健康快取 ---------------------------------------------------------------------------
+
+    def invalidate_health(self, dep_id: str) -> None:
+        """移除 `dep_id` 的健康快取結果(CHG-20261101-02 決策 12)。快取與 CandidateFilter 共用,
+        只有經 route 的請求會讀寫;`local/` 直呼不看健康快取。"""
+        self.health_cache.invalidate(dep_id)
 
     # -- route ------------------------------------------------------------------------------
 
