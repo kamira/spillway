@@ -536,3 +536,34 @@ def test_subprocess_use_is_a_layering_violation(tmp_path, src):
 )
 def test_allowed_stdlib_use_passes(tmp_path, src):
     assert _layering(tmp_path, src) == []
+
+
+@pytest.mark.parametrize("closer", ["kill_all_sync", "terminate_all"])
+async def test_shutdown_during_spawn_window_kills_new_child(runner, tmp_path, marker, monkeypatch,
+                                                            closer):
+    """終審 D1:子行程已 fork、pgid 尚未登記進 `_active` 時停機 → spawn 一回來就 SIGKILL 該 group。"""
+    real_spawn = asyncio.create_subprocess_exec
+    d = tmp_path / "pids"
+    d.mkdir()
+
+    async def spawn_then_shutdown(*args, **kwargs):
+        proc = await real_spawn(*args, **kwargs)
+        await _wait_files(d)   # 子行程與孫行程都已起來(同一 group)
+        if closer == "kill_all_sync":
+            runner.kill_all_sync(grace=GRACE)   # 此時 _active 還沒有它
+        else:
+            await runner.terminate_all(grace=GRACE)
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn_then_shutdown)
+    try:
+        out = await asyncio.wait_for(
+            runner.run([PY, "-c", SPAWN_GRANDCHILD, str(d), marker], cwd=None, timeout=30), 10)
+    finally:
+        for pid in _read_pids(d):
+            if _alive(pid):
+                os.kill(pid, signal.SIGKILL)
+    assert out.killed_reason == "shutdown" and not out.timed_out
+    assert out.exit_code == -signal.SIGKILL
+    _assert_no_leftovers(d, marker)
+    assert runner.active_pids == ()

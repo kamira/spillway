@@ -26,7 +26,8 @@ max_output_bytes=8 MiB) -> CliOutput`
 `release(key)`、`in_flight(key)`。`active_pids`(唯讀)列出進行中子行程,供測試與診斷。
 
 停機(決策 16):`async terminate_all(grace=None)`(lifespan 結束的後備)、`kill_all_sync(grace=None)`
-(同步,給 `_run_server` 的 `finally` 與 `atexit`;事件迴圈已停時也能用)。
+(同步,給 `_run_server` 的 `finally` 與 `atexit`;事件迴圈已停時也能用)。兩者都會設下停機旗標
+(不撤銷):之後才從 spawn 回來的子行程立即 SIGKILL,結果同停機(`killed_reason="shutdown"`)。
 
 秘密:本模組不記錄 argv、stdin、環境變數或輸出內容。
 """
@@ -144,6 +145,9 @@ class CliRunner:
         self._reasons: dict[int, str] = {}                          # pgid → killed_reason
         self._slots: dict[str, int] = {}
         self.extra_env_remove: set[str] = set()   # 決策 9:每次 run 一律併入 env_remove
+        # 終審 D1:terminate_all/kill_all_sync 設定後不再撤銷。spawn 期間(fork 已發生、pgid 尚未
+        # 登記進 _active)停機會漏殺;spawn 一回來看到此旗標就立即 SIGKILL 該 group。
+        self._closing = False
 
     # ------------------------------------------------------------ 併發名額(決策 7)
     def try_acquire(self, key: str, limit: int) -> bool:
@@ -204,6 +208,9 @@ class CliRunner:
         )
         pgid = proc.pid
         self._active[pgid] = proc
+        if self._closing:   # 停機落在 spawn 視窗內(終審 D1):與停機殺掉的結果相同
+            self._reasons.setdefault(pgid, "shutdown")
+            _signal_group(pgid, signal.SIGKILL)
         out, err = _Capture(max_output_bytes), _Capture(max_output_bytes)
         readers = [asyncio.create_task(out.pump(proc.stdout)),
                    asyncio.create_task(err.pump(proc.stderr))]
@@ -310,6 +317,7 @@ class CliRunner:
     # ------------------------------------------------------------ 停機(決策 16)
     async def terminate_all(self, grace: float | None = None) -> None:
         """終止全部進行中子行程的 group(SIGTERM → `grace` → SIGKILL)。"""
+        self._closing = True
         g = self.term_grace if grace is None else grace
         items = list(self._active.items())
         for pgid, _ in items:
@@ -319,6 +327,7 @@ class CliRunner:
 
     def kill_all_sync(self, grace: float | None = None) -> None:
         """同步版:SIGTERM 全部 group,`grace` 秒內沒結束的 SIGKILL。不需要事件迴圈。"""
+        self._closing = True
         g = self.term_grace if grace is None else grace
         pgids = list(self._active)
         for pgid in pgids:
