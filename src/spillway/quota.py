@@ -8,7 +8,7 @@ import calendar
 import math
 from datetime import datetime, timedelta, timezone
 
-from spillway.clock import Clock, to_iso
+from spillway.clock import Clock
 from spillway.domain import COOLING_STATUSES, Budget, Deployment
 from spillway.store import repo
 from spillway.store.db import ConnSource, use_conn
@@ -106,15 +106,10 @@ class QuotaService:
         return budget is None or budget.type == "none" or budget.limit_amount is None
 
     def _spent(self, dep_id: str, budget: Budget, now: datetime) -> float:
-        # repo 沒有加總函式;直接以參數化 SQL 查 usage_ledger。ts 為固定格式 UTC 字串,可字典序比較。
-        sql = "SELECT COALESCE(SUM(cost_usd), 0) FROM usage_ledger WHERE deployment_id = ?"
-        args: list[object] = [dep_id]
         start = self.period_start(budget, now)
-        if start is not None:
-            sql += " AND ts >= ? AND ts < ?"
-            args += [to_iso(start), to_iso(self.next_reset(budget, now))]
+        end = None if start is None else self.next_reset(budget, now)
         with use_conn(self._conn_src) as conn:
-            return float(conn.execute(sql, args).fetchone()[0])
+            return repo.ledger_spend(conn, dep_id, start, end)
 
     def remaining(self, dep: Deployment, now: datetime | None = None) -> float:
         now = self._now(now)

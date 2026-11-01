@@ -332,14 +332,11 @@ def _check_cardinality(conn: sqlite3.Connection, registry: Any, dep: Deployment)
     查詢與寫入之間不會有別的連線插入成員)。"""
     if registry.cardinality_of(dep.provider, dep.kind) != "single":
         return
-    rows = conn.execute(
-        "SELECT id FROM deployments WHERE provider = ? AND id != ? ORDER BY id",
-        (dep.provider, dep.id),
-    ).fetchall()
-    if rows:
+    others = repo.provider_member_ids(conn, dep.provider, exclude_id=dep.id)
+    if others:
         raise ApiError(
             409, "provider_single",
-            redact_echo(f"provider {dep.provider} 的模組僅允許 1 個成員,已有 1 個:{rows[0][0]}"))
+            redact_echo(f"provider {dep.provider} 的模組僅允許 1 個成員,已有 1 個:{others[0]}"))
 
 
 # ================================================================ /api/deployments
@@ -361,7 +358,7 @@ async def create_deployment(request: Request, body: DeploymentIn) -> dict[str, A
     dep = body.to_deployment(body.id, None)
     with request_conn(request) as conn:
         with transaction(conn):
-            if conn.execute("SELECT 1 FROM deployments WHERE id = ?", (dep.id,)).fetchone():
+            if repo.deployment_exists(conn, dep.id):
                 raise ApiError(409, "conflict", redact_echo(f"成員 id 已存在:{dep.id}"))
             _check_cardinality(conn, request.app.state.registry, dep)
             repo.save_deployment(conn, dep)
@@ -945,20 +942,9 @@ async def list_ledger(
         rows = repo.list_ledger(conn, route_name=route, deployment_id=deployment, status=status,
                                 since=since, until=until, limit=page_size,
                                 offset=(page - 1) * page_size)
-        where: list[str] = []
-        args: list[Any] = []
-        for col, val in (("route_name", route), ("deployment_id", deployment), ("status", status)):
-            if val is not None:
-                where.append(f"{col} = ?")
-                args.append(val)
-        if since is not None:
-            where.append("ts >= ?")
-            args.append(to_iso(since))
-        if until is not None:
-            where.append("ts < ?")
-            args.append(to_iso(until))
-        sql = "SELECT COUNT(*) FROM usage_ledger" + (" WHERE " + " AND ".join(where) if where else "")
-        total = int(conn.execute(sql, args).fetchone()[0])
+        # 清單與計數為兩條獨立敘述,不包交易(決策審議 D25)
+        total = repo.count_ledger(conn, route_name=route, deployment_id=deployment, status=status,
+                                  since=since, until=until)
     return {"items": [_ledger_out(r) for r in rows], "page": page, "page_size": page_size,
             "total": total, "pages": math.ceil(total / page_size)}
 
@@ -1051,20 +1037,17 @@ async def dashboard(request: Request) -> dict[str, Any]:
     - `est_days_left`(5.4.6):`max(remaining, 0) ÷ (近 7 天實際花費 ÷ 7)`;無上限或近 7 天無花費時 null。
 
     效能(NFR-2):查詢數與成員數無關——成員與 budgets 一次 JOIN、每種相異期間一次 GROUP BY 加總、
-    近 24 小時請求數與近 7 天花費合併一次 GROUP BY。repo 沒有彙總查詢,這裡以參數化 SQL 撰寫(唯讀)。
+    近 24 小時請求數與近 7 天花費合併一次 GROUP BY(`repo.dashboard_members`、`repo.spend_by_deployment`、
+    `repo.recent_activity`;不用 `QuotaService` 的逐成員加總)。
     """
     clock = _clock(request)
     now = clock.now().astimezone(timezone.utc)
     with request_conn(request) as conn:
         quota = QuotaService(conn, clock)
-        rows = conn.execute(
-            "SELECT d.id, d.model_name, d.kind, d.provider, d.enabled, b.type AS b_type, "
-            "b.limit_amount, b.window, b.reset_anchor, b.exhausted_until, "
-            "b.deployment_id IS NOT NULL AS has_budget "
-            "FROM deployments d LEFT JOIN budgets b ON b.deployment_id = d.id ORDER BY d.id"
-        ).fetchall()
+        rows = repo.dashboard_members(conn)
 
         periods: dict[str, tuple[str | None, str | None]] = {}
+        bounds: dict[tuple[str | None, str | None], tuple[datetime | None, datetime | None]] = {}
         for r in rows:
             if r["has_budget"] and not _is_cooling_only(r["b_type"], r["window"], r["limit_amount"]):
                 b = Budget(type=r["b_type"], limit_amount=r["limit_amount"], window=r["window"],
@@ -1072,32 +1055,20 @@ async def dashboard(request: Request) -> dict[str, Any]:
             else:
                 b = _DEFAULT_PERIOD
             if b.window == "none":
-                periods[r["id"]] = (None, None)
+                key: tuple[str | None, str | None] = (None, None)
+                bounds[key] = (None, None)
             else:
                 start = quota.period_start(b, now)
-                periods[r["id"]] = (_iso(start), _iso(quota.next_reset(b, now)))
+                end = quota.next_reset(b, now)
+                key = (_iso(start), _iso(end))
+                bounds[key] = (start, end)
+            periods[r["id"]] = key
 
-        spent: dict[tuple[str | None, str | None], dict[str, float]] = {}
-        for key in set(periods.values()):
-            start, end = key
-            sql = "SELECT deployment_id, COALESCE(SUM(cost_usd), 0) FROM usage_ledger"
-            args: list[Any] = []
-            if start is not None:
-                sql += " WHERE ts >= ? AND ts < ?"
-                args = [start, end]
-            sql += " GROUP BY deployment_id"
-            spent[key] = {d: float(s) for d, s in conn.execute(sql, args)}
-
-        recent = {
-            d: (int(n24), float(s7))
-            for d, n24, s7 in conn.execute(
-                "SELECT deployment_id, "
-                "SUM(CASE WHEN ts >= ? AND status != 'skipped_precheck' THEN 1 ELSE 0 END), "
-                "COALESCE(SUM(cost_usd), 0) "
-                "FROM usage_ledger WHERE ts >= ? GROUP BY deployment_id",
-                (to_iso(now - timedelta(hours=24)), to_iso(now - timedelta(days=7))),
-            )
-        }
+        # 每種相異期間一次 GROUP BY 加總
+        spent = {key: repo.spend_by_deployment(conn, start, end)
+                 for key, (start, end) in bounds.items()}
+        recent = repo.recent_activity(conn, since_24h=now - timedelta(hours=24),
+                                      since_7d=now - timedelta(days=7))
 
     out = []
     for r in rows:
@@ -1170,7 +1141,7 @@ async def list_adapters(request: Request) -> dict[str, Any]:
     registry = request.app.state.registry
     ctx = AdapterContext(credentials=credentials.resolve, clock=_clock(request))
     with request_conn(request) as conn:
-        deps = [(r[0], r[1]) for r in conn.execute("SELECT kind, provider FROM deployments")]
+        deps = repo.list_kinds_providers(conn)
     modules = registry.modules()
     counts = _module_counts(registry, modules, deps)
     listings = await asyncio.gather(*(
