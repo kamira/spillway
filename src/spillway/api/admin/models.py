@@ -100,7 +100,10 @@ class DeploymentIn(BaseModel):
         hits = _secret_paths(v, "params")
         if hits:
             raise ValueError(_secret_message(hits))
-        if "signals" in v:          # 決策 4:寫入時即驗證格式(訊息只含欄位路徑與說明,不含值)
+        # 決策 4:寫入時即驗證格式;null 視同未覆寫(與執行期 resolve_signals 一致)。訊息含欄位路徑
+        # (鍵名)與說明,正規式不合法時另含 re.error 文字(可能帶出正規式片段);疑似金鑰的字串已由
+        # 上方值樣式掃描擋下,訊息再經 redact_echo 遮罩。
+        if v.get("signals") is not None:
             try:
                 validate_signals(v["signals"], "params.signals")
             except SignalsError as exc:

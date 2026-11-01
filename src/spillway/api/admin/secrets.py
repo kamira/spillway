@@ -15,6 +15,7 @@ from .common import _REDACTOR
 # `-`、`_`、`.`、空白)再比對;(a) 完全等於 CREDENTIAL_KEY_EXACT 之一,或 (b) 以
 # CREDENTIAL_KEY_SUFFIXES 之一結尾,即視為憑證鍵。`key`、`token` 只做完全比對(不擋 `max_tokens`、
 # `cache_key`)。原 U9 的 8 個鍵名正規化後皆命中。
+# 以下兩份清單刻意逐字照抄決策 1,修改須經修改治理。
 CREDENTIAL_KEY_EXACT = frozenset({
     "apikey", "apikeys", "xapikey", "key", "token", "secret", "password", "passwd", "passphrase",
     "authorization", "bearer", "credential", "credentials",
@@ -27,14 +28,14 @@ CREDENTIAL_KEY_SUFFIXES = (
 _NORMALIZE_RE = re.compile(r"[-_.\s]+")
 
 
-def normalize_key(name: str) -> str:
+def _normalize_key(name: str) -> str:
     """轉小寫並去掉 `-`、`_`、`.`、空白(決策 1)。"""
     return _NORMALIZE_RE.sub("", name.lower())
 
 
 def is_credential_key(name: str) -> bool:
     """鍵名是否為憑證鍵(決策 1)。"""
-    n = normalize_key(name)
+    n = _normalize_key(name)
     return n in CREDENTIAL_KEY_EXACT or n.endswith(CREDENTIAL_KEY_SUFFIXES)
 
 

@@ -6,7 +6,7 @@ import pytest
 from spillway.api.admin import secrets
 from spillway.store import repo
 
-from .helpers import api_member, assert_error
+from .helpers import KEY, api_member, assert_error
 
 pytestmark = pytest.mark.anyio
 
@@ -105,7 +105,6 @@ BAD_SIGNALS = [
     ({"quota": {"http_status": 402}}, "params.signals.quota"),
     ({"quota": [{"http_status": "zq9badvalue"}]}, "params.signals.quota[0].http_status"),
     ({"rate_limit": [{"nope": 1}]}, "params.signals.rate_limit[0].nope"),
-    ({"quota": [{"match": {"message": "(zq9badvalue"}}]}, "params.signals.quota[0].match.message"),
     (["zq9badvalue"], "params.signals"),
 ]
 
@@ -127,3 +126,33 @@ async def test_put_invalid_signals_rejected(client, db, signals, path):
     assert path in msg
     assert "zq9badvalue" not in msg
     assert repo.load_deployment(db, "a").params == {}
+
+
+# 正規式不合法:訊息含欄位路徑與 re.error 文字,re.error 可能帶出正規式片段(如群組名),不保證不回顯;
+# 疑似金鑰的字串在值樣式掃描就被擋下並遮罩。
+
+
+async def test_invalid_regex_message_carries_re_error_text(client, db):
+    r = await client.post("/api/deployments", json=api_member(
+        "a", params={"signals": {"quota": [{"match": {"message": "(?P=grp)"}}]}}))
+    msg = assert_error(r, 422, "validation_error")
+    assert "params.signals.quota[0].match.message" in msg
+    assert "正規式不合法" in msg
+    assert repo.load_deployment(db, "a") is None
+
+
+async def test_credential_value_inside_regex_is_masked(client, db):
+    r = await client.post("/api/deployments", json=api_member(
+        "a", params={"signals": {"quota": [{"match": {"message": f"(?P={KEY})"}}]}}))
+    assert_error(r, 422, "validation_error")
+    assert KEY not in r.text
+    assert repo.load_deployment(db, "a") is None
+
+
+async def test_null_signals_accepted_on_post_and_put(client, db):
+    r = await client.post("/api/deployments", json=api_member("a", params={"signals": None}))
+    assert r.status_code == 201, r.text
+    assert repo.load_deployment(db, "a").params == {"signals": None}
+    r = await client.put("/api/deployments/a", json=api_member("a", params={"signals": None}))
+    assert r.status_code == 200, r.text
+    assert repo.load_deployment(db, "a").params == {"signals": None}
