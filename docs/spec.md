@@ -6,6 +6,8 @@
 
 修訂：2026-10-30 CHG-20261030-02（7.1 Adapter 介面改為非同步；CallResult 加 tool_calls、finish_reason；5.3.1 加 anthropic 額度與過載訊號）
 
+修訂：2026-11-01 CHG-20261101-03（schema v2：冷卻移至 `cooldowns` 表，`budgets` 移除 `exhausted_until`（2.2、2.3、4.5.2、5.3.2、5.3.3、9.2）；4.2.4 CLI 成員併發上限；6.3.2 模組 `default_params.effort_args` 視為已設定；7.3.2 子行程環境移除清單；7.4.3 固定以 `-c mcp_servers={}` 停用全部 MCP；9.2.4 成員與總覽回應的 `cooling_until`、`cooling_reason`）
+
 ## 1 範圍與名詞定義
 
 本規格定義單人使用的 LLM 路由閘道之資料模型、路由規則、介面與驗收標準；目的、選型與風險見企劃書。
@@ -280,7 +282,7 @@ routes:
 
 4.2.3 `chat` route 不可選用 `cli` 成員；請求帶 `metadata.mode = task` 時視同 `task`。
 
-4.2.4 `cli` 與 `api` 成員必須剩餘額度大於 0 且不在冷卻期（第 5 節）；`local` 成員不檢查額度，改檢查健康狀態（端點 2 秒內回應）。
+4.2.4 `cli` 與 `api` 成員必須剩餘額度大於 0 且不在冷卻期（第 5 節）；`local` 成員不檢查額度，改檢查健康狀態（端點 2 秒內回應）。`cli` 成員另須進行中的子行程數小於 `params.max_concurrency`（未設定時為 1）；達上限者本次視為不可用（排除原因 `concurrency_full`），不排隊、不寫入 `usage_ledger`，由下一個成員接手（NFR-6）。
 
 4.2.5 Route 勾選預估額度檢查（`budget_precheck = 1`）時，`cli` 與 `api` 成員的 `est_cost_usd_p90`（5.4）不可超過該成員剩餘額度；超過者本次跳過，ledger 記為 `skipped_precheck`，不設冷卻。
 
@@ -323,9 +325,11 @@ routes:
 | 上游結果 | ledger status | 處置 |
 | --- | --- | --- |
 | 成功 | `ok` | 回應客戶端 |
-| 額度用完（見 5.3） | `quota_exhausted` | `exhausted_until` 設為下一個重置點 |
-| 限流（HTTP 429） | `rate_limited` | `exhausted_until` 設為現在 + 60 秒 |
+| 額度用完（見 5.3） | `quota_exhausted` | `cooldowns.exhausted_until` 設為下一個重置點，`reason` 為 `quota_exhausted` |
+| 限流（HTTP 429） | `rate_limited` | `cooldowns.exhausted_until` 設為現在 + 60 秒，`reason` 為 `rate_limited` |
 | 其他錯誤或逾時 | `error` | 換下一個成員 |
+
+冷卻寫入 `cooldowns`（每個成員至多一列）；已有較晚的冷卻期限時保留原列。設定冷卻不可建立或修改 `budgets` 列。
 
 4.5.3 全部 slot 皆失敗時必須回傳 HTTP 503，錯誤碼 `no_candidate`，body 列出每次嘗試的成員與狀態。
 
@@ -363,9 +367,9 @@ routes:
 | api | HTTP 402，或錯誤碼 `insufficient_quota` | HTTP 429 |
 | api（anthropic） | 同上，另加：HTTP 400 且訊息符合 `credit balance` | 同上，另加：HTTP 529 |
 
-5.3.2 判定為額度用完時，系統必須將 `budgets.exhausted_until` 設為 5.1 的下一個重置點，即使本地計算仍有剩餘。
+5.3.2 判定為額度用完時，系統必須將該成員 `cooldowns.exhausted_until` 設為 5.1 的下一個重置點（`reason` 為 `quota_exhausted`），即使本地計算仍有剩餘；成員沒有 `budgets` 列時以 window `none` 計。
 
-5.3.3 使用者可於 UI 手動清除 `exhausted_until`。
+5.3.3 使用者可於 UI 手動清除冷卻，即刪除該成員的 `cooldowns` 列。
 
 ### 5.4 Token 與花費預估
 
@@ -409,7 +413,7 @@ routes:
 
 6.3.1 codex-cli 必須以 `-c model_reasoning_effort=<值>` 傳遞。
 
-6.3.2 claude-cli 的參數必須由 `params.effort_args`（字串模板清單，例如 `["--effort", "{effort}"]`）決定；未設定時不傳。實作前需以當時安裝的 CLI 版本確認參數名稱。
+6.3.2 claude-cli 的參數必須由 `params.effort_args`（字串模板清單，例如 `["--effort", "{effort}"]`）決定；未設定時不傳。模組 manifest 的 `default_params.effort_args` 視為已設定（claude_cli 模組為 `["--effort", "{effort}"]`），因此只有成員與模組皆未設定、或設為空清單時不傳；內部等級 `none` 一律不傳。實作前需以當時安裝的 CLI 版本確認參數名稱。
 
 ## 7 Adapter 規格
 
@@ -453,7 +457,7 @@ LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1�
 
 7.3.1 命令：`claude -p --output-format json --model <model>` 加 `params.effort_args` 與 `params.extra_args`；prompt 必須經 stdin 傳入。
 
-7.3.2 子行程環境必須移除 `ANTHROPIC_API_KEY` 與 `ANTHROPIC_AUTH_TOKEN`，確保使用訂閱登入與 Agent SDK credit。
+7.3.2 子行程環境以閘道的環境為底，必須移除下列變數，確保使用訂閱登入與 Agent SDK credit：`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`CLAUDE_CODE_USE_BEDROCK`、`CLAUDE_CODE_USE_VERTEX`、`CLAUDE_CODE_USE_FOUNDRY`，以及全部成員中 `credential_ref` 為 `env:<變數名>` 的變數；後者的值必須作為該次 CLI 輸出的遮罩對象（2.4）。官方 CLI 的登入變數照常繼承，系統不可讀取（1.1.2）。
 
 7.3.3 子行程必須以不載入本閘道 MCP 的方式啟動（預設 `--strict-mcp-config`），並設定環境變數 `SPILLWAY_DEPTH=1`。
 
@@ -469,7 +473,7 @@ LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1�
 
 7.4.2 回應文字取暫存檔內容；token 取 JSONL 事件中的 usage 欄位。
 
-7.4.3 子行程必須設定 `SPILLWAY_DEPTH=1`，並以 `params.extra_args` 停用本閘道 MCP。
+7.4.3 子行程必須設定 `SPILLWAY_DEPTH=1`，並固定以 `-c mcp_servers={}` 停用全部 MCP（含本閘道）：此參數由模組附加於 `params.extra_args` 之後、prompt 前的 `--` 之前，為最後一個 `-c`，`params.extra_args` 不可移除或覆寫；`params.extra_args` 含 `--` 或位置引數時該次結果為 `error`。子行程環境必須移除 `OPENAI_API_KEY`、`CODEX_API_KEY`、`OPENAI_BASE_URL`，以及 7.3.2 所述的成員 `env:` 憑證變數。
 
 ### 7.5 Messages 轉為 CLI prompt
 
@@ -624,7 +628,7 @@ bearer_token_env_var = "SPILLWAY_TOKEN"
 | GET | `/api/dashboard` | 各成員額度、本期花費、冷卻狀態、近 24 小時請求數 |
 | GET / POST / PUT / DELETE | `/api/deployments[/{id}]` | 成員 CRUD（含 tag、額度） |
 | POST | `/api/deployments/{id}/test` | 送出一次測試呼叫並回傳結果 |
-| POST | `/api/deployments/{id}/clear-cooldown` | 清除 `exhausted_until` |
+| POST | `/api/deployments/{id}/clear-cooldown` | 清除冷卻（刪除該成員的 `cooldowns` 列） |
 | GET / POST / PUT / DELETE | `/api/groups[/{name}]` | 群組 CRUD；GET 含符合的成員預覽 |
 | GET / POST / PUT / DELETE | `/api/routes[/{name}]` | Route CRUD |
 | PUT | `/api/routes/{name}/order` | 儲存拖曳結果：body 為 slot 清單，每個 slot 含成員 id、effort、優先權重 |
@@ -651,6 +655,8 @@ bearer_token_env_var = "SPILLWAY_TOKEN"
 | GET | `/api/adapters` | 列出已發現的模組：`providers`、`kinds`、`access`、`cardinality`、現有成員數、是否可用與原因、可用模型清單（7.6.4）；供 UI-2、UI-4 選單使用 |
 
 9.2.3 `POST /api/deployments` 與 `POST /api/config/import` 違反 7.6.5 時回傳 HTTP 409，錯誤碼 `provider_single`。
+
+9.2.4 `/api/deployments` 的成員物件與 `/api/dashboard` 的各成員必須帶頂層欄位 `cooling_until`（UTC ISO 8601 字串）與 `cooling_reason`（`quota_exhausted` 或 `rate_limited`）；兩者只在冷卻尚未到期時有值，到期後為 null（與 4.2.6「到期自動恢復」一致；`cooldowns` 列保留至下次設定或清除）。`budget` 物件不含冷卻欄位；`PUT` 帶 `budget: null` 只刪除額度設定，不影響冷卻。
 
 ### 9.3 拖曳儲存格式
 
