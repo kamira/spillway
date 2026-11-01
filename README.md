@@ -59,7 +59,7 @@ spillway serve           # 只綁 127.0.0.1:8787
 | codex 子行程移除 | `OPENAI_API_KEY`、`CODEX_API_KEY`、`OPENAI_BASE_URL` |
 | 兩者另移除 | 所有成員 `credential_ref` 為 `env:<變數名>` 的變數；這些變數的值也會在帳本與 payload 中被遮罩 |
 | 兩者設定 | `SPILLWAY_DEPTH=1`（避免遞迴呼叫本閘道） |
-| MCP | claude 固定加 `--strict-mcp-config`；codex 固定加 `--ignore-user-config` 與 `-c mcp_servers={}`，用意是不載入任何 MCP；`params.extra_args` 無法移除這些旗標，也不可以 `-c` 設定 `mcp_servers` 或用 `-p`/`--profile`。codex 的 `-c mcp_servers={}` 經擁有者冒煙證實會與 `~/.codex/config.toml` 合併而非取代，所以閘道的 codex 子行程不讀 config.toml（登入不受影響，但 config.toml 中的其他設定也不套用）。**待確認**：claude 的 plugin／connector 提供的 MCP 是否也被 `--strict-mcp-config` 排除（CHG-20261101-03 已知限制） |
+| MCP | claude 固定加 `--strict-mcp-config`；codex 固定加 `--ignore-user-config` 與 `-c mcp_servers={}`，用意是不載入任何 MCP；`params.extra_args` 無法移除這些旗標，也不可以 `-c` 設定 `mcp_servers`、`profile` 或用 `-p`/`--profile`。codex 的 `-c mcp_servers={}` 經擁有者冒煙證實會與 `~/.codex/config.toml` 合併而非取代，所以閘道的 codex 子行程不讀 config.toml（登入不受影響，但 config.toml 中的其他設定也不套用）。**待確認**：claude 的 plugin／connector 提供的 MCP 是否也被 `--strict-mcp-config` 排除（CHG-20261101-03 已知限制） |
 
 其他說明：
 

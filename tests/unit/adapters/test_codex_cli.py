@@ -133,7 +133,13 @@ async def test_ignore_user_config_always_present(home):
     ["-p", "work"],
     ["--profile", "work"],
     ["--profile=work"],
-], ids=["c", "config", "config-eq", "c-joined", "quoted-key", "p", "profile", "profile-eq"])
+    ["-c=mcp_servers.gw.command=x"],
+    ["-pwork"],
+    ["-p=work"],
+    ["-c", "\tmcp_servers.x=1"],
+    ["-c", "profile=work"],
+], ids=["c", "config", "config-eq", "c-joined", "quoted-key", "p", "profile", "profile-eq",
+        "c-eq", "p-joined", "p-eq", "tab-key", "c-profile"])
 async def test_extra_args_cannot_add_mcp_or_profile(home, extra):
     spy = SpyRunner()
     result = await create(ctx(spy, home)).call(dep(extra_args=extra), req(), None)
@@ -150,6 +156,13 @@ async def test_bad_extra_args_rejected_without_prompt(home, extra):
     assert result.status == "error" and not result.ok and "extra_args" in result.error
     assert "secret-prompt" not in result.error
     assert spy.calls == []
+
+
+@pytest.mark.parametrize("extra", [["-c", "mcp_servers_timeout=5"], ["-c", "profile_note=x"]])
+async def test_similar_config_keys_allowed(home, extra):
+    result, spy = await spy_call(home, extra_args=extra)
+    assert result.ok, result.error
+    assert spy.calls
 
 
 async def test_option_values_allowed_in_extra_args(home):

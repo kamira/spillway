@@ -51,33 +51,42 @@ def _error(message: str) -> CallResult:
                       status="error", error=message)
 
 
+_BLOCKED_CONFIG_KEYS = ("mcp_servers", "profile")   # 會加回 MCP 或選用 profile 設定檔的 `-c` 鍵
+
+
 def _config_key(value: str) -> str:
-    """`-c` 值的鍵(`=` 前),去掉空白與引號,供比對 `mcp_servers`。"""
-    return value.split("=", 1)[0].replace(" ", "").replace('"', "").replace("'", "")
+    """`-c` 值的鍵(`=` 前),去掉所有空白與引號。"""
+    return "".join(value.split("=", 1)[0].split()).replace('"', "").replace("'", "")
+
+
+def _blocked_config(value: str) -> bool:
+    key = _config_key(value)
+    return any(key == k or key.startswith(k + ".") for k in _BLOCKED_CONFIG_KEYS)
 
 
 def _extra_args_problem(extra: Any) -> str | None:
     """`extra_args` 不合法時回原因:非字串清單、含 `--`、含裸位置引數(不以 `-` 開頭,且前一個元素
     不是不帶 `=` 的選項;位置引數會被 codex 當成 prompt 或子命令如 `resume`)、以 `-c`/`--config`
-    設定 `mcp_servers`(會與 `mcp_servers={}` 合併而加回 MCP),或 `-p`/`--profile`(疊加 profile 設定檔)。"""
+    設定 `mcp_servers`(會與 `mcp_servers={}` 合併而加回 MCP)或 `profile`,或 `-p`/`--profile`(含 `-pNAME`、
+    `-p=NAME`;疊加 profile 設定檔)。`-c` 的鍵去掉空白與引號後以整段比對(`mcp_servers_timeout` 不擋)。"""
     if not isinstance(extra, Sequence) or isinstance(extra, str) \
             or not all(isinstance(a, str) for a in extra):
         return "params.extra_args 必須是字串清單"
     for i, a in enumerate(extra):
         if a == "--":
             return "params.extra_args 不可含 `--`"
-        if a in ("-p", "--profile") or a.startswith("--profile="):
+        if a in ("-p", "--profile") or a.startswith(("-p", "--profile=")):
             return "params.extra_args 不可含 `-p`/`--profile`"
         if a.startswith("--config="):
             value = a[len("--config="):]
-        elif a.startswith("-c") and a not in ("-c",):
-            value = a[2:]
+        elif a.startswith("-c") and a != "-c":
+            value = a[2:].removeprefix("=")   # `-cKEY=V` 與 `-c=KEY=V`
         elif i > 0 and extra[i - 1] in ("-c", "--config"):
             value = a
         else:
             value = None
-        if value is not None and _config_key(value).startswith("mcp_servers"):
-            return "params.extra_args 不可設定 mcp_servers"
+        if value is not None and _blocked_config(value):
+            return "params.extra_args 不可以 -c 設定 mcp_servers 或 profile"
         if not a.startswith("-"):
             prev = extra[i - 1] if i > 0 else ""
             if not (prev.startswith("-") and "=" not in prev):

@@ -25,8 +25,8 @@ codex exec --json --skip-git-repo-check --ignore-user-config -m <model> -o <暫�
   `-c mcp_servers={}` 與 config.toml 合併而非取代,因此另以 `--ignore-user-config` 不讀 `$CODEX_HOME/config.toml`
   (登入仍用 `CODEX_HOME`;config.toml 其他設定也不套用)。
 - `extra_args` 不可含 `--`,也不可含裸位置引數(不以 `-` 開頭、且前一個元素不是不帶 `=` 的選項,
-  例如 `["resume"]`),不可以 `-c`/`--config` 設定 `mcp_servers`(會合併加回 MCP),也不可含 `-p`/`--profile`
-  (疊加 profile 設定檔);違反時該次回 `error`、不起子行程。
+  例如 `["resume"]`),不可以 `-c`/`--config`(含 `-c=`、`-cKEY=`)設定 `mcp_servers`(會合併加回 MCP)或 `profile`,也不可含
+  `-p`/`--profile`(含 `-pNAME`、`-p=NAME`;疊加 profile 設定檔);違反時該次回 `error`、不起子行程。
 - prompt 前固定加 `--`,開頭為 `-` 或 `resume` 的 prompt 不會被當成旗標或子命令。prompt 在 argv 中,
   `ps` 可見;超過系統 ARG_MAX 時該次回 `error`。
 - `-o` 暫存檔以 `tempfile.mkstemp` 建立(權限 0600),呼叫結束(含錯誤、逾時、取消)即刪除。
