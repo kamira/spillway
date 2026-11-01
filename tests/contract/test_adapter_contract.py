@@ -88,7 +88,7 @@ def test_value_object_fields():
                                   "tool_calls", "finish_reason"]
     legacy = CallResult(True, "t", 1, 1, 0.0, "ok", None)   # 既有的七欄建構呼叫仍可用
     assert legacy.tool_calls is None and legacy.finish_reason is None
-    assert _names(Budget) == ["type", "limit_amount", "window", "reset_anchor", "exhausted_until"]
+    assert _names(Budget) == ["type", "limit_amount", "window", "reset_anchor"]   # 冷卻移到 cooldowns(CHG-20261101-03 決策 6)
 
 
 # ---- 機制本身(目前沒有內建模組時仍要能證明合約測試有效)-----------------------------------

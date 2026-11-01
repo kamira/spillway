@@ -65,7 +65,12 @@ def payload_count(db) -> int:
 
 
 def cooling_budget(clock):
-    return Budget("usd", 10.0, "daily", exhausted_until=clock.now() + timedelta(hours=1))
+    # schema v2(CHG-20261101-03 決策 6):冷卻不在 Budget;以 cool() 另寫 cooldowns
+    return Budget("usd", 10.0, "daily")
+
+
+def cool(db, clock, dep_id: str) -> None:
+    repo.mark_cooldown(db, dep_id, clock.now() + timedelta(hours=1), "quota_exhausted")
 
 
 # ================================================================== normalize_effort(決策 29)
@@ -117,7 +122,9 @@ async def test_unknown_model_raises_route_not_found(db, clock):
 
 async def test_slot1_all_cooling_slot2_serves(db, clock):
     make_dep(db, "a", tags=("r",), budget=cooling_budget(clock))
+    cool(db, clock, "a")
     make_dep(db, "b", tags=("r",), budget=cooling_budget(clock))
+    cool(db, clock, "b")
     make_dep(db, "c", tags=("r",))
     make_route(db, targets=[("a", 1, 0), ("b", 1, 1), ("c", 2, 0)])
     reg = ScriptedRegistry()
@@ -151,7 +158,7 @@ async def test_429_cools_member_60s_and_next_serves(db, clock):
     out = await router(db, clock, reg, rng=SeqRng([0.0])).route(req())
     assert reg.called_ids() == ["a", "b"]
     assert out.served_by == "b"
-    assert repo.get_budget(db, "a").exhausted_until == clock.now() + timedelta(seconds=60)
+    assert repo.get_cooldown(db, "a").until == clock.now() + timedelta(seconds=60)
     assert [r.status for r in ledger(db)] == ["rate_limited", "ok"]
 
 
@@ -184,7 +191,7 @@ async def test_429_on_member_without_budget_still_cools(db, clock):
     reg = ScriptedRegistry()
     reg.script = {"a": fail("rate_limited")}
     await router(db, clock, reg).route(req())
-    assert repo.get_budget(db, "a").exhausted_until == clock.now() + timedelta(seconds=60)
+    assert repo.get_cooldown(db, "a").until == clock.now() + timedelta(seconds=60)
 
 
 async def test_402_cools_until_next_reset(db, clock):
@@ -195,7 +202,7 @@ async def test_402_cools_until_next_reset(db, clock):
     reg.script = {"a": fail("quota_exhausted", "402 payment required")}
     out = await router(db, clock, reg).route(req())
     assert out.served_by == "b"
-    assert repo.get_budget(db, "a").exhausted_until == datetime(2026, 11, 1, tzinfo=timezone.utc)
+    assert repo.get_cooldown(db, "a").until == datetime(2026, 11, 1, tzinfo=timezone.utc)
 
 
 async def test_error_does_not_cool(db, clock):
@@ -205,7 +212,7 @@ async def test_error_does_not_cool(db, clock):
     reg = ScriptedRegistry()
     reg.script = {"a": fail("error")}
     await router(db, clock, reg).route(req())
-    assert repo.get_budget(db, "a").exhausted_until is None
+    assert repo.get_cooldown(db, "a") is None
 
 
 async def test_local_member_rate_limited_not_marked(db, clock):
@@ -348,7 +355,7 @@ async def test_skipped_precheck_writes_row_and_next_serves(db, clock):
         "skipped_precheck", 1, None, None)
     assert skipped.est_cost_usd_p90 == 0.01 and skipped.est_tokens_in == 10
     assert repo.get_payload(db, skipped.id) is None      # 沒有送出內容,不寫 payload
-    assert repo.get_budget(db, "poor").exhausted_until is None   # 不設冷卻
+    assert repo.get_cooldown(db, "poor") is None   # 不設冷卻
     assert served.fallback_depth == 0
 
 
@@ -588,6 +595,7 @@ async def test_dry_run_plan_no_side_effects(db, clock):
     make_dep(db, "b", tags=("r",))
     make_dep(db, "new", tags=("r",))                                  # 不在 route_targets → unsorted
     make_dep(db, "hot", tags=("r",), budget=cooling_budget(clock))
+    cool(db, clock, "hot")
     make_dep(db, "poor", tags=("r",), budget=Budget("usd", 0.005, "daily"))
     make_dep(db, "loc", kind="local", tags=("r",))
     make_route(db, precheck=True, targets=[
@@ -599,7 +607,7 @@ async def test_dry_run_plan_no_side_effects(db, clock):
     assert isinstance(plan, Plan) and plan.route_name == "r"
     assert reg.calls == [] and reg.health_calls == []                  # 不呼叫、不探測
     assert len(ledger(db)) == before == 0
-    assert repo.get_budget(db, "poor").exhausted_until is None
+    assert repo.get_cooldown(db, "poor") is None
     assert {(e.deployment, e.reason) for e in plan.excluded} == {
         ("hot", "cooling"), ("poor", "skipped_precheck")}
     assert next(e for e in plan.excluded if e.deployment == "poor").estimate == EST
@@ -822,7 +830,7 @@ async def test_l2_member_reselected_after_fake_clock_passes_exhausted_until(
     fake_api.set_mode("gpt-4o-mini", "http_429")
     out = await r.route(req())
     assert [(a.deployment, a.status) for a in out.attempts] == [("a", "rate_limited"), ("b", "ok")]
-    until = repo.get_budget(db, "a").exhausted_until
+    until = repo.get_cooldown(db, "a").until
     assert until == clock.now() + timedelta(seconds=60)
     fake_api.set_mode("gpt-4o-mini", "ok")
     assert (await r.route(req())).served_by == "b"

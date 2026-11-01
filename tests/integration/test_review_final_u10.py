@@ -1,9 +1,10 @@
-"""末端審查 U10 (a):只為記錄冷卻而建的 budgets 列(type=none、window=none、limit_amount NULL)。
+"""末端審查 U10 (a):沒有 budgets 列的成員被設冷卻後,儀表板口徑不變。
 
+CHG-20261101-03(schema v2,決策 6)起冷卻存在 `cooldowns`,`mark` 不再建立 type=none 暫行列:
 - `/api/dashboard`:比照「沒有 budgets 列」——本期花費以日曆月計(決策 48),`budget_type`、
-  `limit_amount`、`window` 為 null;冷卻欄位照實回傳。
-- `GET /api/deployments/{id}`:照實呈現該列(含 `exhausted_until`)。
-- `PUT /api/deployments/{id}` 的 `budget` 為 null:冷卻未到期時保留(列改為只記冷卻),否則刪除。
+  `limit_amount`、`window` 為 null;冷卻欄位照實回傳。v1 留下的暫行列(migration 保留)口徑相同。
+- `GET /api/deployments/{id}`:`budget` 為 null,冷卻在頂層 `cooling_until`、`cooling_reason`。
+- `PUT /api/deployments/{id}` 的 `budget` 為 null:只刪除 budgets 列;冷卻不受影響。
 """
 from __future__ import annotations
 
@@ -51,8 +52,8 @@ async def test_probe1_member_without_budget_429_dashboard_stays_calendar_month(s
     r = await spillway.client.post("/v1/chat/completions", json={"model": "r", "messages": MSGS})
     assert r.status_code == 200 and r.headers["X-Spillway-Served-By"] == "b", r.text
     with spillway.db() as conn:
-        b = repo.get_budget(conn, "a")
-    assert (b.type, b.window, b.limit_amount) == ("none", "none", None)   # mark 建的冷卻列
+        assert repo.get_budget(conn, "a") is None          # 決策 6:mark 不再建 budgets 列
+        assert repo.get_cooldown(conn, "a") is not None
 
     after = _dash((await spillway.client.get("/api/dashboard")).json())["a"]
     for k in ("budget_type", "limit_amount", "window", "period_start", "next_reset",
@@ -62,10 +63,20 @@ async def test_probe1_member_without_budget_429_dashboard_stays_calendar_month(s
     assert after["next_reset"] == "2026-11-01T00:00:00Z"
     assert after["cooling"] is True and after["cooling_until"] == "2026-10-30T12:01:00Z"
 
-    # GET deployment 照實呈現該列
+    # GET deployment:budget 為 null,冷卻在頂層
     got = (await spillway.client.get("/api/deployments/a")).json()
-    assert got["budget"] == {"type": "none", "limit_amount": None, "window": "none",
-                             "reset_anchor": None, "exhausted_until": "2026-10-30T12:01:00Z"}
+    assert got["budget"] is None
+    assert got["cooling_until"] == "2026-10-30T12:01:00Z" and got["cooling_reason"] == "rate_limited"
+
+
+async def test_v1_placeholder_row_kept_and_dashboard_treats_as_no_budget(spillway, fake_api):
+    """v1 留下的暫行列(migration 保留,決策 4):儀表板仍比照沒有 budgets 列(`_is_cooling_only`)。"""
+    _setup(spillway, fake_api.base_url, a_budget=Budget("none", None, "none"))
+    _spend(spillway, "a", spillway.clock.now() - timedelta(days=2), 0.25)
+    row = _dash((await spillway.client.get("/api/dashboard")).json())["a"]
+    assert (row["budget_type"], row["window"], row["period_start"]) == \
+        (None, None, "2026-10-01T00:00:00Z")
+    assert row["unlimited"] is True and row["cooling"] is False
 
 
 async def test_explicit_budget_rows_unchanged(spillway, fake_api):
@@ -77,7 +88,8 @@ async def test_explicit_budget_rows_unchanged(spillway, fake_api):
 
 
 def _put_body(got):
-    body = {k: v for k, v in got.items() if k != "id"}
+    # cooling_until、cooling_reason 為唯讀回應欄位,不送回
+    body = {k: v for k, v in got.items() if k not in ("id", "cooling_until", "cooling_reason")}
     body["budget"] = None
     return body
 
@@ -87,12 +99,14 @@ async def test_put_budget_null_keeps_active_cooldown(spillway, fake_api):
     fake_api.set_mode("gpt-4o-mini", "http_429")
     await spillway.client.post("/v1/chat/completions", json={"model": "r", "messages": MSGS})
     got = (await spillway.client.get("/api/deployments/a")).json()
-    assert got["budget"]["exhausted_until"] == "2026-10-30T12:01:00Z"
+    assert got["cooling_until"] == "2026-10-30T12:01:00Z"
 
     r = await spillway.client.put("/api/deployments/a", json=_put_body(got))
     assert r.status_code == 200, r.text
-    assert r.json()["budget"] == {"type": "none", "limit_amount": None, "window": "none",
-                                  "reset_anchor": None, "exhausted_until": "2026-10-30T12:01:00Z"}
+    assert r.json()["budget"] is None                       # 決策 6:budget: null 只刪除 budgets 列
+    assert r.json()["cooling_until"] == "2026-10-30T12:01:00Z"
+    with spillway.db() as conn:
+        assert repo.get_budget(conn, "a") is None
     row = _dash((await spillway.client.get("/api/dashboard")).json())["a"]
     assert row["cooling"] is True and row["budget_type"] is None and row["unlimited"] is True
     # 冷卻仍生效:下一次請求不呼叫 a
@@ -104,7 +118,8 @@ async def test_put_budget_null_keeps_active_cooldown(spillway, fake_api):
 async def test_put_budget_null_without_active_cooldown_deletes_row(spillway, fake_api):
     _setup(spillway, fake_api.base_url, a_budget=Budget("usd", 10.0, "daily"))
     with spillway.db() as conn:
-        repo.set_exhausted_until(conn, "a", spillway.clock.now() - timedelta(seconds=1))   # 已到期
+        repo.mark_cooldown(conn, "a", spillway.clock.now() - timedelta(seconds=1),
+                           "rate_limited")   # 已到期
     got = (await spillway.client.get("/api/deployments/a")).json()
     r = await spillway.client.put("/api/deployments/a", json=_put_body(got))
     assert r.status_code == 200 and r.json()["budget"] is None

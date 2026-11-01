@@ -203,8 +203,8 @@ def step_member_ledger_status(context, dep_id, status):
 @step(r'成員 "([^"]+)" 冷卻至 "([^"]+)"')
 def step_cooling_until(context, dep_id, when):
     gw = context.gw
-    budget = gw.deployment(dep_id)["budget"]
-    assert budget is not None and budget["exhausted_until"] == when, budget
+    dep = gw.deployment(dep_id)
+    assert dep["cooling_until"] == when, dep          # schema v2:頂層冷卻欄位(CHG-20261101-03 決策 6)
     row = gw.dashboard_row(dep_id)
     assert row["cooling"] is True and row["cooling_until"] == when, row
 

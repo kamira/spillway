@@ -209,7 +209,7 @@ def test_mark_other_status_leaves_unchanged(db, qs: QuotaService, status: str) -
     assert qs.mark(dep, status, now) is None
     until = qs.mark(dep, "rate_limited", now)
     assert qs.mark(dep, status, now) == until
-    assert repo.get_budget(db, "a1").exhausted_until == until
+    assert repo.get_cooldown(db, "a1").until == until
 
 
 def test_cooling_auto_recovers_after_expiry(db, qs: QuotaService, clock: FakeClock) -> None:
@@ -227,7 +227,7 @@ def test_is_cooling_reads_store_not_stale_dep(db, qs: QuotaService) -> None:
     dep = _save(db, Budget(type="usd", limit_amount=10, window="daily"))
     now = T(2026, 10, 30, 12)
     qs.mark(dep, "quota_exhausted", now)
-    assert dep.budget is not None and dep.budget.exhausted_until is None
+    assert dep.budget == Budget(type="usd", limit_amount=10, window="daily")   # 快照不含冷卻
     assert qs.is_cooling(dep, now)
 
 
@@ -265,9 +265,9 @@ def test_mark_persists_and_matches_return(db, qs: QuotaService) -> None:
     now = T(2026, 10, 30, 12)
     until = qs.mark(dep, "quota_exhausted", now)
     assert until == T(2026, 11, 2)
-    assert repo.get_budget(db, "a1").exhausted_until == until
+    assert repo.get_cooldown(db, "a1").until == until
     until2 = qs.mark(dep, "rate_limited", now)
-    assert repo.get_budget(db, "a1").exhausted_until == until2
+    assert repo.get_cooldown(db, "a1").until == until2
 
 
 def test_clear_sets_null(db, qs: QuotaService) -> None:
@@ -275,7 +275,7 @@ def test_clear_sets_null(db, qs: QuotaService) -> None:
     now = T(2026, 10, 30, 12)
     qs.mark(dep, "quota_exhausted", now)
     qs.clear(dep)
-    assert repo.get_budget(db, "a1").exhausted_until is None
+    assert repo.get_cooldown(db, "a1") is None
     assert not qs.is_cooling(dep, now)
 
 
@@ -296,11 +296,14 @@ def test_connection_factory_injection(db, clock: FakeClock) -> None:
 
 
 def test_mark_without_budget_row_still_cools_and_stays_unlimited(db, qs: QuotaService) -> None:
-    # 4.5.2:沒有 budgets 列的成員收到 429 仍要冷卻;補的列為 type=none,仍視為無上限(決策 6)
+    # 4.5.2:沒有 budgets 列的成員收到 429 仍要冷卻;冷卻寫入 cooldowns、不建立 budgets 列,
+    # 仍視為無上限(CHG-20261101-03 決策 6,取代決策 59 的暫行列)
     dep = _save(db, None)
     now = T(2026, 10, 30, 12, 0, 0)
     until = qs.mark(dep, "rate_limited", now)
     assert until == now + timedelta(seconds=60)
+    assert repo.get_budget(db, dep.id) is None
+    assert repo.get_cooldown(db, dep.id) == repo.Cooldown(until, "rate_limited")
     assert qs.is_cooling(dep, now)
     assert qs.remaining(dep, now) == math.inf and qs.ratio(dep, now) == 1
     assert not qs.is_cooling(dep, now + timedelta(seconds=61))
@@ -337,7 +340,7 @@ def test_mark_does_not_clobber_budget_saved_between_read_and_write(db, qs: Quota
     until = qs.mark(dep, "rate_limited", now)
     b = repo.get_budget(db, dep.id)
     assert (b.type, b.limit_amount, b.window, b.reset_anchor) == ("usd", 20.0, "monthly", 5)
-    assert b.exhausted_until == until == now + timedelta(seconds=60)
+    assert repo.get_cooldown(db, dep.id).until == until == now + timedelta(seconds=60)
 
 
 # ---------------------------------------------------------------- 末端審查 M27:冷卻只延長不縮短
@@ -349,11 +352,11 @@ def test_rate_limited_does_not_shorten_quota_exhausted_cooldown(db, qs: QuotaSer
     now = T(2026, 10, 30, 12)
     assert qs.mark(dep, "quota_exhausted", now) == T(2026, 11, 1)
     assert qs.mark(dep, "rate_limited", now) == T(2026, 11, 1)
-    assert repo.get_budget(db, "a1").exhausted_until == T(2026, 11, 1)
+    assert repo.get_cooldown(db, "a1").until == T(2026, 11, 1)
     # 手動清除後再 429:now + 60s
     qs.clear(dep)
     assert qs.mark(dep, "rate_limited", now) == now + timedelta(seconds=60)
-    assert repo.get_budget(db, "a1").exhausted_until == now + timedelta(seconds=60)
+    assert repo.get_cooldown(db, "a1").until == now + timedelta(seconds=60)
 
 
 def test_later_mark_extends_cooldown(db, qs: QuotaService) -> None:
@@ -361,4 +364,4 @@ def test_later_mark_extends_cooldown(db, qs: QuotaService) -> None:
     now = T(2026, 10, 30, 12)
     assert qs.mark(dep, "rate_limited", now) == now + timedelta(seconds=60)
     assert qs.mark(dep, "quota_exhausted", now) == now + timedelta(hours=1)
-    assert repo.get_budget(db, dep.id).exhausted_until == now + timedelta(hours=1)
+    assert repo.get_cooldown(db, dep.id).until == now + timedelta(hours=1)

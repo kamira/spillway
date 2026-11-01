@@ -57,7 +57,8 @@
 | --- | --- | --- |
 | `deployments` | 成員 | — |
 | `deployment_tags` | 成員的 tag | N:1 `deployments` |
-| `budgets` | 成員的額度設定與冷卻狀態 | 1:1 `deployments` |
+| `budgets` | 成員的額度設定 | 1:1 `deployments` |
+| `cooldowns` | 成員的冷卻狀態（上游回報用完或限流時設定，執行期狀態；不屬於額度設定） | 1:1 `deployments` |
 | `groups` | 命名選擇器 | — |
 | `routes` | 對外名稱、目標、context 記錄與預估檢查設定 | `target` 參照 `groups.name` 或內嵌選擇器 |
 | `route_targets` | Route 內各成員的 slot、順位、effort、優先權重 | N:1 `routes`、N:1 `deployments` |
@@ -92,8 +93,13 @@ CREATE TABLE budgets (
   limit_amount    REAL,
   window          TEXT NOT NULL DEFAULT 'monthly'
                   CHECK (window IN ('monthly','weekly','daily','none')),
-  reset_anchor    INTEGER,          -- monthly 的重置日，1–28
-  exhausted_until TEXT              -- 上游回報用完或限流時設定
+  reset_anchor    INTEGER           -- monthly 的重置日，1–28
+);
+
+CREATE TABLE cooldowns (
+  deployment_id   TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
+  exhausted_until TEXT NOT NULL,    -- 上游回報用完或限流時設定
+  reason          TEXT NOT NULL CHECK (reason IN ('quota_exhausted','rate_limited'))
 );
 
 CREATE TABLE groups (

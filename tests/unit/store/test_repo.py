@@ -32,7 +32,6 @@ def _dep(dep_id: str = "d1", **kw) -> Deployment:
             limit_amount=20.0,
             window="monthly",
             reset_anchor=5,
-            exhausted_until=T0 + timedelta(hours=3),
         ),
     )
     base.update(kw)
@@ -63,8 +62,6 @@ def test_load_deployment_field_types_match_contract(db):
     assert isinstance(got.enabled, bool)
     assert isinstance(got.tags, tuple)
     assert isinstance(got.budget, Budget)
-    assert got.budget.exhausted_until.tzinfo is not None
-    assert got.budget.exhausted_until == T0 + timedelta(hours=3)
 
 
 def test_deployment_roundtrip_minimal(db):
@@ -84,7 +81,7 @@ def test_deployment_stored_columns(db):
     assert row["enabled"] == 0
     assert row["params"].startswith("{")
     b = db.execute("SELECT * FROM budgets WHERE deployment_id='d1'").fetchone()
-    assert b["exhausted_until"] == "2026-10-30T15:00:00Z"
+    assert b["reset_anchor"] == 5 and "exhausted_until" not in b.keys()   # schema v2:冷卻在 cooldowns
     tags = [r[0] for r in db.execute("SELECT tag FROM deployment_tags ORDER BY tag")]
     assert tags == ["cheap", "fast"]
 
@@ -139,11 +136,12 @@ def test_budget_roundtrip_and_cooldown(db):
     assert repo.get_budget(db, "d1") == b
 
     until = T0 + timedelta(minutes=30)
-    assert repo.set_exhausted_until(db, "d1", until) is True
-    assert repo.get_budget(db, "d1").exhausted_until == until
-    assert repo.set_exhausted_until(db, "d1", None) is True
-    assert repo.get_budget(db, "d1").exhausted_until is None
-    assert repo.set_exhausted_until(db, "ghost", until) is False
+    repo.mark_cooldown(db, "d1", until, "rate_limited")
+    assert repo.get_cooldown(db, "d1") == repo.Cooldown(until, "rate_limited")
+    assert repo.get_budget(db, "d1") == b          # 冷卻不動 budgets 列
+    assert repo.clear_cooldown(db, "d1") is True
+    assert repo.get_cooldown(db, "d1") is None
+    assert repo.clear_cooldown(db, "ghost") is False
 
     repo.save_budget(db, "d1", None)
     assert repo.get_budget(db, "d1") is None
@@ -450,17 +448,17 @@ def test_savepoint_keeps_original_exception_when_sqlite_already_rolled_back(db):
     assert not db.in_transaction
 
 
-def test_mark_exhausted_until_inserts_none_row(db):
+def test_mark_cooldown_does_not_create_budget_row(db):
+    """schema v2(CHG-20261101-03 決策 6):取代決策 59 的暫行列——不再建立 budgets 列。"""
     repo.save_deployment(db, _dep(budget=None))
-    repo.mark_exhausted_until(db, "d1", T0)
-    b = repo.get_budget(db, "d1")
-    assert (b.type, b.limit_amount, b.window, b.reset_anchor) == ("none", None, "none", None)
-    assert b.exhausted_until == T0
+    repo.mark_cooldown(db, "d1", T0, "quota_exhausted")
+    assert repo.get_budget(db, "d1") is None
+    assert repo.get_cooldown(db, "d1") == repo.Cooldown(T0, "quota_exhausted")
 
 
-def test_mark_exhausted_until_conflict_only_updates_cooldown(db):
+def test_mark_cooldown_leaves_budget_row_untouched(db):
     repo.save_deployment(db, _dep(budget=None))
     orig = Budget(type="usd", limit_amount=20.0, window="monthly", reset_anchor=5)
     repo.save_budget(db, "d1", orig)
-    repo.mark_exhausted_until(db, "d1", T0)
-    assert repo.get_budget(db, "d1") == dataclasses.replace(orig, exhausted_until=T0)
+    repo.mark_cooldown(db, "d1", T0, "rate_limited")
+    assert repo.get_budget(db, "d1") == orig
