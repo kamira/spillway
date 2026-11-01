@@ -2,6 +2,9 @@
 
 - `SPILLWAY_HOME` 一律指向 pytest 暫存目錄;沒指向暫存目錄就 fail,避免碰到擁有者的實際資料。
 - 清除真實的 API key 環境變數,`env:` 只讀測試專用變數。
+- `anyio_backend`:全測試唯一的定義,固定 `"asyncio"`(CHG-20261101-02 T11);非同步測試加
+  `pytestmark = pytest.mark.anyio`。
+- `fake_key_env`:見 `tests/helpers.py`(非 autouse)。
 """
 from __future__ import annotations
 
@@ -15,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from spillway.clock import FakeClock
+from tests.helpers import fake_key_env  # noqa: F401 — fixture 註冊(非 autouse)
 
 pytest_plugins = ["tests.fakes.plugin"]
 
@@ -37,3 +41,8 @@ def _spillway_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def clock() -> FakeClock:
     return FakeClock()
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"

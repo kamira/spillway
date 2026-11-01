@@ -6,7 +6,6 @@ RetentionJob 排程都在其中)。資料庫位於根 conftest 設定的暫存 `
 
 fixture:
 
-- `anyio_backend`:固定 `"asyncio"`;測試請加 `pytestmark = pytest.mark.anyio`。
 - `open_spillway`:工廠,`async with open_spillway(clock=..., rng=..., extra_adapter_paths=...,
   db_path=..., retention_poll_seconds=...) as h:` 取得 `SpillwayHarness`;未給 clock 時用根 conftest
   的 `clock`(`FakeClock`),未給 rng 時用 `SystemRng(seed=0)`。其餘關鍵字原樣傳給 `create_app()`。
@@ -15,6 +14,9 @@ fixture:
 `SpillwayHarness` 欄位:`app`、`client`(`httpx.AsyncClient`,base_url `http://spillway.test`)、
 `clock`、`rng`、`home`(SPILLWAY_HOME)、`db_path`;方法:`db()`(context manager,開一條新連線、
 離開時關閉)、`add_deployment(dep)`、`add_route(route, targets=())`、`ledger()`(新到舊的帳本列)。
+
+成員建構器 `api_member`、`local_member` 與 `TEST_KEY`、`TEST_KEY_ENV`、`fake_key_env` 在
+`tests/helpers.py`(CHG-20261101-02 T11);`anyio_backend` 在根 conftest。
 """
 from __future__ import annotations
 
@@ -37,10 +39,6 @@ from spillway.store.db import connect
 
 BASE_URL = "http://spillway.test"
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
 
 
 @dataclass
@@ -78,36 +76,6 @@ class SpillwayHarness:
 
 
 OpenSpillway = Callable[..., Any]
-
-# ---- 成員建構輔助(可 `from tests.integration.conftest import api_member, local_member`)----
-
-TEST_KEY = "sk-test-0000"
-TEST_KEY_ENV = "SPILLWAY_TEST_KEY"
-
-
-def api_member(dep_id: str, base_url: str, *, model: str = "gpt-4o-mini",
-               model_name: str | None = None, tags: tuple[str, ...] = ("chat",),
-               **kw: Any) -> Deployment:
-    """openai provider 的 api 成員,`api_base` 指向假上游(`{base_url}/v1`),憑證 `env:SPILLWAY_TEST_KEY`。"""
-    return Deployment(
-        id=dep_id, model_name=model_name or model, kind="api", provider="openai", model=model,
-        params={"api_base": f"{base_url}/v1"}, credential_ref=f"env:{TEST_KEY_ENV}",
-        capabilities={"ctx": 128000, "tools": True, "vision": False, "efforts": []},
-        tags=tags, **kw,
-    )
-
-
-def local_member(dep_id: str, base_url: str, *, model: str = "local-model",
-                 model_name: str | None = None, tags: tuple[str, ...] = ("chat",),
-                 **kw: Any) -> Deployment:
-    """provider `hosted_vllm` 的 local 成員(決策 10),`api_base` 指向假上游。"""
-    return Deployment(
-        id=dep_id, model_name=model_name or model, kind="local", provider="hosted_vllm",
-        model=model, params={"api_base": f"{base_url}/v1"}, credential_ref=None,
-        capabilities={"ctx": 32768, "tools": False, "vision": False, "efforts": []},
-        tags=tags, **kw,
-    )
-
 
 @pytest.fixture
 def open_spillway(clock: FakeClock) -> OpenSpillway:

@@ -22,11 +22,6 @@ from spillway.store.db import ConnSource, use_conn
 from spillway.store.repo import Route
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
 class _OkAdapter:
     async def call(self, dep, req, effort):
         return CallResult(ok=True, text="hello", tokens_in=11, tokens_out=7, cost_usd=0.001,

@@ -6,19 +6,11 @@ api_base 改為指向假 API 上游」由 T7 的 `cleanup_admin_steps.py` 提供
 """
 from __future__ import annotations
 
-import socket
-
 from behave import step, use_step_matcher
 
+from tests.helpers import dead_base as _dead_base
+
 use_step_matcher("re")
-
-
-def _dead_base() -> str:
-    """一個當下沒有服務在聽的 127.0.0.1 埠(綁定後立即關閉)。"""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    return f"http://127.0.0.1:{port}/v1"
 
 
 @step(r'local 成員 "([^"]+)",provider "([^"]+)",api_base 指向一個沒有服務的埠')

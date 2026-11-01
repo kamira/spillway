@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import keyring
 import pytest
-from keyring.backend import KeyringBackend
 
 from spillway.domain import Deployment
 from spillway.store import repo
 from tests.fakes.api_upstream import server as fake_server
+from tests.helpers import memory_keyring  # noqa: F401 — fixture 註冊
 
 pytestmark = pytest.mark.anyio
 
@@ -23,36 +23,6 @@ KEY = "sk-test-0000"
 SERVICE = "spillway-test"
 ACCOUNT = "acct"
 MSGS = [{"role": "user", "content": "hello"}]
-
-
-class MemoryKeyring(KeyringBackend):
-    """測試用記憶體 keyring 後端:tests/unit/test_credentials.py 版本的簡化複本,T11 併入 tests/helpers.py。"""
-
-    priority = 1  # type: ignore[assignment]
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._store: dict[tuple[str, str], str] = {}
-
-    def get_password(self, service: str, username: str) -> str | None:
-        return self._store.get((service, username))
-
-    def set_password(self, service: str, username: str, password: str) -> None:
-        self._store[(service, username)] = password
-
-    def delete_password(self, service: str, username: str) -> None:
-        self._store.pop((service, username), None)
-
-
-@pytest.fixture
-def memory_keyring():
-    previous = keyring.get_keyring()
-    backend = MemoryKeyring()
-    keyring.set_keyring(backend)
-    try:
-        yield backend
-    finally:
-        keyring.set_keyring(previous)
 
 
 @pytest.fixture

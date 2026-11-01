@@ -13,16 +13,11 @@ import pytest
 
 from spillway.domain import Budget
 from spillway.store import repo
-from tests.integration.conftest import TEST_KEY, TEST_KEY_ENV, api_member
+from tests.helpers import api_member
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("fake_key_env")]
 
 MSGS = [{"role": "user", "content": "hi"}]
-
-
-@pytest.fixture(autouse=True)
-def _key(monkeypatch):
-    monkeypatch.setenv(TEST_KEY_ENV, TEST_KEY)
 
 
 def _setup(h, base_url, *, a_budget=None):

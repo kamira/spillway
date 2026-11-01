@@ -5,8 +5,7 @@ from typing import Any
 
 import httpx
 
-KEY = "sk-test-0000"
-
+from tests.helpers import TEST_KEY as KEY  # noqa: F401 — 測試假金鑰(沿用既有匯入名稱)
 
 
 def api_member(dep_id: str, *, provider: str = "openai", model: str = "gpt-4o-mini",

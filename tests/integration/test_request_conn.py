@@ -16,7 +16,7 @@ from spillway.api import admin
 from spillway.api.deps import request_conn
 from spillway.store.db import connect
 
-from .conftest import local_member
+from tests.helpers import local_member
 
 pytestmark = pytest.mark.anyio
 

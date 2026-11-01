@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import importlib
 import logging
-import socket
 from typing import Any
 
 import pytest
 
 from spillway.routing import Router
+from tests.helpers import dead_base as _dead_base
 
 from .helpers import api_member, assert_error, local_member
 
@@ -23,14 +23,6 @@ ROUTE = "lr"
 # `spillway.adapters.base.litellm_call` 這個屬性名被同名函式轉匯出遮住,改以 importlib 取模組
 litellm_call = importlib.import_module("spillway.adapters.base.litellm_call")
 MSGS = [{"role": "user", "content": "hello"}]
-
-
-def _dead_base() -> str:
-    """一個當下沒有服務在聽的 127.0.0.1 埠(綁定後立即關閉)。"""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    return f"http://127.0.0.1:{port}/v1"
 
 
 async def _setup(h: Any, api_base: str) -> dict[str, Any]:

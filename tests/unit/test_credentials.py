@@ -3,50 +3,16 @@ from __future__ import annotations
 
 import keyring
 import pytest
-from keyring.backend import KeyringBackend
-from keyring.errors import PasswordDeleteError
 
 from spillway.credentials import CredentialError, resolve, validate_ref
+from tests.helpers import MemoryKeyring, memory_keyring  # noqa: F401 — fixture 註冊
 
 FAKE_KEY = "sk-test-0000"
-
-
-class MemoryKeyring(KeyringBackend):
-    """測試用記憶體 keyring 後端,不碰系統 Keychain。"""
-
-    priority = 1  # type: ignore[assignment]
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._store: dict[tuple[str, str], str] = {}
-
-    def get_password(self, service: str, username: str) -> str | None:
-        return self._store.get((service, username))
-
-    def set_password(self, service: str, username: str, password: str) -> None:
-        self._store[(service, username)] = password
-
-    def delete_password(self, service: str, username: str) -> None:
-        try:
-            del self._store[(service, username)]
-        except KeyError as exc:
-            raise PasswordDeleteError(username) from exc
 
 
 class BrokenKeyring(MemoryKeyring):
     def get_password(self, service: str, username: str) -> str | None:
         raise RuntimeError(f"backend exploded while holding {FAKE_KEY}")
-
-
-@pytest.fixture
-def memory_keyring():
-    previous = keyring.get_keyring()
-    backend = MemoryKeyring()
-    keyring.set_keyring(backend)
-    try:
-        yield backend
-    finally:
-        keyring.set_keyring(previous)
 
 
 def _assert_no_secret(exc: CredentialError, *secrets: str) -> None:

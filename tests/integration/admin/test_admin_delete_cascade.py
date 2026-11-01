@@ -10,7 +10,7 @@ import pytest
 
 from spillway.domain import Budget
 from spillway.store import repo
-from tests.integration.conftest import api_member
+from tests.helpers import api_member
 
 from .helpers import assert_error
 
