@@ -20,6 +20,7 @@ from datetime import timedelta
 
 from behave import step, use_step_matcher
 
+from spillway.adapters.base import load_litellm
 from spillway.store import repo
 from tests.fakes.cli_upstream import assert_only_fakes, is_fake
 from tests.features.steps.common_steps import _parse_slots, _parse_utc, step_cooling_until
@@ -188,8 +189,6 @@ def step_cli_remaining_and_estimate(context, dep_id, remaining, est_cost):
     route = next(iter(gw.routes))
     limit = float(gw.deployment(dep_id)["budget"]["limit_amount"])
     first = _estimate_entry(gw, route, dep_id)["estimate"]
-    from spillway.adapters.base import load_litellm
-
     cin, cout = load_litellm().cost_per_token(model=CLAUDE_MODEL, prompt_tokens=first["tokens_in"],
                                               completion_tokens=1)
     tokens_out = round((est_cost - cin) / cout)
@@ -236,8 +235,15 @@ def step_max_concurrency_hold(context, dep_id, n):
     params = {**gw.members[dep_id]["body"].get("params", {}), "max_concurrency": int(n)}
     out = gw.update_member(dep_id, params=params)
     assert out["params"]["max_concurrency"] == int(n), out
-    context.fake_cli.set("claude", "hold_until_release")
-    context.add_cleanup(context.fake_cli.release, "claude")   # 失敗時也放行,不留等待中的假行程
+    fake = context.fake_cli
+    fake.set("claude", "hold_until_release")
+
+    def release_if_present():
+        # 失敗時也放行;控制目錄已被刪除(情境暫存目錄已清掉)時不重建,假行程也已自行結束
+        if fake.control_dir.is_dir():
+            fake.release("claude")
+
+    context.add_cleanup(release_if_present)
 
 
 async def _wait_started(fake_cli, timeout: float = 20.0) -> None:

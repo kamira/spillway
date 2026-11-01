@@ -6,8 +6,8 @@
   - 68 個 openai api(模型輪流取自價格表內的 `OPENAI_MODELS`,`api_base` 指向假上游 `/v1`);
   - 2 個 cli(CHG-20261101-03 T9):`m000` provider `claude-cli`(`claude-sonnet-5-5`,credit_pool 每月)、
     `m001` provider `codex-cli`(`gpt-5.5`,額度類型 none);`params.max_concurrency` 1;
-    route `nfr` 為 chat mode,兩者於 dry-run 以 `mode_chat_excludes_cli` 篩除(仍走過篩選、冷卻、
-    併發名額與 dashboard 的 cli 分支);量測期間不起任何子行程;
+    route `nfr` 為 chat mode,兩者在候選篩選第 2 條(`mode_chat_excludes_cli`)即被篩除,
+    不會走到冷卻與併發名額的檢查;dashboard 仍照常計算它們的額度列;量測期間不起任何子行程;
   - 20 個 anthropic api(`claude-sonnet-4-5`,`api_base` 指向假上游);
   - 10 個 local(provider `hosted_vllm`,決策 10)。
   api 成員憑證一律 `env:SPILLWAY_TEST_KEY`。額度依序輪替:usd 每月(reset_anchor 1–28 輪替)、

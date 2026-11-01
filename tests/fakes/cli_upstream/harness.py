@@ -26,6 +26,7 @@ PRESENCE_VARS = (
     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
     "OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL",
     "CLAUDE_CODE_OAUTH_TOKEN",
+    "SPILLWAY_TEST_KEY",   # 成員 env 憑證(決策 9 由 Router 逐次移除);只記是否存在
 )
 FAKE_MARKER = "# spillway-fake-cli (tests/fakes/cli_upstream)"
 FAKE_SCRIPT = Path(__file__).resolve().parent / "fake.py"

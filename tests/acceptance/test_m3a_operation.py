@@ -30,6 +30,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -208,6 +209,19 @@ def _pid_alive(pid: int) -> bool:
     return bool(r.stdout.strip()) and not r.stdout.strip().startswith("Z")
 
 
+def _next_monthly_reset(now: datetime) -> str:
+    """credit_pool 每月、reset_anchor 1 的下次重置(serve 用真實 UTC 時鐘;spec 4.2.6)。"""
+    y, m = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
+    return f"{y:04d}-{m:02d}-01T00:00:00Z"
+
+
+def _unfinished(fake: FakeCli, since: float) -> list[dict[str, Any]]:
+    """本次測試啟動(`started_at >= since`)且尚未寫入結束記錄的假 CLI 呼叫。
+
+    已結束的記錄其 pid 可能已被系統重用,一律不檢查、不送訊號。"""
+    return [r for r in fake.records() if not r.get("finished") and r.get("started_at", 0) >= since]
+
+
 def _files_containing(root: Path, needle: str) -> list[str]:
     data = needle.encode()
     return [str(p) for p in root.rglob("*") if p.is_file() and data in p.read_bytes()]
@@ -249,11 +263,13 @@ def test_m3a_acceptance_operation(tmp_path):
     assert _q(db_path, "PRAGMA user_version") == [(1,)]
 
     fake = FakeCli(home, install(tmp_path / "fake-cli-bin"))
+    run_started = time.time()
     base = procs.child_env(home)
     for var in (*CLAUDE_VARS, *CODEX_VARS):
         base[var] = f"fake-{var.lower()}-m3a"           # 決策 9 清單的假值:CLI 子行程不可看到
     env = safe_subprocess_env(base, fake_bin=fake.bin_dir)
     env[cli.TEST_GRACEFUL_TIMEOUT_ENV] = str(GRACEFUL)
+    assert env["SPILLWAY_TEST_KEY"]                     # deepseek-api 的 env:SPILLWAY_TEST_KEY;CLI 子行程不可看到
     resolved = assert_only_fakes(env["PATH"])
     assert resolved == {"claude": str(fake.path("claude")), "codex": str(fake.path("codex"))}
 
@@ -359,7 +375,9 @@ def test_m3a_acceptance_operation(tmp_path):
 
         # ---- AC-17(CLI):額度用完 → 冷卻
         fake.set("claude", "quota")
+        resets = {_next_monthly_reset(datetime.now(timezone.utc))}
         r = gw.chat("review")
+        resets.add(_next_monthly_reset(datetime.now(timezone.utc)))   # 跨月邊界時兩者之一
         assert _served([r]) == [API]
         assert gw.ledger(deployment=CLAUDE)[0]["status"] == "quota_exhausted"
         dep = gw.ok(gw.request("GET", f"/api/deployments/{CLAUDE}"))
@@ -367,7 +385,7 @@ def test_m3a_acceptance_operation(tmp_path):
         dash = {d["id"]: d for d in gw.ok(gw.request("GET", "/api/dashboard"))["deployments"]}
         obs["cooldown"] = {"deployment": dep["cooling_until"], "list": listed[CLAUDE]["cooling_until"],
                            "dashboard": dash[CLAUDE]["cooling_until"], "reason": dep["cooling_reason"]}
-        assert dep["cooling_until"] and dep["cooling_reason"] == "quota_exhausted"
+        assert dep["cooling_until"] in resets and dep["cooling_reason"] == "quota_exhausted", (dep, resets)
         assert listed[CLAUDE]["cooling_until"] == dep["cooling_until"]
         assert dash[CLAUDE]["cooling"] is True and dash[CLAUDE]["cooling_until"] == dep["cooling_until"]
         fake.set("claude", "ok")
@@ -408,6 +426,7 @@ def test_m3a_acceptance_operation(tmp_path):
         assert claude_recs and codex_recs
         for rec in claude_recs:
             assert not any(rec["env_present"][v] for v in CLAUDE_VARS), rec["env_present"]
+            assert rec["env_present"]["SPILLWAY_TEST_KEY"] is False    # 決策 9:成員 env 憑證
             assert rec["spillway_depth"] == "1"
             assert rec["argv"][0] == "-p" and "--strict-mcp-config" in rec["argv"]
             assert MESSAGES[0]["content"] in rec["stdin"]
@@ -415,12 +434,15 @@ def test_m3a_acceptance_operation(tmp_path):
         for rec in codex_recs:
             argv = rec["argv"]
             assert not any(rec["env_present"][v] for v in CODEX_VARS), rec["env_present"]
+            assert rec["env_present"]["SPILLWAY_TEST_KEY"] is False
             assert rec["spillway_depth"] == "1"
             assert ("-c", "mcp_servers={}") in list(zip(argv, argv[1:])) and argv[-2] == "--", argv
         obs["fake_cli_records"] = {
             "claude": len(claude_recs), "codex": len(codex_recs),
             "claude_env_present": sorted({v for r in claude_recs for v in CLAUDE_VARS if r["env_present"][v]}),
             "codex_env_present": sorted({v for r in codex_recs for v in CODEX_VARS if r["env_present"][v]}),
+            "member_env_credential_present": sorted({
+                r["name"] for r in claude_recs + codex_recs if r["env_present"]["SPILLWAY_TEST_KEY"]}),
             "depth": sorted({r["spillway_depth"] for r in claude_recs + codex_recs}),
             "claude_strict_mcp_config": all("--strict-mcp-config" in r["argv"] for r in claude_recs),
             "codex_mcp_servers_empty_then_dashdash": all(
@@ -456,7 +478,9 @@ def test_m3a_acceptance_operation(tmp_path):
             pytest.fail(f"serve 未在 {limit} 秒內結束")
         elapsed = round(time.monotonic() - t0, 2)
         box["thread"].join(15)
-        leftovers = [r["pid"] for r in fake.records() if _group_alive(r["pid"]) or _pid_alive(r["pid"])]
+        unfinished = _unfinished(fake, run_started)
+        assert [r["pid"] for r in unfinished] == [held["pid"]], unfinished   # 只有被停機中斷的那次
+        leftovers = [r["pid"] for r in unfinished if _group_alive(r["pid"]) or _pid_alive(r["pid"])]
         shutdown_rows = _q(db_path, "SELECT status, error FROM usage_ledger WHERE deployment_id = ? "
                                     "ORDER BY id DESC LIMIT 1", CODEX)
         obs["sigterm"] = {"elapsed_s": elapsed, "limit_s": limit, "graceful_s": GRACEFUL,
@@ -478,7 +502,7 @@ def test_m3a_acceptance_operation(tmp_path):
                 pass
             serve.wait(timeout=15)
         procs.stop(fake_proc)
-        for rec in fake.records():
+        for rec in _unfinished(fake, run_started):   # 只處理本次啟動、尚未結束的假 CLI
             if _group_alive(rec["pid"]):
                 try:
                     os.killpg(rec["pid"], signal.SIGKILL)

@@ -88,6 +88,7 @@ def test_presence_vars_identical_in_fake_script():
     spec.loader.exec_module(mod)
     assert mod.PRESENCE_VARS == cli_upstream.PRESENCE_VARS
     assert "CLAUDE_CODE_OAUTH_TOKEN" in cli_upstream.PRESENCE_VARS
+    assert "SPILLWAY_TEST_KEY" in cli_upstream.PRESENCE_VARS
 
 
 # ---- claude ----
