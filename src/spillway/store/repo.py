@@ -122,6 +122,7 @@ def list_deployments(conn: sqlite3.Connection, *, enabled_only: bool = False) ->
 
 
 def deployment_exists(conn: sqlite3.Connection, dep_id: str) -> bool:
+    """成員是否存在。"""
     return conn.execute("SELECT 1 FROM deployments WHERE id = ?", (dep_id,)).fetchone() is not None
 
 
@@ -516,7 +517,7 @@ def ledger_spend(
     `since` 為 None 時為累計;否則取 `ts` ∈ [since, until)(兩者須同時給)。
     ts 為固定格式 UTC 字串,可字典序比較。供 `QuotaService.remaining()`。"""
     sql = "SELECT COALESCE(SUM(cost_usd), 0) FROM usage_ledger WHERE deployment_id = ?"
-    args: list[object] = [dep_id]
+    args: list[Any] = [dep_id]
     if since is not None:
         assert until is not None
         sql += " AND ts >= ? AND ts < ?"

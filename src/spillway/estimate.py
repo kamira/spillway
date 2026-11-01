@@ -38,6 +38,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+
 from spillway.adapters.base import load_litellm, model_string
 from spillway.domain import ChatRequest, Deployment
 from spillway.store import repo
