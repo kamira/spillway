@@ -160,7 +160,7 @@ def create_app(
         conn_factory().close()   # migration(D3)
         runner = app.state.cli_runner   # 由 create_app 在 lifespan 之前建立(T2;停機路徑也用它)
         registry = AdapterRegistry(AdapterContext(credentials=credentials.resolve, clock=clk,
-                                                  cli_runner=runner))
+                                                  cli_runner=runner, data_dir=path.parent))
         registry.discover(extra)   # AdapterConflictError → 啟動失敗(7.6.6)
         app.state.registry = registry
         app.state.router = Router(conn_factory, registry, clk, rnd, close_conn=True)
