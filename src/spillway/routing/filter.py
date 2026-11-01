@@ -1,6 +1,7 @@
 """候選篩選(spec 4.2.1–4.2.6;CHG-20261030-02 T11;決策 6、14、20)。
 
-`CandidateFilter(registry, quota, estimator, clock, health_cache=None, *, health_timeout=HEALTH_PROBE_TIMEOUT)`
+`CandidateFilter(registry, quota, estimator, clock, health_cache=None, *, health_timeout=HEALTH_PROBE_TIMEOUT,
+cli_runner=None)`
 `await filter(target, req, *, probe=True, now=None) -> FilterResult`
 
 對 `target.members`(依其順序)逐一檢查,第一個不符合的條件即為該成員的排除原因:
@@ -14,11 +15,18 @@
 | 5 | `vision_unsupported` | 請求含圖片且 `capabilities.vision` 不為 True(缺值視為不支援) |
 | 6 | `adapter_unavailable` | `registry.module_for(dep)` 丟 `AdapterUnavailableError`(含 `unavailable()` 中的 provider,決策 14;spec 7.6.7) |
 | 7 | `cooling` | cli/api:`quota.is_cooling(dep, now)`(4.2.4、4.2.6) |
-| 8 | `quota_exhausted` | cli/api:`quota.remaining(dep, now) <= 0`(無上限視為無限,決策 6) |
-| 9 | `unhealthy` | local:健康檢查為 False(含 health 丟例外) |
-| 10 | `skipped_precheck` | cli/api 且 `target.budget_precheck` 且 `estimate.cost_usd_p90` 不為 None 且 > 剩餘(4.2.5、5.4.4) |
+| 8 | `concurrency_full` | cli 且有 `cli_runner`:`cli_runner.in_flight(dep.id) >= max_concurrency(dep)`(NFR-6;CHG-20261101-03 決策 7) |
+| 9 | `quota_exhausted` | cli/api:`quota.remaining(dep, now) <= 0`(無上限視為無限,決策 6) |
+| 10 | `unhealthy` | local:健康檢查為 False(含 health 丟例外) |
+| 11 | `skipped_precheck` | cli/api 且 `target.budget_precheck` 且 `estimate.cost_usd_p90` 不為 None 且 > 剩餘(4.2.5、5.4.4) |
 
-預估:通過 1–9 的成員以 `estimator.estimate(dep, req, target.route_name)` 計算一次,附在
+`EXCLUDE_REASONS` 另含 `shutting_down`(決策 16):篩選不產生它,是 Router 在停機中不開始新嘗試時
+記入 `RouteOutcome.excluded` 的原因。`concurrency_full` 也可能由 Router 產生(篩選之後
+`try_acquire` 失敗,決策 7)。兩者都不寫帳本。
+
+`max_concurrency(dep)`:`params.max_concurrency` 為正整數時取該值,否則 `DEFAULT_MAX_CONCURRENCY`(1)。
+
+預估:通過 1–10 的成員以 `estimator.estimate(dep, req, target.route_name)` 計算一次,附在
 `Candidate.estimate`(T12 寫帳本與 header 用,不必重算);被 precheck 跳過者附在
 `Excluded.estimate`(T12 依 4.2.5 為它寫一列 `skipped_precheck`)。其他被篩成員的 estimate 為 None。
 
@@ -42,7 +50,14 @@ from typing import Any, Protocol
 
 from spillway.adapters.base import AdapterUnavailableError
 from spillway.clock import Clock
-from spillway.domain import CLOUD_KINDS, STATUS_SKIPPED_PRECHECK, ChatRequest, Deployment
+from spillway.domain import (
+    CLOUD_KINDS,
+    EXCLUDE_CONCURRENCY_FULL,
+    EXCLUDE_SHUTTING_DOWN,
+    STATUS_SKIPPED_PRECHECK,
+    ChatRequest,
+    Deployment,
+)
 from spillway.estimate import Estimate
 from spillway.routing.resolver import Target
 
@@ -52,6 +67,8 @@ HEALTH_PROBE_TIMEOUT = 2.0   # 秒;單次 local 健康探測上限(決策 20)
 HEALTHY = "healthy"
 HEALTH_UNKNOWN = "health_unknown"
 
+DEFAULT_MAX_CONCURRENCY = 1   # NFR-6:CLI 成員同時執行數上限預設 1
+
 EXCLUDE_REASONS = (
     "disabled",
     "mode_chat_excludes_cli",
@@ -60,10 +77,20 @@ EXCLUDE_REASONS = (
     "vision_unsupported",
     "adapter_unavailable",
     "cooling",
+    EXCLUDE_CONCURRENCY_FULL,
     "quota_exhausted",
     "unhealthy",
     STATUS_SKIPPED_PRECHECK,
+    EXCLUDE_SHUTTING_DOWN,
 )
+
+
+def max_concurrency(dep: Deployment) -> int:
+    """CLI 成員的併發上限:`params.max_concurrency` 為正整數(非 bool)時取該值,否則預設 1。"""
+    v = (dep.params or {}).get("max_concurrency", DEFAULT_MAX_CONCURRENCY)
+    if isinstance(v, int) and not isinstance(v, bool) and v >= 1:
+        return v
+    return DEFAULT_MAX_CONCURRENCY
 
 
 class _Registry(Protocol):
@@ -74,6 +101,10 @@ class _Registry(Protocol):
 class _Quota(Protocol):
     def remaining(self, dep: Deployment, now: datetime | None = None) -> float: ...
     def is_cooling(self, dep: Deployment, now: datetime | None = None) -> bool: ...
+
+
+class _SlotCounter(Protocol):
+    def in_flight(self, key: str) -> int: ...
 
 
 class _Estimator(Protocol):
@@ -161,8 +192,10 @@ class CandidateFilter:
         health_cache: HealthCache | None = None,
         *,
         health_timeout: float = HEALTH_PROBE_TIMEOUT,
+        cli_runner: _SlotCounter | None = None,
     ) -> None:
         self._registry = registry
+        self._cli_runner = cli_runner
         self._health_timeout = health_timeout
         self._quota = quota
         self._estimator = estimator
@@ -189,6 +222,8 @@ class CandidateFilter:
             if reason is None and dep.kind in CLOUD_KINDS:
                 if self._quota.is_cooling(dep, now):
                     reason = "cooling"
+                elif self._concurrency_full(dep):
+                    reason = EXCLUDE_CONCURRENCY_FULL
                 else:
                     remaining = self._quota.remaining(dep, now)
                     if remaining <= 0:
@@ -213,6 +248,11 @@ class CandidateFilter:
             candidates.append(Candidate(dep, est, health))
 
         return FilterResult(tuple(candidates), tuple(excluded))
+
+    def _concurrency_full(self, dep: Deployment) -> bool:
+        if dep.kind != "cli" or self._cli_runner is None:
+            return False
+        return self._cli_runner.in_flight(dep.id) >= max_concurrency(dep)
 
     def _static_reason(self, dep: Deployment, req: ChatRequest, mode: str) -> str | None:
         caps = dep.capabilities or {}

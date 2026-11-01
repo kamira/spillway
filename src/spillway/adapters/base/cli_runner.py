@@ -7,7 +7,9 @@ max_output_bytes=8 MiB) -> CliOutput`
 
 - 以 `asyncio.create_subprocess_exec(..., start_new_session=True)` 啟動:argv 陣列、不經 shell;
   子行程自成 session 與 process group(pgid == pid),終端 Ctrl-C 不會直接打到它。
-- 環境:以目前 `os.environ` 為底,移除 `env_remove`,再套上 `env_set`。
+- 環境:以目前 `os.environ` 為底,移除 `env_remove` 與 `extra_env_remove`,再套上 `env_set`。
+  `extra_env_remove`(集合,預設空)由 Router 在每次 CLI 嘗試前設為「所有成員 `credential_ref`
+  為 `env:<名>` 的變數名」(決策 9 施工審議補記),`run` 一律併入 `env_remove`。
 - `stdin` 未給時為 `DEVNULL`;給 `str` 時以 UTF-8 編碼送入後關閉。
 - 逾時(`timed_out=True`、`killed_reason="timeout"`)、`run` 所在 task 被取消(`CancelledError`,
   `killed_reason="cancelled"`,例外照常往上丟)、停機(`terminate_all`/`kill_all_sync`,
@@ -141,6 +143,7 @@ class CliRunner:
         self._active: dict[int, asyncio.subprocess.Process] = {}   # pgid → 主行程
         self._reasons: dict[int, str] = {}                          # pgid → killed_reason
         self._slots: dict[str, int] = {}
+        self.extra_env_remove: set[str] = set()   # 決策 9:每次 run 一律併入 env_remove
 
     # ------------------------------------------------------------ 併發名額(決策 7)
     def try_acquire(self, key: str, limit: int) -> bool:
@@ -184,7 +187,7 @@ class CliRunner:
         if isinstance(env_remove, str):   # 防呆:字串會被逐字元當成變數名
             raise TypeError("env_remove 必須是變數名的序列,不可為單一字串")
         env = dict(os.environ)
-        for name in env_remove:
+        for name in (*env_remove, *self.extra_env_remove):
             env.pop(name, None)
         if env_set:
             env.update({str(k): str(v) for k, v in env_set.items()})

@@ -28,6 +28,7 @@ lifespan 啟動依序:
 - `registry`:已 `discover()` 的 `AdapterRegistry`
 - `router`:`spillway.routing.Router`(其 `quota`、`estimator` 只在 route()/dry_run() 內可用)
 - `retention`:`RetentionScheduler`(`runs` 成功次數、`task`、`run_once()`)
+- `cli_runner`:`CliRunner`(T2);`shutting_down`:停機旗標,預設 False(CHG-20261101-03 決策 16)
 `registry`、`router`、`retention` 在 lifespan 啟動後才存在。
 
 秘密:本檔不記錄請求內容;日誌只記例外型別。存取 token 明文只出現在 `_ensure_token` 的 stderr 一行。
@@ -185,7 +186,9 @@ def create_app(
                                                   cli_runner=runner, data_dir=path.parent))
         registry.discover(extra)   # AdapterConflictError → 啟動失敗(7.6.6)
         app.state.registry = registry
-        app.state.router = Router(conn_factory, registry, clk, rnd, close_conn=True)
+        # CHG-20261101-03 T6(決策 7、9、16):名額與 env 清理用同一個 CliRunner;停機旗標讀 app.state
+        app.state.router = Router(conn_factory, registry, clk, rnd, close_conn=True, cli_runner=runner,
+                                  shutdown_flag=lambda: bool(getattr(app.state, "shutting_down", False)))
         retention = RetentionScheduler(conn_factory, clk, interval_seconds=retention_interval_seconds,
                                        poll_seconds=retention_poll_seconds)
         app.state.retention = retention
@@ -201,6 +204,7 @@ def create_app(
     app.state.rng = rnd
     # CHG-20261101-03 T2(決策 8):必須在 lifespan 之前存在;lifespan 注入 AdapterContext.cli_runner
     app.state.cli_runner = CliRunner()
+    app.state.shutting_down = False   # T6(決策 16):T8 的訊號處理設為 True;Router 不再開始新嘗試
     app.state.db_path = path
     app.state.conn_factory = conn_factory
     install_error_handlers(app)
