@@ -25,11 +25,13 @@ FIELDS_BEFORE_SPLIT = {
     "Plan": ["route_name", "slots", "excluded", "first"],
 }
 
+# 拆檔前的快照(刻意寫死;日後增減匯出須有意識地同步修改)
 ROUTER_ALL_BEFORE_SPLIT = [
     "AttemptInfo", "InvalidEffort", "Plan", "PlanEntry", "PlanExcluded", "PlanSlot",
     "RouteOutcome", "Router", "normalize_effort",
 ]
 
+# 拆檔前的快照(刻意寫死;日後增減匯出須有意識地同步修改)
 ROUTING_ALL_BEFORE_SPLIT = [
     "members_of", "matches", "selector_of",
     "Resolver", "RouteNotFound", "Target", "LOCAL_PREFIX", "ROUTE_PREFIX", "TARGET_KINDS",
