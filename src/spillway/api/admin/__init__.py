@@ -34,8 +34,11 @@ design D13、D15、D22;決策 6、16、17、22、24、25、32)。
 
 寫入驗證(決策 22):`credential_ref` 只接受 `env:…`、`keyring:…:…`(`credentials.validate_ref`);
 `params` 與 `capabilities` 的額外鍵內任何字串(含巢狀與鍵名)命中 `Redactor.matches`,或任一層
-鍵名不分大小寫完全等於 `CREDENTIAL_KEY_NAMES`(api_key、apikey、key、token、access_token、secret、
-password、authorization;U9)即 422,不回顯值;`reset_anchor` 1–28;
+鍵名經 `secrets.is_credential_key` 判為憑證鍵即 422,不回顯值(CHG-20261101-02 決策 1:鍵名轉小寫並
+去掉 `-`、`_`、`.`、空白後,完全等於 `CREDENTIAL_KEY_EXACT` 之一或以 `CREDENTIAL_KEY_SUFFIXES` 之一
+結尾;`key`、`token` 只做完全比對)。整棵 `params` 含 `params.signals` 一律檢查、不豁免;`params`
+含 `signals` 時另以 `validate_signals(params["signals"], "params.signals")` 驗證格式,不合法同樣 422
+(決策 4);`reset_anchor` 1–28;
 `context_retention_days` 0–36500;
 `kind`、`effort`、`weight`、`mode`、`window`、budget `type` 只接受 DDL 的合法值;
 `capabilities.efforts` 只可含五級。成員 id、群組名不可含空白與 `/`;route 名另不可含 `:`

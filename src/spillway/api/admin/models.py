@@ -1,4 +1,5 @@
-"""管理 API 請求 body 模型:成員、群組、route(含呼叫憑證掃描的 validator;CHG-20261101-02 決策 9)。
+"""管理 API 請求 body 模型:成員、群組、route(含呼叫憑證掃描與 `validate_signals` 的 validator;
+CHG-20261101-02 決策 1、4、9)。
 
 寫入驗證規則見 `spillway.api.admin` 套件 docstring;憑證掃描本體在 `secrets.py`。
 """
@@ -20,6 +21,7 @@ from pydantic import (
 )
 
 from spillway import credentials
+from spillway.adapters.base import SignalsError, validate_signals
 from spillway.api import redact_echo, validation_message
 from spillway.domain import Budget, Deployment
 from spillway.store import repo
@@ -98,6 +100,11 @@ class DeploymentIn(BaseModel):
         hits = _secret_paths(v, "params")
         if hits:
             raise ValueError(_secret_message(hits))
+        if "signals" in v:          # 決策 4:寫入時即驗證格式(訊息只含欄位路徑與說明,不含值)
+            try:
+                validate_signals(v["signals"], "params.signals")
+            except SignalsError as exc:
+                raise ValueError(redact_echo(exc)) from None
         return v
 
     def to_deployment(self, dep_id: str, exhausted_until: datetime | None) -> Deployment:
