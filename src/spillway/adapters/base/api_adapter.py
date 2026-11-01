@@ -5,8 +5,9 @@ anthropic_api、openai_api、litellm 三個模組的 `adapter.py` 各自以 `cla
 繼承本類別、不覆寫 `call`/`health`:模組之間不可互相 import(design「Adapter 模組契約」規則 2),
 共用的只有 `adapters.base`。差異全部在各模組的 `MANIFEST`。
 
-替換點:`litellm_call`、`model_string`、`probe_http` 先從子類別所在模組(各模組的 `adapter.py`)的
-命名空間取,該模組沒有同名屬性時才用 `adapters.base` 的實作。各模組 `adapter.py` 匯入這三個名稱,
+替換點:`litellm_call`、`model_string`、`probe_http` 先從實際類別定義所在的那一個模組(各模組的
+`adapter.py`;只查一層,不沿繼承鏈往上找)的命名空間取;該模組沒有同名屬性、或屬性不可呼叫時,
+改用 `adapters.base` 的實作。各模組 `adapter.py` 匯入這三個名稱,
 因此在該模組替換它們(測試的 spy/假上游)只影響該模組,與去重前逐份 `adapter.py` 的行為相同。
 
 `call()` 流程:
@@ -26,7 +27,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from spillway.adapters.base.effort import effort_to_upstream
@@ -84,10 +85,15 @@ class LiteLLMApiAdapter:
         self.context = context
         self.manifest = manifest
 
-    def _seam(self, name: str) -> Any:
-        """取替換點:子類別所在模組有同名屬性就用它,否則用 `adapters.base` 的實作(見模組說明)。"""
+    def _seam(self, name: str) -> Callable[..., Any]:
+        """取替換點 `name`(`litellm_call`、`model_string`、`probe_http`;見模組說明)。
+
+        只查實際類別(`type(self)`)定義所在的那一個模組(不沿繼承鏈往上找):該模組有同名屬性
+        且可呼叫就用它;沒有該屬性或不可呼叫時,改用 `adapters.base` 的實作。
+        """
         module = sys.modules.get(type(self).__module__)
-        return getattr(module, name, None) or _SEAMS[name]
+        candidate = getattr(module, name, None) if module is not None else None
+        return candidate if callable(candidate) else _SEAMS[name]
 
     def _params(self, dep: Deployment) -> dict[str, Any]:
         return {**self.manifest.default_params, **(dep.params or {})}
