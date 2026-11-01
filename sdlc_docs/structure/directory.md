@@ -74,7 +74,7 @@ spillway/
     ├── integration/             # HTTP、MCP、CLI 子行程(假上游);integration/conftest.py
     │   └── admin/               # 管理 API 整合測試(M2);conftest.py 的 make_app 呼叫 create_app()
     ├── features/                # behave 行為情境(m2_*.feature;m2c_cleanup.feature,CHG-20261101-02)
-    │   ├── steps/               # 步驟檔(m2_*:CHG-20261030-02 T15;cleanup_admin_steps.py、cleanup_health_steps.py、cleanup_ac4_steps.py:CHG-20261101-02)
+    │   ├── steps/               # 步驟檔(adapters_steps.py、common_steps.py 等:CHG-20261030-02 T15;cleanup_admin_steps.py、cleanup_health_steps.py、cleanup_ac4_steps.py:CHG-20261101-02)
     │   ├── support/             # 行程內驅動 app 的 gateway(與 open_spillway 同方式)
     │   └── environment.py
     └── acceptance/              # AC-7 與 NFR 量測、test_operation.py(操作驗收,L4);輔助 seed.py、perf.py、procs.py、results.py

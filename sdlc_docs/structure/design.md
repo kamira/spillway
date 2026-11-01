@@ -99,7 +99,7 @@ classDiagram
 ```
 adapters/<module>/
 ├── __init__.py      # 匯出 MANIFEST 與 create()
-├── adapter.py       # 實作 Adapter Protocol
+├── adapter.py       # 實作 Adapter Protocol(API 模組為 `class LiteLLMAdapter(LiteLLMApiAdapter)`,CHG-20261101-02 決策 11)
 ├── models.yaml      # 可用模型清單(D12),純資料,改清單不必改程式
 └── README.md        # 這個 AI 的接法、所需 CLI/環境變數、已知限制
 ```
@@ -114,7 +114,7 @@ adapters/<module>/
 規則:
 
 1. **新增一種 AI = 新增一個子套件資料夾**,不修改任何既有檔案(含 registry)。spec 7.1.2「只可新增 adapter 檔案與註冊一行」的上限因此收緊為零行。
-2. 模組只可 import `spillway.adapters.base`(Protocol、`CallResult`、`AdapterManifest`、`AdapterContext`、`classify`、`effort_to_upstream`、`litellm_call`;M3 起另有 `CliRunner`)、標準庫與 `pyyaml`;不可直接 import `litellm`、`spillway.credentials`、`spillway.clock`;**不可 import `routing`、`store`、`api`、`mcp`**。由 `tests/contract/test_layering.py` 以 AST 檢查。
+2. 模組只可 import `spillway.adapters.base`(Protocol、`CallResult`、`AdapterManifest`、`AdapterContext`、`classify`、`effort_to_upstream`、`litellm_call`、`model_string`、`probe_http`、`LiteLLMApiAdapter`;M3 起另有 `CliRunner`)、標準庫與 `pyyaml`;不可直接 import `litellm`、`spillway.credentials`、`spillway.clock`;**不可 import `routing`、`store`、`api`、`mcp`**。由 `tests/contract/test_layering.py` 以 AST 檢查。
 3. 每個模組必須通過共用合約測試(對所有被發現的模組參數化執行):`tests/contract/test_adapter_contract.py` 檢查 manifest 欄位齊全且合法、`effort_map` 五級都有定義、`models.yaml` 可解析;`tests/contract/test_call_status.py` 檢查 `call` 對假上游的成功/用完/429/錯誤四種輸出回傳正確的 `CallResult.status`(adapter 在 `call()` 內以 `classify` 歸類)。新模組另放自己的假上游於 `tests/fakes/<module>/`;三個內建 API 模組共用 `tests/fakes/api_upstream/`(D17)。repo 外的模組(以 `discover(extra_paths)` 載入)以環境變數 `SPILLWAY_CONTRACT_EXTRA_PATHS` 納入合約測試,其 call_status 測試 harness 以 `SPILLWAY_CONTRACT_HARNESS_PATHS` 目錄下的 `<module>_harness.py` 提供(CHG-20261030-02 決策 57)。模組層級的 `list_models(context, …)` 可為同步或 async 函式。
 4. 註冊衝突(兩個模組宣告同一 `provider`)→ 啟動失敗並列出兩個模組,不猜哪個優先。
 5. 模組載入失敗(import 錯誤、manifest 不合法、`contract_version` 不支援)→ 該模組不註冊,原因記入 `AdapterRegistry.unavailable()`,其 provider 依 D21 推得;使用該 `provider` 的成員在候選篩選時視為不可用(原因 `adapter_unavailable`),並在 UI-2 成員頁顯示。其他模組照常運作。
