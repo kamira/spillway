@@ -1,34 +1,21 @@
 """codex_cli 模組的 adapter:以 `codex exec` 子行程處理請求(spec 7.4、5.2.3、5.3.1、6.3;
-CHG-20261101-03 決策 9、11、12)。
-
-命令(決策 11,argv 陣列、不經 shell;子行程一律經 `AdapterContext.cli_runner.run()` 啟動):
+CHG-20261101-03 決策 9、11、12)。完整說明見 README.md。
 
     codex exec --json --skip-git-repo-check -m <model> -o <暫存檔>
-          [-c model_reasoning_effort=<值>]      # effort 有對應值時(none→minimal、max→xhigh)
-          -c mcp_servers={}                     # 固定附加:停用 codex 全部 MCP,extra_args 無法移除
-          <params.extra_args...>
-          -- <prompt>                           # prompt 以 `--` 隔開,開頭為 `-` 或 `resume` 也不會被當成旗標或子命令
+          [-c model_reasoning_effort=<值>] <params.extra_args...> -c mcp_servers={} -- <prompt>
 
-- prompt:messages 依 spec 7.5.1 串成 `[System]`/`[User]`/`[Assistant]` 段落;stdin 不給(DEVNULL)。
-- `-o` 暫存檔:`tempfile.mkstemp`(0600)建立,`finally` 刪除(含錯誤、逾時、取消)。
-- 環境(決策 9):以目前環境為底,移除 `ENV_REMOVE`(`OPENAI_API_KEY`、`CODEX_API_KEY`、`OPENAI_BASE_URL`),
-  設 `SPILLWAY_DEPTH=1`。其他成員 `env:` 憑證變數由 Router 經 `CliRunner.extra_env_remove` 移除(T6),
-  本模組不處理;官方登入狀態照常繼承,閘道不讀取任何憑證。
-- 工作目錄:`params.cwd`;未設定時為 `AdapterContext.data_dir / "work" / "codex"`(不存在就建立);
-  兩者皆無時回 `error`,不起子行程。
-- 結果:結束碼 0 → 回應取 `-o` 檔內容、token 取 stdout JSONL 中最後一個含 `usage` 的事件、`cost_usd`
-  為 None(spec 5.2.3)。結束碼 ≠ 0 → raw `{exit_code, stderr, message}` 交 `classify()`(spec 5.3.1)。
-  逾時、停機終止、找不到執行檔、`OSError`(含 argv 過長 E2BIG)、stdout 不是 JSONL、`-o` 檔為空 → `error`。
-- `health()` 不起子行程,回 True(可用性只依上游訊號,spec 5.2.3)。
-
-模組只可 import `spillway.adapters.base`、標準庫與 pyyaml(spec 7.6.3)。
+- `-c mcp_servers={}` 固定為 `--` 前最後一個 `-c`,`extra_args` 無法覆寫;`extra_args` 不可含 `--`
+  或裸位置引數(`_extra_args_problem`)。子行程只經 `AdapterContext.cli_runner.run()` 啟動。
+- `-o` 暫存檔以 `tempfile.mkstemp`(0600)建立,`finally` 刪除。環境移除 `ENV_REMOVE`、設 `SPILLWAY_DEPTH=1`
+  (其他成員 `env:` 憑證變數由 Router 移除)。
+- 結束碼 ≠ 0 時 stderr 與 stdout JSONL 的錯誤訊息一併交 `classify()`(spec 5.3.1)。
 """
 from __future__ import annotations
 
 import json
 import os
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -45,8 +32,7 @@ from spillway.adapters.base import (
     resolve_signals,
 )
 
-__all__ = ["CodexCliAdapter", "ENV_REMOVE", "ENV_SET", "EXECUTABLE", "MCP_OFF",
-           "build_argv", "messages_to_prompt", "last_usage"]
+__all__ = ["CodexCliAdapter", "ENV_REMOVE", "ENV_SET", "MCP_OFF", "messages_to_prompt"]
 
 EXECUTABLE = "codex"
 ENV_REMOVE = ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL")   # 決策 9(codex 固定清單)
@@ -89,18 +75,34 @@ def messages_to_prompt(messages: list[dict[str, Any]]) -> str:
     return "\n\n".join(out)
 
 
+def _extra_args_problem(extra: Any) -> str | None:
+    """`extra_args` 不合法時回原因:非字串清單、含 `--`、或含裸位置引數(不以 `-` 開頭,且前一個元素
+    不是不帶 `=` 的選項)。位置引數會被 codex 當成 prompt 或子命令(如 `resume`)。"""
+    if not isinstance(extra, Sequence) or isinstance(extra, str) \
+            or not all(isinstance(a, str) for a in extra):
+        return "params.extra_args 必須是字串清單"
+    for i, a in enumerate(extra):
+        if a == "--":
+            return "params.extra_args 不可含 `--`"
+        if not a.startswith("-"):
+            prev = extra[i - 1] if i > 0 else ""
+            if not (prev.startswith("-") and "=" not in prev):
+                return f"params.extra_args 第 {i} 個元素是位置引數,只可為選項或選項的值"
+    return None
+
+
 def build_argv(model: str, output_file: str, upstream_effort: str | None,
-               extra_args: list[str], prompt: str) -> list[str]:
+               extra_args: Sequence[str], prompt: str) -> list[str]:
     argv = [EXECUTABLE, "exec", "--json", "--skip-git-repo-check", "-m", model, "-o", output_file]
     if upstream_effort is not None:
         argv += ["-c", f"model_reasoning_effort={upstream_effort}"]
-    argv += [*MCP_OFF, *extra_args, "--", prompt]
+    argv += [*extra_args, *MCP_OFF, "--", prompt]   # MCP_OFF 為 `--` 前最後一個 -c
     return argv
 
 
 def _events(stdout: str) -> list[dict[str, Any]]:
     events = []
-    for line in stdout.splitlines():
+    for line in stdout.split("\n"):
         line = line.strip()
         if not line:
             continue
@@ -131,8 +133,8 @@ def _tail(text: str) -> str:
     return text if len(text) <= _ERROR_TAIL else "…" + text[-_ERROR_TAIL:]
 
 
-def _failure_message(out: CliOutput, events: list[dict[str, Any]]) -> str:
-    """結束碼 ≠ 0 時的訊息:JSONL 最後一個 error 事件的 message,其次 stderr。"""
+def _jsonl_failure(events: list[dict[str, Any]]) -> str:
+    """stdout JSONL 中最後一個 error/turn.failed 事件的訊息;沒有時空字串。"""
     for e in reversed(events):
         if e.get("type") in ("error", "turn.failed"):
             msg = e.get("message")
@@ -140,7 +142,7 @@ def _failure_message(out: CliOutput, events: list[dict[str, Any]]) -> str:
                 msg = e["error"].get("message")
             if isinstance(msg, str) and msg.strip():
                 return msg
-    return out.stderr
+    return ""
 
 
 class CodexCliAdapter:
@@ -187,8 +189,9 @@ class CodexCliAdapter:
         except (TypeError, ValueError):
             return _error("params.timeout 必須是數字(秒)")
         extra = params.get("extra_args") or []
-        if not isinstance(extra, list | tuple) or not all(isinstance(a, str) for a in extra):
-            return _error("params.extra_args 必須是字串清單")
+        problem = _extra_args_problem(extra)
+        if problem is not None:
+            return _error(problem)
         cwd = self._cwd(params)
         if isinstance(cwd, str):
             return _error(cwd)
@@ -208,6 +211,9 @@ class CodexCliAdapter:
                 # 找不到執行檔、argv 過長(E2BIG)、cwd 不存在等;訊息不含 argv(prompt)
                 return _error(f"無法啟動 codex 子行程:{type(exc).__name__}"
                               f"(errno {exc.errno}):{exc.strerror or '未知原因'}")
+            except ValueError:
+                # argv 含 NUL 字元(execve 不接受);訊息不含 argv
+                return _error("無法啟動 codex 子行程:引數含 NUL 字元")
             try:
                 text = Path(out_path).read_text(encoding="utf-8", errors="replace")
             except OSError:
@@ -215,7 +221,7 @@ class CodexCliAdapter:
         finally:
             try:
                 os.unlink(out_path)
-            except FileNotFoundError:
+            except OSError:
                 pass
         return self._result(out, text, signals, timeout)
 
@@ -228,8 +234,11 @@ class CodexCliAdapter:
             return _error(f"codex 逾時(超過 {timeout:g} 秒)" if timeout is not None else "codex 逾時")
         events = _events(out.stdout)
         if out.exit_code != 0:
-            message = _failure_message(out, events)
-            raw = {"exit_code": out.exit_code, "stderr": out.stderr, "message": message}
+            jsonl_msg = _jsonl_failure(events)
+            message = jsonl_msg or out.stderr
+            # stdout JSONL 的錯誤訊息也納入比對:額度/限流只出現在 JSONL 時仍能歸類
+            matched = "\n".join(s for s in (out.stderr, jsonl_msg) if s)
+            raw = {"exit_code": out.exit_code, "stderr": matched, "message": message}
             return CallResult(ok=False, text="", tokens_in=None, tokens_out=None, cost_usd=None,
                               status=classify(raw, signals),
                               error=_tail(message) or f"codex 結束碼 {out.exit_code}")

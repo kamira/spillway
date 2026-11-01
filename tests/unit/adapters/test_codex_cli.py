@@ -114,14 +114,35 @@ async def test_effort_mapping(home, level, upstream):
     assert argv[i + 1:i + 3] == ["-c", "mcp_servers={}"]
 
 
-async def test_extra_args_keep_mcp_off_and_separator(home):
-    extra = ["-c", "mcp_servers.gw.command=evil", "--sandbox", "read-only"]
+async def test_extra_args_cannot_override_mcp_off(home):
+    extra = ["-c", "mcp_servers.gw.command=x"]
     _, spy = await spy_call(home, extra_args=extra)
     argv = spy.calls[0]["argv"]
     i = argv.index("mcp_servers={}")
     assert argv[i - 1] == "-c"
-    assert argv[i + 1:i + 1 + len(extra)] == extra                 # extra_args 在固定旗標之後
-    assert argv[-2] == "--"
+    assert all(argv.index(a) < i - 1 for a in extra)              # MCP_OFF 在每個 extra arg 之後
+    assert argv[i + 1] == "--" and argv[-2] == "--"
+    assert [j for j, a in enumerate(argv) if a == "-c"][-1] == i - 1   # `--` 前最後一個 -c
+
+
+@pytest.mark.parametrize("extra", [["--", "x"], ["resume"], ["--sandbox=read-only", "x"], "--x"],
+                         ids=["separator", "bare-resume", "after-eq-option", "string"])
+async def test_bad_extra_args_rejected_without_prompt(home, extra):
+    spy = SpyRunner()
+    result = await create(ctx(spy, home)).call(dep(extra_args=extra),
+                                               req([{"role": "user", "content": "secret-prompt"}]), None)
+    assert result.status == "error" and not result.ok and "extra_args" in result.error
+    assert "secret-prompt" not in result.error
+    assert spy.calls == []
+
+
+async def test_option_values_allowed_in_extra_args(home):
+    extra = ["--sandbox", "read-only", "-c", "x=1", "--full-auto"]
+    result, spy = await spy_call(home, extra_args=extra)
+    assert result.ok, result.error
+    argv = spy.calls[0]["argv"]
+    i = argv.index("mcp_servers={}")
+    assert argv[i - 1 - len(extra):i - 1] == extra
 
 
 @pytest.mark.parametrize("text", ["--help", "-rf /", "resume --last", "resume"])
@@ -181,12 +202,6 @@ async def test_cli_runner_none_create_ok_call_error(home):
     assert await adapter.health(dep()) is True
 
 
-async def test_bad_extra_args_is_error(home):
-    spy = SpyRunner()
-    result = await create(ctx(spy, home)).call(dep(extra_args="--x"), req(), None)
-    assert result.status == "error" and spy.calls == []
-
-
 # ---- -o 暫存檔(0600、finally 刪除)、回應與 token ----------------------------------------
 
 async def test_ok_maps_output_file_and_last_usage(home):
@@ -234,6 +249,20 @@ async def test_shutdown_reason_in_error(home):
     out = CliOutput(exit_code=-15, stdout="", stderr="", killed_reason="shutdown")
     result, _ = await spy_call(home, runner=SpyRunner(out))
     assert result.status == "error" and "shutdown" in result.error
+
+
+@pytest.mark.parametrize(("message", "status"), [
+    ("You've hit your usage limit. Try again later.", "quota_exhausted"),
+    ("exceeded retry limit, last status: 429 Too Many Requests", "rate_limited"),
+])
+async def test_failure_only_in_stdout_jsonl_is_classified(home, message, status):
+    import json
+    stdout = (json.dumps({"type": "thread.started", "thread_id": "t"}) + "\n"
+              + json.dumps({"type": "error", "message": message}) + "\n")
+    out = CliOutput(exit_code=1, stdout=stdout, stderr="")
+    result, _ = await spy_call(home, runner=SpyRunner(out))
+    assert (result.status, result.ok) == (status, False)
+    assert message in result.error
 
 
 async def test_empty_output_file_is_error(home):
@@ -311,6 +340,14 @@ async def test_timeout_is_error_and_file_deleted(real):
     assert result.status == "error" and "逾時" in result.error
     rec = fake.records("codex")[-1]
     assert not Path(rec["argv"][rec["argv"].index("-o") + 1]).exists()
+
+
+async def test_nul_in_prompt_is_error(real):
+    adapter, fake = real
+    result = await adapter.call(dep(), req([{"role": "user", "content": "a\x00b"}]), None)
+    assert result.status == "error" and not result.ok and "NUL" in result.error
+    assert "a\x00b" not in result.error
+    assert fake.records("codex") == []
 
 
 async def test_missing_binary_is_error(home, tmp_path, monkeypatch):

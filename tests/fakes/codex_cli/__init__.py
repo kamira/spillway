@@ -37,6 +37,9 @@ MODE_TO_SCENARIO = {
 }
 
 
+_WIRED: set[int] = set()   # 本 harness 換上的實例的 id()
+
+
 def _contract_modules() -> list[Any]:
     """已 import 的合約測試模組(`tests.contract.test_call_status`)的 `MODULES` 中屬於 codex_cli 者。"""
     out = []
@@ -47,16 +50,19 @@ def _contract_modules() -> list[Any]:
 
 
 def _wire_instances(home: Path) -> None:
-    for info in _contract_modules():
+    infos = _contract_modules()
+    if not infos:
+        raise AssertionError("找不到合約測試的 codex_cli 模組資訊(tests.contract.test_call_status.MODULES)")
+    for info in infos:
         inst = info.instance
-        ctx = getattr(inst, "context", None)
-        if inst is None or ctx is None or info.module is None:
-            continue
-        if ctx.cli_runner is not None and getattr(inst, "_harness_wired", False) is False:
+        if inst is None or info.module is None:
+            raise AssertionError(f"codex_cli 沒有可用實例:{info.reason}")
+        if inst.context.cli_runner is not None and id(inst) not in _WIRED:
             continue   # 合約測試自己已注入 cli_runner:照用
         wired = info.module.create(dataclasses.replace(
-            ctx, cli_runner=CliRunner(term_grace=1.0, drain_timeout=1.0), data_dir=home))
-        wired._harness_wired = True
+            inst.context, cli_runner=CliRunner(term_grace=1.0, drain_timeout=1.0), data_dir=home))
+        _WIRED.discard(id(inst))
+        _WIRED.add(id(wired))
         info.instance = wired
 
 
