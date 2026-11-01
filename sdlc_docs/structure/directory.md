@@ -25,7 +25,7 @@ spillway/
 │   ├── domain.py                # 跨層值物件 Deployment、Budget、ChatRequest、CallResult(adapters.base 轉匯出);共用常數 KINDS、CLOUD_KINDS、CALL_STATUSES、LEDGER_STATUSES、COOLING_STATUSES、STATUS_SKIPPED_PRECHECK
 │   ├── store/
 │   │   ├── db.py                # 連線、PRAGMA、migration(user_version;v1→v2 的外鍵預檢、備份、交易內升級)、資料目錄鎖 spillway.lock、ConnSource / use_conn(不關閉連線)
-│   │   ├── schema.sql           # 與 spec 2.3 一致
+│   │   ├── schema.sql           # schema v1 基線(新庫先套 v1);v2 由 db.py 的 migration `_SCHEMA_V2` 套用,migration 後結果與 spec 2.3 一致
 │   │   └── repo.py              # 各表存取(全專案的 SQL 只在 store/;冷卻函式讀寫 cooldowns)
 │   ├── credentials.py
 │   ├── redact.py                # Redactor、共用實例 REDACTOR
@@ -42,7 +42,7 @@ spillway/
 │   ├── effort.py                # EffortMapper、normalize_effort、InvalidEffort
 │   ├── ledger.py                # LedgerWriter、RetentionJob
 │   ├── adapters/
-│   │   ├── base/                # 共用契約:Adapter、CallResult、AdapterContext、AdapterManifest、registry(自動發現)、classify(上游訊號歸類)、effort_to_upstream、litellm_call、api_adapter.py(LiteLLMApiAdapter,三個 API 模組共用的基底);cli_runner.py(CliRunner、CliOutput,M3a)、cli_prompt.py(messages_to_prompt,M3a)、contract.py(分層與子行程禁用規則)
+│   │   ├── base/                # 共用契約:Adapter、CallResult、AdapterContext、AdapterManifest、registry(自動發現)、classify(上游訊號歸類)、effort_to_upstream、litellm_call、api_adapter.py(LiteLLMApiAdapter,三個 API 模組共用的基底);cli_runner.py(CliRunner、CliOutput、cli_timeout,M3a)、cli_prompt.py(messages_to_prompt,M3a)、contract.py(分層與子行程禁用規則)
 │   │   ├── litellm/             # 通用後備(api/local);每個模組:__init__.py(MANIFEST、create)、adapter.py、models.yaml、README.md(API 模組的 adapter.py 為 LiteLLMApiAdapter 子類別)
 │   │   ├── claude_cli/          # 訂閱 CLI · single(M3a):claude -p
 │   │   ├── codex_cli/           # 訂閱 CLI · single(M3a):codex exec
@@ -74,15 +74,15 @@ spillway/
     │   ├── test_api_upstream.py # 假 API 上游自身的測試
     │   ├── test_cli_upstream.py # 假 CLI 與護欄自身的測試(M3a)
     │   └── <module>/            # 其他 adapter 模組自己的假上游
-    ├── contract/                # 對所有被發現的 adapter 模組參數化執行的合約測試(test_adapter_contract.py、test_call_status.py)、分層與 SQL 位置檢查(test_layering.py)、公開匯入路徑(test_public_imports*.py);無 conftest
+    ├── contract/                # 對所有被發現的 adapter 模組參數化執行的合約測試(test_adapter_contract.py、test_call_status.py)、分層與 SQL 位置檢查(test_layering.py)、公開匯入路徑(test_public_imports*.py)、排除原因值快照(test_exclude_reasons.py,M3a);輔助 fakemods.py(在暫存目錄寫出假 adapter 模組);無 conftest
     ├── unit/                    # 對應 src 模組;只有 unit/conftest.py(子目錄 adapters/、adapters_base/、routing/ 無 conftest)
     ├── integration/             # HTTP、MCP、CLI 子行程(假上游);integration/conftest.py;M3a 另有 test_init_token.py、test_graceful_shutdown.py、test_router_cli_concurrency.py
-    │   └── admin/               # 管理 API 整合測試(M2);conftest.py 的 make_app 呼叫 create_app()
+    │   └── admin/               # 管理 API 整合測試(M2);conftest.py 的 make_app 呼叫 create_app();M3a 另有 test_admin_token_rotate.py
     ├── features/                # behave 行為情境(m2_*.feature;m2c_cleanup.feature,CHG-20261101-02;m3a_cli.feature,CHG-20261101-03)
     │   ├── steps/               # 步驟檔(adapters_steps.py、common_steps.py 等:CHG-20261030-02 T15;cleanup_admin_steps.py、cleanup_health_steps.py、cleanup_ac4_steps.py:CHG-20261101-02;m3a_steps.py:CHG-20261101-03)
     │   ├── support/             # 行程內驅動 app 的 gateway(與 open_spillway 同方式)
     │   └── environment.py       # 含真實 claude/codex 護欄(M3a)
-    └── acceptance/              # AC-7 與 NFR 量測、test_operation.py(操作驗收,L4)、test_m3a_operation.py(M3a 操作驗收);輔助 seed.py(含 2 個 cli 成員)、perf.py、procs.py、results.py
+    └── acceptance/              # AC-7 與 NFR 量測、test_operation.py(操作驗收,L4)、test_m3a_operation.py(M3a 操作驗收);conftest.py(沿用 integration 的 open_spillway、test_key_env、artifacts_dir);輔助 seed.py(含 2 個 cli 成員)、perf.py、procs.py、results.py
 ```
 
 ## 資料目錄(repo 外;design D8)

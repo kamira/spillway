@@ -3,7 +3,7 @@
 - 專案:spillway · 分支:main · 版本:v1.2(2026-11-01,CHG-20261101-03:schema v2——冷卻獨立成 `cooldowns` 表、`budgets` 移除 `exhausted_until`;v1→v2 migration 的前置條件、備份與回滾;`access_token_sha256` 由 `spillway init`、serve 首次啟動、rotate 寫入;使用者於 CHG 確認閘確認,2026-11-01) · 前版 v1.1 已確認(2026-10-30,CHG-20261030-02:`access_token_sha256` 產生時機改 M3 起、`bind_host`/`port` 鍵 M2 不讀取;使用者於 CHG 確認閘確認,2026-10-30) · 前前版 v1.0 已確認(2026-10-29,使用者) · 日期:2026-11-01(UTC+0)
 - 依據:docs/spec.md 第 2 節(DDL 正本)、第 3 節(YAML);sdlc_docs/structure/design.md D2、D3
 
-**DDL 正本是 `docs/spec.md` 2.3**,本文件不重抄欄位;只記關聯、約束、列舉、設定鍵與本設計新增的部分。實作的 `schema.sql` 必須與 spec 2.3 一致,差異走 CHG。
+**DDL 正本是 `docs/spec.md` 2.3**,本文件不重抄欄位;只記關聯、約束、列舉、設定鍵與本設計新增的部分。實作的 `store/schema.sql` 是 schema v1 基線;v2(`cooldowns` 表、`budgets` 移除 `exhausted_until`)由 `store/db.py` 的 migration `_SCHEMA_V2` 套用,migration 後的結果必須與 spec 2.3 一致,差異走 CHG。
 
 ## 實體 / 資料表
 

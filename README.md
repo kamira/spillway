@@ -59,7 +59,7 @@ spillway serve           # 只綁 127.0.0.1:8787
 | codex 子行程移除 | `OPENAI_API_KEY`、`CODEX_API_KEY`、`OPENAI_BASE_URL` |
 | 兩者另移除 | 所有成員 `credential_ref` 為 `env:<變數名>` 的變數；這些變數的值也會在帳本與 payload 中被遮罩 |
 | 兩者設定 | `SPILLWAY_DEPTH=1`（避免遞迴呼叫本閘道） |
-| MCP | claude 固定加 `--strict-mcp-config`、codex 固定加 `-c mcp_servers={}`，不載入任何 MCP；`params.extra_args` 無法移除這兩個旗標 |
+| MCP | claude 固定加 `--strict-mcp-config`、codex 固定加 `-c mcp_servers={}`，用意是不載入任何 MCP；`params.extra_args` 無法移除這兩個旗標。**待確認**：codex 的 `-c mcp_servers={}` 是否完整取代（而非合併）使用者設定、claude 的 plugin／connector 提供的 MCP 是否也被 `--strict-mcp-config` 排除，尚待擁有者以真實 CLI 冒煙確認（CHG-20261101-03 已知限制） |
 
 其他說明：
 

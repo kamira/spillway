@@ -1,7 +1,7 @@
 # 邏輯結構 — Spillway
 
 - 專案:spillway · 分支:main · 版本:v1.3(2026-11-01,CHG-20261101-03:`adapters.base.cli_runner`、`adapters.base.cli_prompt`、`claude_cli`/`codex_cli` 模組、`cli` 的 `init` 與停機、Router 的 CLI 守門與停機旗標、冷卻改存 `cooldowns`、`settings` 讀寫 token 雜湊;使用者於 CHG 確認閘確認,2026-11-01) · 前版 v1.2 已確認(2026-11-01,CHG-20261101-02:`api.admin` 改為套件、新增 `api.deps`、`routing.outcome`、`adapters.base.api_adapter`、SQL 只在 store、LiteLLM 相關 logger 的 INFO 下限;使用者於 CHG 確認閘確認,2026-11-01) · 前前版 v1.1 已確認(2026-10-30,CHG-20261030-02) · v1.0 已確認(2026-10-29,使用者) · 日期:2026-11-01(UTC+0)
-- 依據:sdlc_docs/ai-guideline.md v1.0;docs/spec.md
+- 依據:sdlc_docs/ai-guideline.md v1.5;docs/spec.md
 
 ## 分層 / 模組
 
@@ -53,9 +53,9 @@ flowchart TD
     MCF[mcpconf<br/>M4]
   end
   subgraph 整合層
-    AD[adapters.base<br/>registry · manifest · AdapterContext<br/>classify · effort_to_upstream · litellm_call<br/>CliRunner〔M3〕]
-    AM2[adapters.claude_cli<br/>訂閱 · single · M3]
-    AM3[adapters.codex_cli<br/>訂閱 · single · M3]
+    AD[adapters.base<br/>registry · manifest · AdapterContext<br/>classify · effort_to_upstream · litellm_call<br/>CliRunner〔M3a〕]
+    AM2[adapters.claude_cli<br/>訂閱 · single · M3a]
+    AM3[adapters.codex_cli<br/>訂閱 · single · M3a]
     AM4[adapters.anthropic_api<br/>API · multiple]
     AM5[adapters.openai_api<br/>API · multiple]
     AM1[adapters.litellm<br/>通用後備 · multiple]

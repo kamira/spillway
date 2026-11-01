@@ -38,7 +38,7 @@ codex exec --json --skip-git-repo-check -m <model> -o <暫存檔>
 
 | 鍵 | 說明 | 預設 |
 |----|------|------|
-| `timeout` | 逾時秒數 | 600 |
+| `timeout` | 逾時秒數,必須是正數(bool、非有限值、≤ 0 回 `error`);`null` 為不設上限 | 600 |
 | `extra_args` | 附加在固定旗標之後、`--` 之前的引數(字串清單) | `[]` |
 | `cwd` | 子行程工作目錄 | 資料目錄下的 `work/codex`(不存在時建立) |
 | `signals` | 覆寫上游訊號判定規則(spec 5.3.1) | manifest `default_signals` |
