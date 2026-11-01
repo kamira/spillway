@@ -375,22 +375,20 @@ def test_try_acquire_release_in_flight():
 async def test_create_app_injects_same_cli_runner():
     from spillway.app import create_app
 
-    """一個 app 一個 CliRunner:lifespan 每次建立的 AdapterContext 都拿到同一實例;不同 app 不共用。
-
-    (不放 `app.state`:`tests/integration/admin/test_admin_app_state.py` 斷言 app.state 名稱集合,
-    不在本 CHG 允許清單內;由主 agent 決定 T8 取得 runner 的方式。)
-    """
+    """`app.state.cli_runner` 與 AdapterContext.cli_runner 為同一實例;lifespan 重進仍同一個;不同 app 不共用。"""
     app = create_app()
+    runner = app.state.cli_runner
+    assert isinstance(runner, CliRunner)
     async with app.router.lifespan_context(app):
         ctx = app.state.registry._context
         assert isinstance(ctx, AdapterContext)
-        runner = ctx.cli_runner
-        assert isinstance(runner, CliRunner)
+        assert ctx.cli_runner is runner is app.state.cli_runner
     async with app.router.lifespan_context(app):
         assert app.state.registry._context.cli_runner is runner
     other = create_app()
     async with other.router.lifespan_context(other):
-        assert other.state.registry._context.cli_runner is not runner
+        assert other.state.cli_runner is not runner
+        assert other.state.registry._context.cli_runner is other.state.cli_runner
 
 
 def test_adapter_context_cli_runner_defaults_to_none(clock):
