@@ -46,9 +46,7 @@ def _stored(conn) -> list[tuple[str, str]]:
     return [tuple(r) for r in conn.execute("SELECT key, value FROM settings").fetchall()]
 
 
-def test_comment_says_m3_still_only_loopback():
-    src = Path(settings.__file__).read_text(encoding="utf-8")
-    assert "M3 仍只允許 127.0.0.1" in src
+def test_m3_still_only_loopback():
     assert settings.ALLOWED_HOSTS == frozenset({"127.0.0.1"})
 
 
@@ -84,8 +82,16 @@ def test_rotate_changes_hash(conn):
     assert len(_stored(conn)) == 1
 
 
-def test_settings_layer_does_not_read_bind_host_or_port(conn):
-    """D16 不變:settings 表的 bind_host、port 鍵不影響綁定(決策 17)。"""
-    conn.execute("INSERT INTO settings(key, value) VALUES ('bind_host', '0.0.0.0'), ('port', '1')")
-    assert settings.DEFAULT_HOST == "127.0.0.1" and settings.DEFAULT_PORT == 8787
-    assert not settings.is_allowed_host("0.0.0.0")
+def test_serve_ignores_bind_host_and_port_rows(monkeypatch):
+    """D16 不變(決策 17):資料目錄的資料庫有 bind_host、port 列時,serve 仍用 127.0.0.1:8787。"""
+    from spillway import cli
+
+    c = connect(settings.db_path())
+    try:
+        c.execute("INSERT INTO settings(key, value) VALUES ('bind_host', '0.0.0.0'), ('port', '1')")
+    finally:
+        c.close()
+    seen = []
+    monkeypatch.setattr(cli, "_run_server", lambda host, port: seen.append((host, port)) or 0)
+    assert cli.main(["serve"]) == 0
+    assert seen == [("127.0.0.1", 8787)]

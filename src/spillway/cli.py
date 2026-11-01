@@ -20,7 +20,8 @@ serve:
 
 init(決策 14、15):建立資料目錄與 `work/claude`、`work/codex`;在資料目錄鎖內開啟資料庫(執行
 migration,含舊版庫的備份;不做埠檢查)並產生存取 token。token 明文只印到 stdout 一次(單獨一行),
-資料庫只存 SHA-256。已有 token 時印「已存在,未變更」並回 0;`--rotate` 才重新產生。鎖被占用(serve
+資料庫只存 SHA-256;其他提示一律走 stderr(`TOKEN=$(spillway init)` 只會拿到 token 或空字串)。
+已有 token 時在 stderr 印「已存在,未變更」並回 0;`--rotate` 才重新產生。鎖被占用(serve
 正在執行)或 migration 失敗時回 `EXIT_STARTUP_FAILED`。
 
 `main(argv)` 回傳退出碼;`python -m spillway` 以 `SystemExit(main())` 結束。
@@ -142,7 +143,7 @@ def _init(rotate: bool) -> int:
         _err(f"init 失敗:{type(exc).__name__}: {exc}")
         return EXIT_STARTUP_FAILED
     if token is None:
-        print("spillway: 存取 token 已存在,未變更(要重新產生請執行 spillway init --rotate)")
+        _err("存取 token 已存在,未變更(要重新產生請執行 spillway init --rotate)")
         return 0
     _err(f"資料目錄 {home};已產生存取 token(印在 stdout,只顯示這一次;資料庫只存 SHA-256 雜湊)")
     print(token, flush=True)
@@ -162,6 +163,6 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
     if not settings.is_allowed_host(args.host):
         allowed = ", ".join(sorted(settings.ALLOWED_HOSTS))
-        print(f"spillway: 拒絕綁定 {args.host!r}:M3 仍只允許 {allowed}", file=sys.stderr)
+        _err(f"拒絕綁定 {args.host!r}:M3 仍只允許 {allowed}")
         return EXIT_USAGE
     return _run_server(args.host, args.port)

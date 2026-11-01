@@ -6,6 +6,8 @@ CHG-20261101-03 決策 14、17)。
   `secrets.token_urlsafe(32)` 產生,資料庫只存 SHA-256 十六進位;明文只回給呼叫端一次
   (`spillway init`、serve 首次啟動的 stderr 一行、`POST /api/settings/token/rotate`)。
   本模組不記錄、不印出 token;M3a 不以 token 做任何驗證(M3b 的 `/mcp/*` 才比對雜湊)。
+- 匯入方向:本模組為了 token 輔助函式匯入 `spillway.store.*`(`repo.get_setting`/`set_setting`、
+  `transaction`;SQL 仍只在 store);`spillway.store` 永遠不可匯入本模組,否則形成循環匯入。
 """
 from __future__ import annotations
 

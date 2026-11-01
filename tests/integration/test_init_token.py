@@ -140,9 +140,40 @@ def test_init_twice_is_idempotent(home, capsys):
     before = _token_hash(home / "spillway.db")
     assert cli.main(["init"]) == 0
     out, err = capsys.readouterr()
-    assert EXISTS_MSG in out + err
-    assert token not in out + err
+    assert out == ""                 # `TOKEN=$(spillway init)` 不會拿到提示文字
+    assert EXISTS_MSG in err
+    assert token not in err
     assert _token_hash(home / "spillway.db") == before
+
+
+def test_init_rotate_lock_held_keeps_hash(home, capsys):
+    assert cli.main(["init"]) == 0
+    before = _token_hash(home / "spillway.db")
+    capsys.readouterr()
+    with _foreign_lock(home):
+        assert cli.main(["init", "--rotate"]) == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "serve" in err
+    assert _token_hash(home / "spillway.db") == before
+
+
+def _make_newer(path: Path) -> None:
+    connect(path).close()
+    c = sqlite3.connect(str(path), isolation_level=None)
+    try:
+        c.execute(f"PRAGMA user_version = {store_db.SCHEMA_VERSION + 1}")
+    finally:
+        c.close()
+
+
+def test_init_newer_schema_exits_1(home, capsys):
+    _make_newer(home / "spillway.db")
+    assert cli.main(["init"]) == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "SchemaVersionError" in err
+    assert _user_version(home / "spillway.db") == store_db.SCHEMA_VERSION + 1
 
 
 def test_init_rotate_changes_hash(home, capsys):
@@ -189,9 +220,11 @@ async def test_lifespan_issues_token_once(home, clock, capfd, caplog):
     app = app_module.create_app(clock=clock, db_path=path, issue_token=True)
     async with app.router.lifespan_context(app):
         pass
-    _, err = capfd.readouterr()
+    out, err = capfd.readouterr()
     tokens = _notice_tokens(err)
-    assert len(tokens) == 1 and len(err.strip().splitlines()) >= 1
+    assert len(tokens) == 1
+    assert err.count(tokens[0]) == 1          # 只印一次
+    assert tokens[0] not in out
     assert _token_hash(path) == settings.hash_access_token(tokens[0])
     assert tokens[0] not in caplog.text
     app2 = app_module.create_app(clock=clock, db_path=path, issue_token=True)
@@ -310,8 +343,9 @@ def test_subprocess_init_prints_token_once(home):
     assert _token_hash(home / "spillway.db") == settings.hash_access_token(token)
     r2 = _run(home, "init")
     assert r2.returncode == 0, r2.stderr
-    assert EXISTS_MSG in r2.stdout + r2.stderr
-    assert token not in r2.stdout + r2.stderr
+    assert r2.stdout == ""
+    assert EXISTS_MSG in r2.stderr
+    assert token not in r2.stderr
     assert _token_hash(home / "spillway.db") == settings.hash_access_token(token)
     assert (home / "work" / "claude").is_dir() and (home / "work" / "codex").is_dir()
     assert _files_containing(home, token) == []
@@ -372,6 +406,21 @@ def test_subprocess_serve_lock_held_does_not_migrate(home):
     assert "serve" in r.stderr
     assert _user_version(home / "spillway.db") == 1
     assert _backups(home) == []
+
+
+def test_subprocess_serve_newer_schema_exits_3(home):
+    """資料庫比程式新:lifespan 的 SchemaVersionError → 啟動失敗,uvicorn 以 3 退出。"""
+    _make_newer(home / "spillway.db")
+    p = _serve(home, _free_port())
+    try:
+        out, err = p.communicate(timeout=60)
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.communicate()
+    assert p.returncode == 3, err
+    assert _user_version(home / "spillway.db") == store_db.SCHEMA_VERSION + 1
+    assert _notice_tokens(err) == []
 
 
 def test_subprocess_serve_lock_held_by_in_process_holder(home):
