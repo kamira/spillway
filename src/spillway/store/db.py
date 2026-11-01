@@ -14,12 +14,17 @@ Migration(D3):以 `PRAGMA user_version` 記版本。`MIGRATIONS` 為 `(版本, S
 其餘重讀後發現已是目標版本就直接 COMMIT),再逐一套用;所有 DDL 與 `user_version` 更新
 在同一交易內,失敗時整個回滾、版本不前進。
 空庫只建表與索引,不寫入任何資料列(spec 2)。庫的版本比程式新時丟 `SchemaVersionError`。
+
+連線來源(CHG-20261101-02 決策 5):`ConnSource` 為 `sqlite3.Connection` 或回傳連線的零參數
+callable;`use_conn(source)` 取得一條連線供 `with` 區塊使用,**一律不關閉**——傳入連線時直接交回,
+傳入 callable 時呼叫一次並交回。關閉責任只在開啟者(Router 的 `close_conn`、
+`api.deps.request_conn`、`RetentionScheduler`)。
 """
 from __future__ import annotations
 
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from importlib import resources
 from itertools import count
@@ -27,6 +32,9 @@ from pathlib import Path
 
 BUSY_TIMEOUT_MS = 5000
 _WAL_RETRY_SLEEP_S = 0.01
+
+
+ConnSource = sqlite3.Connection | Callable[[], sqlite3.Connection]
 
 
 class SchemaVersionError(RuntimeError):
@@ -150,3 +158,21 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
                 conn.execute("ROLLBACK")
             raise
         conn.execute("COMMIT")
+
+
+@contextmanager
+def use_conn(source: ConnSource) -> Iterator[sqlite3.Connection]:
+    """由 `ConnSource` 取得一條連線;離開時**不關閉**(含例外)。
+
+    `source` 為連線時直接交回;為零參數 callable 時呼叫一次並交回其結果(例如 Router 綁定的
+    `_conn`,回傳本次請求 contextvar 中的連線)。其他型別丟 `TypeError`。
+    """
+    # isinstance 必須在 callable() 之前:sqlite3.Connection 本身也有 `__call__`(callable() 為 True)
+    if isinstance(source, sqlite3.Connection):
+        yield source
+    elif callable(source):
+        yield source()
+    else:
+        raise TypeError(
+            f"ConnSource 必須是 sqlite3.Connection 或零參數 callable,收到 {type(source).__name__}"
+        )

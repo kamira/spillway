@@ -1,13 +1,47 @@
-"""Effort 來源優先序與降級(spec 6.1、6.2;決策 12)。
+"""Effort 正規化、來源優先序與降級(spec 6.1、6.2;決策 12、29)。
 
-本模組只做「挑選與降級」,回傳內部等級字串;內部等級轉上游值由
-`spillway.adapters.base.effort_to_upstream` 負責。
+- `normalize_effort(value)` / `InvalidEffort`:請求 `reasoning_effort` 正規化(CHG-20261030-02 決策 29;
+  CHG-20261101-02 決策 8 由 `routing.router` 移入,`spillway.routing` 與 `spillway.routing.router` 轉匯出)。
+- `EffortMapper.pick`:挑選與降級,回傳內部等級字串;內部等級轉上游值由
+  `spillway.adapters.base.effort_to_upstream` 負責。
 """
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 from spillway.domain import EFFORTS
+
+__all__ = ["EffortMapper", "InvalidEffort", "normalize_effort"]
+
+_EFFORT_ALIASES = {"minimal": "none"}
+
+
+class InvalidEffort(ValueError):
+    """請求的 `reasoning_effort` 不在五級內(決策 29;T13 轉 422 `validation_error`)。
+
+    訊息不回顯原值以外的內容;原值放在 `value`。
+    """
+
+    def __init__(self, value: object) -> None:
+        super().__init__(
+            f"reasoning_effort 不合法:{value!r},只可為 {', '.join(EFFORTS)}(或 minimal)"
+        )
+        self.value = value
+
+
+def normalize_effort(value: object) -> str | None:
+    """決策 29:None 或空白字串 → None;不分大小寫;`minimal` → `none`;其餘不在五級內丟 `InvalidEffort`。"""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise InvalidEffort(value)
+    v = value.strip().lower()
+    if not v:
+        return None
+    v = _EFFORT_ALIASES.get(v, v)
+    if v not in EFFORTS:
+        raise InvalidEffort(value)
+    return v
 
 
 def _check(level: str, what: str) -> None:

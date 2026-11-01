@@ -14,9 +14,9 @@
 
 | # | 指令 | 通過標準 | 涵蓋條件 | 來源 ACC | 範圍標籤 |
 |---|------|----------|----------|----------|----------|
-| R1 | `python -m pytest -q` | exit 0;0 failed(ACC-20261031-01 時為 1089 passed) | 單元、合約、整合、fakes 與 acceptance 全部;含 AC-19 合約測試、管理 API 錯誤碼(FR-13、FR-25)、`stream: true` 400、retention 每小時排程、AC-7、NFR-1、NFR-2、NFR-3、NFR-5 | ACC-20261031-01 | 全部 |
-| R2 | `python -m behave tests/features` | exit 0;5 features、18 scenarios、155 steps 全過、0 skipped | AC-3、AC-4、AC-5、AC-13、AC-14、AC-15、AC-18、AC-19、4.2.5(api 版)、4.2.6(api 版) | ACC-20261031-01 | routing、quota、estimate、ledger、redact、adapters、api |
-| R3 | `python -m pytest tests/acceptance -q -rs` | 9 passed 且**必須 0 skipped**(缺 lsof 時 NFR-3 與操作驗收會被跳過;驗收平台 macOS 有 lsof,出現 skipped 即視為未通過) | AC-7、NFR-1(dry-run P95 < 20 ms)、NFR-2(dashboard P95 < 200 ms)、NFR-3(只聽 127.0.0.1)、NFR-5(payload 過期刪除)、Acceptance operation、NFR-4 預掃描(不計入 M2 閘門) | ACC-20261031-01 | api、cli、routing、ledger、store |
+| R1 | `python -m pytest -q` | exit 0;0 failed(ACC-20261031-01 時為 1089 passed;ACC-20261101-01 時為 1340 passed) | 單元、合約、整合、fakes 與 acceptance 全部;含 AC-19 合約測試、管理 API 錯誤碼(FR-13、FR-25)、`stream: true` 400、retention 每小時排程、AC-7、NFR-1、NFR-2、NFR-3、NFR-5 | ACC-20261031-01 | 全部 |
+| R2 | `python -m behave tests/features` | exit 0;全部情境全過、0 skipped(ACC-20261031-01 時 5 features、18 scenarios、155 steps;ACC-20261101-01 時 6 features、22 scenarios、183 steps) | AC-3、AC-4、AC-5、AC-13、AC-14、AC-15、AC-18、AC-19、4.2.5(api 版)、4.2.6(api 版) | ACC-20261031-01 | routing、quota、estimate、ledger、redact、adapters、api |
+| R3 | `python -m pytest tests/acceptance -q -rs` | 全數 passed(ACC-20261031-01 時 9、ACC-20261101-01 時 10)且**必須 0 skipped**(缺 lsof 時 NFR-3 與操作驗收會被跳過;驗收平台 macOS 有 lsof,出現 skipped 即視為未通過) | AC-7、NFR-1(dry-run P95 < 20 ms)、NFR-2(dashboard P95 < 200 ms)、NFR-3(只聽 127.0.0.1)、NFR-5(payload 過期刪除)、Acceptance operation、NFR-4 預掃描(不計入 M2 閘門) | ACC-20261031-01 | api、cli、routing、ledger、store |
 
 R1 與 R2 合起來就是 CHG-20261030-02 的本機閘(`python -m pytest -q && python -m behave tests/features`)。
 
@@ -37,6 +37,13 @@ R1 與 R2 合起來就是 CHG-20261030-02 的本機閘(`python -m pytest -q && p
 | R14 | NFR-4 預掃描:資料庫與日誌無金鑰明文(不計入 M2 閘門;M4 閘門才正式驗收) | `tests/acceptance/test_nfr4_prescan.py` | ACC-20261031-01 | 安全 |
 | R15 | 管理 API:CRUD、錯誤碼 validation_error、not_found、conflict、provider_single、member_not_in_target、payload_expired;決策 53、54 | `tests/integration/admin/` | ACC-20261031-01 | api(admin) |
 | R16 | OpenAI 相容端點:`stream: true` 回 400 `streaming_unsupported`、route_not_found、no_candidate | `tests/integration/test_errors_openai.py`、`tests/integration/test_openai_api.py` | ACC-20261031-01 | api(openai) |
+| R20 | 憑證鍵名正規化比對(完全比對集與複合字根,不誤擋 `max_tokens` 等)、整棵 params(含 signals)比對、寫入時 `validate_signals`(null 視同未覆寫)、422 不回顯值 | `tests/integration/admin/test_admin_secret_keys.py`、`tests/features/m2c_cleanup.feature` | ACC-20261101-01 | api(admin)、安全 |
+| R21 | 管理 API PUT/DELETE 後健康快取失效(經 route;含對照組);DEBUG 下 LiteLLM 與 openai SDK 不印出 prompt(含無下限對照組);七個 logger 低於 INFO 一律設 INFO | `tests/integration/admin/test_admin_health_invalidate.py`、`tests/unit/adapters_base/test_litellm_logger.py`、`tests/unit/routing/test_filter.py` | ACC-20261101-01 | routing、adapters、安全 |
+| R22 | 清理排程提前量 2×poll:抖動 ≤ poll 時間隔 ≤ interval(含 1×poll 對照組);NFR-5 過期起 ≤ 1 小時刪除 | `tests/integration/test_retention_schedule.py`、`tests/acceptance/test_nfr5_payload_expiry.py` | ACC-20261101-01 | ledger |
+| R23 | 連線取得:`use_conn` 不關閉、Router 一次請求一條連線、`request_conn` 開關數相等且在事件迴圈執行緒 | `tests/unit/store/test_db_conn.py`、`tests/integration/test_request_conn.py` | ACC-20261101-01 | store、api |
+| R24 | 公開匯入路徑與常數不變(admin `__all__`、routing 兩層 `__all__`、domain 常數與 admin `Literal`/schema CHECK 一致、adapter `_seam` 替換點隔離) | `tests/contract/test_public_imports.py`、`tests/contract/test_public_imports_admin.py`、`tests/contract/test_public_imports_routing.py`、`tests/unit/test_domain_constants.py`、`tests/unit/adapters_base/test_api_adapter_seams.py` | ACC-20261101-01 | api、routing、adapters |
+| R25 | SQL 只在 `src/spillway/store/`(Global Constraints 定義的 AST 規則);repo 查詢與搬移前 SQL 等價、dashboard 單一 GROUP BY | `tests/contract/test_layering.py`、`tests/unit/store/test_repo_queries.py` | ACC-20261101-01 | store |
+| R26 | 驗收追蹤補測:keyring 端到端(記憶體後端)、DELETE 連帶刪除與孤兒列、migration 表名衝突回滾(含最後一張表)、AC-4 無 seed 情境、`_AdminRoute` 在無 app handler 下的 422/404 | `tests/integration/test_keyring_credential.py`、`tests/integration/admin/test_admin_delete_cascade.py`、`tests/unit/store/test_migration_nonempty.py`、`tests/integration/admin/test_admin_route_class.py` | ACC-20261101-01 | ledger、store、api、routing |
 
 ## Interaction spec(M2)
 
@@ -46,7 +53,7 @@ R1 與 R2 合起來就是 CHG-20261030-02 的本機閘(`python -m pytest -q && p
 | R18 | `python -m pytest tests/acceptance/test_operation.py -q` | http-log.jsonl,每行只有 method、path、status、elapsed_ms,`sk-` 命中 0 | ACC-20261031-01 | api、安全 |
 | R19 | `python -m pytest tests/contract -q --junitxml=artifacts/m2/contract.xml` | contract.xml,failures=0、errors=0 | ACC-20261031-01 | adapters |
 
-產物目錄 artifacts/m2/ 不進版控,每次執行重新產生。
+產物目錄 artifacts/m2/(與 CHG-20261101-02 的 artifacts/m2c/)不進版控,每次執行重新產生。
 
 ## 不在迴歸集內的條件
 

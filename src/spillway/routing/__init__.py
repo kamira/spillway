@@ -2,9 +2,10 @@
 
 管線:`Resolver`(4.1)→ `CandidateFilter`(4.2)→ `OrderPlanner`(4.3)→ `SlotSelector`(4.4)。
 各元件可單獨測試,也對應 dry-run `Plan` 的中間結果。
+`CLOUD_KINDS` 定義在 `spillway.domain`,此處轉匯出(CHG-20261101-02 決策 6)。
 """
+from spillway.domain import CLOUD_KINDS
 from spillway.routing.filter import (
-    CLOUD_KINDS,
     EXCLUDE_REASONS,
     HEALTH_PROBE_TIMEOUT,
     HEALTH_TTL,
@@ -38,17 +39,17 @@ __all__ = [
 ]
 
 # T12(CHG-20261030-02):Router 與其回傳型別(只追加匯出)
-from spillway.routing.router import (  # noqa: E402
+# 回傳型別定義在 `routing.outcome`(CHG-20261101-02 決策 10);effort 定義在 `spillway.effort`(決策 8)
+from spillway.effort import InvalidEffort, normalize_effort  # noqa: E402
+from spillway.routing.outcome import (  # noqa: E402
     AttemptInfo,
-    InvalidEffort,
     Plan,
     PlanEntry,
     PlanExcluded,
     PlanSlot,
     RouteOutcome,
-    Router,
-    normalize_effort,
 )
+from spillway.routing.router import Router  # noqa: E402
 
 __all__ += [
     "Router", "RouteOutcome", "AttemptInfo", "Plan", "PlanSlot", "PlanEntry", "PlanExcluded",

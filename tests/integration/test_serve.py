@@ -20,7 +20,7 @@ from spillway import cli
 from spillway.store import repo
 from spillway.store.db import connect
 from tests.contract.fakemods import write_module
-from tests.integration.conftest import local_member
+from tests.helpers import local_member
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from spillway.domain import Budget, Deployment
+from spillway.domain import STATUS_SKIPPED_PRECHECK, Budget, Deployment
 from spillway.clock import from_iso, to_iso
 from spillway.store.db import transaction
 
@@ -119,6 +119,26 @@ def list_deployments(conn: sqlite3.Connection, *, enabled_only: bool = False) ->
         sql += " WHERE enabled = 1"
     rows = conn.execute(sql + " ORDER BY id").fetchall()
     return [_deployment_from_row(conn, r) for r in rows]
+
+
+def deployment_exists(conn: sqlite3.Connection, dep_id: str) -> bool:
+    """成員是否存在。"""
+    return conn.execute("SELECT 1 FROM deployments WHERE id = ?", (dep_id,)).fetchone() is not None
+
+
+def provider_member_ids(conn: sqlite3.Connection, provider: str, *, exclude_id: str) -> list[str]:
+    """同 provider 的成員 id(排除 `exclude_id`,依 id 排序);管理 API 的 cardinality 檢查
+    (spec 7.6.5)用,呼叫端負責交易。"""
+    rows = conn.execute(
+        "SELECT id FROM deployments WHERE provider = ? AND id != ? ORDER BY id",
+        (provider, exclude_id),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def list_kinds_providers(conn: sqlite3.Connection) -> list[tuple[str, str]]:
+    """每個成員的 `(kind, provider)`(順序不保證);`GET /api/adapters` 計算模組成員數用。"""
+    return [(r[0], r[1]) for r in conn.execute("SELECT kind, provider FROM deployments")]
 
 
 def delete_deployment(conn: sqlite3.Connection, dep_id: str) -> bool:
@@ -440,6 +460,21 @@ def list_ledger(
     offset: int = 0,
 ) -> list[LedgerRow]:
     """依條件列出帳本,新到舊(ts DESC, id DESC)。`since` 含、`until` 不含。"""
+    where, args = _ledger_where(route_name, deployment_id, status, since, until)
+    sql = "SELECT * FROM usage_ledger" + where
+    sql += " ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
+    args += [-1 if limit is None else limit, offset]
+    return [_ledger_from_row(r) for r in conn.execute(sql, args)]
+
+
+def _ledger_where(
+    route_name: str | None,
+    deployment_id: str | None,
+    status: str | None,
+    since: datetime | None,
+    until: datetime | None,
+) -> tuple[str, list[Any]]:
+    """`list_ledger` 與 `count_ledger` 共用的篩選條件:回傳 `(" WHERE …" 或 "", 參數)`。"""
     where: list[str] = []
     args: list[Any] = []
     for col, val in (("route_name", route_name), ("deployment_id", deployment_id), ("status", status)):
@@ -452,12 +487,113 @@ def list_ledger(
     if until is not None:
         where.append("ts < ?")
         args.append(to_iso(until))
-    sql = "SELECT * FROM usage_ledger"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
-    args += [-1 if limit is None else limit, offset]
-    return [_ledger_from_row(r) for r in conn.execute(sql, args)]
+    return (" WHERE " + " AND ".join(where) if where else ""), args
+
+
+def count_ledger(
+    conn: sqlite3.Connection,
+    *,
+    route_name: str | None = None,
+    deployment_id: str | None = None,
+    status: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> int:
+    """符合條件的帳本列數(條件同 `list_ledger`;管理 API 分頁的 `total`)。
+
+    與 `list_ledger` 是兩條獨立敘述,呼叫端不包交易(CHG-20261101-02 決策審議 D25)。"""
+    where, args = _ledger_where(route_name, deployment_id, status, since, until)
+    return int(conn.execute("SELECT COUNT(*) FROM usage_ledger" + where, args).fetchone()[0])
+
+
+def ledger_spend(
+    conn: sqlite3.Connection,
+    dep_id: str,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> float:
+    """成員的 `cost_usd` 加總(不分 status,NULL 不計;沒有列時 0.0)。
+
+    `since` 為 None 時為累計;否則取 `ts` ∈ [since, until)(兩者須同時給)。
+    ts 為固定格式 UTC 字串,可字典序比較。供 `QuotaService.remaining()`。"""
+    sql = "SELECT COALESCE(SUM(cost_usd), 0) FROM usage_ledger WHERE deployment_id = ?"
+    args: list[Any] = [dep_id]
+    if since is not None:
+        assert until is not None
+        sql += " AND ts >= ? AND ts < ?"
+        args += [to_iso(since), to_iso(until)]
+    return float(conn.execute(sql, args).fetchone()[0])
+
+
+def recent_tokens_out(
+    conn: sqlite3.Connection, dep_id: str, route_name: str | None, limit: int
+) -> list[int]:
+    """同 route 與成員最近 `limit` 筆 `status = 'ok'` 且 `tokens_out` 非 NULL 的 tokens_out(新到舊,
+    `ts DESC, id DESC`)。`route_name=None` 以 `route_name IS NULL` 比對(`local/` 直呼);
+    NULL 的 tokens_out 不佔名額。供 `Estimator.recent_tokens_out()`(spec 5.4.3)。"""
+    sql = (
+        "SELECT tokens_out FROM usage_ledger "
+        "WHERE deployment_id = ? AND status = 'ok' AND tokens_out IS NOT NULL AND "
+        + ("route_name IS NULL" if route_name is None else "route_name = ?")
+        + " ORDER BY ts DESC, id DESC LIMIT ?"
+    )
+    args: list[Any] = [dep_id]
+    if route_name is not None:
+        args.append(route_name)
+    args.append(limit)
+    return [int(r[0]) for r in conn.execute(sql, args)]
+
+
+# ---------------------------------------------------------------- dashboard 彙總(NFR-2)
+# 查詢數與成員數無關:成員與 budgets 一次 JOIN、每種相異期間一次 GROUP BY 加總、近 24 小時
+# 請求數與近 7 天花費合併一次 GROUP BY。不可改成逐成員查詢(CHG-20261101-02 決策審議 D24)。
+
+
+def dashboard_members(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """每個現存成員一列(依 id),LEFT JOIN budgets。欄位:`id`、`model_name`、`kind`、`provider`、
+    `enabled`、`b_type`、`limit_amount`、`window`、`reset_anchor`、`exhausted_until`
+    (budgets 欄位為原始值,沒有 budgets 列時為 NULL)、`has_budget`(0/1)。"""
+    return conn.execute(
+        "SELECT d.id, d.model_name, d.kind, d.provider, d.enabled, b.type AS b_type, "
+        "b.limit_amount, b.window, b.reset_anchor, b.exhausted_until, "
+        "b.deployment_id IS NOT NULL AS has_budget "
+        "FROM deployments d LEFT JOIN budgets b ON b.deployment_id = d.id ORDER BY d.id"
+    ).fetchall()
+
+
+def spend_by_deployment(
+    conn: sqlite3.Connection, since: datetime | None, until: datetime | None
+) -> dict[str | None, float]:
+    """單一 `GROUP BY deployment_id` 查詢:各 deployment_id 的 `cost_usd` 加總(不分 status,
+    NULL 不計)。`since` 為 None 時為累計,否則 `ts` ∈ [since, until)。含孤兒列與
+    deployment_id 為 NULL 的列(鍵 None),由呼叫端只取現存成員。"""
+    sql = "SELECT deployment_id, COALESCE(SUM(cost_usd), 0) FROM usage_ledger"
+    args: list[Any] = []
+    if since is not None:
+        assert until is not None
+        sql += " WHERE ts >= ? AND ts < ?"
+        args = [to_iso(since), to_iso(until)]
+    sql += " GROUP BY deployment_id"
+    return {d: float(s) for d, s in conn.execute(sql, args)}
+
+
+def recent_activity(
+    conn: sqlite3.Connection, *, since_24h: datetime, since_7d: datetime
+) -> dict[str | None, tuple[int, float]]:
+    """單一 `GROUP BY deployment_id` 查詢:`{deployment_id: (近 24 小時列數, 近 7 天花費)}`。
+
+    只含 `ts ≥ since_7d` 有列的 deployment_id;列數只計 `ts ≥ since_24h` 且 status 不是
+    `skipped_precheck`(沒有送出請求)的列;花費不分 status、NULL 不計。"""
+    return {
+        d: (int(n24), float(s7))
+        for d, n24, s7 in conn.execute(
+            "SELECT deployment_id, "
+            "SUM(CASE WHEN ts >= ? AND status != ? THEN 1 ELSE 0 END), "
+            "COALESCE(SUM(cost_usd), 0) "
+            "FROM usage_ledger WHERE ts >= ? GROUP BY deployment_id",
+            (to_iso(since_24h), STATUS_SKIPPED_PRECHECK, to_iso(since_7d)),
+        )
+    }
 
 
 @dataclass(frozen=True)

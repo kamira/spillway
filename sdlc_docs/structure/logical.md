@@ -1,31 +1,32 @@
 # 邏輯結構 — Spillway
 
-- 專案:spillway · 分支:main · 版本:v1.1(2026-10-30,CHG-20261030-02:quota 移除訊號判定、adapters.base 擴充、M3/M4 標註里程碑;使用者於 CHG 確認閘確認,2026-10-30) · 前版 v1.0 已確認(2026-10-29,使用者) · 日期:2026-10-30(UTC+0)
+- 專案:spillway · 分支:main · 版本:v1.2(2026-11-01,CHG-20261101-02:`api.admin` 改為套件、新增 `api.deps`、`routing.outcome`、`adapters.base.api_adapter`、SQL 只在 store、LiteLLM 相關 logger 的 INFO 下限;使用者於 CHG 確認閘確認,2026-11-01) · 前版 v1.1 已確認(2026-10-30,CHG-20261030-02) · 前前版 v1.0 已確認(2026-10-29,使用者) · 日期:2026-11-01(UTC+0)
 - 依據:sdlc_docs/ai-guideline.md v1.0;docs/spec.md
 
 ## 分層 / 模組
 
 | 層 | 模組 | 職責 | 依賴 | 回應需求 |
 |----|------|------|------|----------|
-| 介面層 | `api.openai` | `/v1/chat/completions`、`/v1/models`;回應 header(帳本由 Router 寫入,本模組只做 HTTP 轉換) | `routing`、`store`(`/v1/models` 讀清單)、`redact`(503 訊息防線)、`domain` | FR-2、FR-13 |
-| 介面層 | `api.admin` | `/api/*` 管理端點(CRUD、order、dry-run、estimate、ledger、config〔M4〕、settings、`/api/adapters` 模組與可用模型) | `store`、`routing`、`estimate`、`quota`、`ledger`、`credentials`、`redact`、`domain`、`clock`、`configio`〔M4〕、`mcpconf`〔M4〕、`adapters.base` | FR-13、FR-21、FR-24 |
+| 介面層 | `api.openai` | `/v1/chat/completions`、`/v1/models`;回應 header(帳本由 Router 寫入,本模組只做 HTTP 轉換) | `routing`、`effort`(`normalize_effort`)、`api.deps`、`store`(`/v1/models` 讀清單)、`redact`(503 訊息防線)、`domain` | FR-2、FR-13 |
+| 介面層 | `api.admin`(套件) | `/api/*` 管理端點(CRUD、order、dry-run、estimate、ledger、config〔M4〕、settings、`/api/adapters` 模組與可用模型)。子模組(CHG-20261101-02 決策 9):`common`(錯誤工具、`_AdminRoute`、`router` 本體、共用 helper)、`models`(成員、群組、route 的請求 body 模型,含憑證掃描與 `validate_signals` 的 validator)、`secrets`(憑證鍵名與值樣式掃描,design D26)、`deployments`(含 test-call)、`groups`、`routes`(含 order)、`planning`(dry-run、estimate)、`ledger`、`settings`、`dashboard`、`adapters`;`__init__` 組 `router`(`__all__ == ["router"]`);logger 名稱一律 `spillway.api.admin` | `store`、`routing`、`effort`(`normalize_effort`)、`api.deps`、`estimate`、`quota`、`ledger`、`credentials`、`redact`、`domain`、`clock`、`configio`〔M4〕、`mcpconf`〔M4〕、`adapters.base` | FR-13、FR-21、FR-24 |
+| 介面層 | `api.deps` | API 層的連線取得 `request_conn(request)`:每次呼叫以 `request.app.state.conn_factory()` 開一條、離開 `with` 時關閉(design D27);`api.openai` 與 `api.admin` 共用 | —(只用標準庫 `sqlite3`;連線工廠由 `app` 注入於 `app.state`) | FR-13 |
 | 介面層 | `mcp.server`(M3) | `/mcp/<group>` Streamable HTTP;`ask`/`list_routes`/`quota_status`;遞迴防護 | `routing`、`quota`、`store` | FR-18 |
 | 介面層 | `mcp.bridge`(M3) | `spillway mcp-stdio`:stdio ↔ HTTP 轉發,`SPILLWAY_DEPTH` → header | (只依 HTTP) | FR-18 |
 | 介面層 | `web`(M4) | 7 個畫面(伺服端渲染 + 少量 JS),只呼叫 `/api/*` | `api.admin`(經 HTTP) | FR-20、FR-22 |
 | 介面層 | `cli` | `spillway serve`(M2)/ `mcp-stdio`、`init`(M3) | `app`、`mcp.bridge` | — |
-| 應用層 | `routing` | 請求解析 → 候選篩選 → 順序決定 → slot 內選擇 → 呼叫與 fallback | `quota`、`estimate`、`effort`、`adapters`、`ledger`、`store`、`credentials`(當次憑證值作遮罩用)、`redact`、`domain`、`clock` | FR-2–FR-7 |
+| 應用層 | `routing` | 請求解析 → 候選篩選 → 順序決定 → slot 內選擇 → 呼叫與 fallback;回傳型別(`RouteOutcome`、`AttemptInfo`、`Plan`、`PlanSlot`、`PlanEntry`、`PlanExcluded`)在 `routing.outcome`(CHG-20261101-02 決策 10,`spillway.routing` 與 `routing.router` 轉匯出);健康快取失效 `Router.invalidate_health` | `quota`、`estimate`、`effort`、`adapters`、`ledger`、`store`、`credentials`(當次憑證值作遮罩用)、`redact`、`domain`、`clock` | FR-2–FR-7 |
 | 應用層 | `quota` | 計算期間、剩餘額度與比例、冷卻設定與清除(上游訊號判定已移至 `adapters.base` 的 `classify`) | `store`、`clock` | FR-8 |
 | 應用層 | `estimate` | token 與花費預估(P50/P90) | `store`、`adapters.base`(`model_string`、`load_litellm`)、LiteLLM | FR-9 |
-| 應用層 | `effort` | 五級 effort 的來源優先序與降級 | `domain` | FR-10 |
+| 應用層 | `effort` | 五級 effort 的來源優先序與降級;`normalize_effort`、`InvalidEffort`(CHG-20261101-02 決策 8) | `domain` | FR-10 |
 | 應用層 | `ledger` | 每次嘗試寫入 `usage_ledger`;context 記錄(截斷、遮罩)與保存清理 | `store`、`redact`、`clock` | FR-7、FR-14 |
 | 應用層 | `configio`(M4) | YAML 匯入(merge/replace、單一交易)與匯出 | `store` | FR-21 |
 | 應用層 | `mcpconf`(M4) | 依群組與工具產生 MCP 設定(模板) | `store` | FR-19 |
-| 整合層 | `adapters.base` | `Adapter` 介面、`AdapterContext`、`AdapterManifest`、自動發現的註冊表、上游訊號歸類 `classify`、effort 上游值轉換 `effort_to_upstream`、共用 LiteLLM 呼叫 `litellm_call`、local 健康探測 `probe_http`(httpx)、`CliRunner`〔M3〕(含 CLI 並行上限) | `clock`、`domain`(憑證解析器經 `AdapterContext` 注入,不 import `credentials`) | FR-11、FR-17 |
+| 整合層 | `adapters.base` | `Adapter` 介面、`AdapterContext`、`AdapterManifest`、自動發現的註冊表、上游訊號歸類 `classify`、effort 上游值轉換 `effort_to_upstream`、共用 LiteLLM 呼叫 `litellm_call`、local 健康探測 `probe_http`(httpx)、經 LiteLLM 呼叫上游的共用 adapter 基底 `api_adapter.LiteLLMApiAdapter`(CHG-20261101-02 決策 11)、`CliRunner`〔M3〕(含 CLI 並行上限) | `clock`、`domain`(憑證解析器經 `AdapterContext` 注入,不 import `credentials`) | FR-11、FR-17 |
 | 整合層 | `adapters.<module>` | 一種 AI、一種接入方式一個模組:訂閱 CLI(claude_cli、codex_cli;M3)、API(anthropic_api、openai_api)、通用後備(litellm);各宣告唯一或多個;各帶 manifest(effort 對應、訊號預設、能力預設)與可用模型清單 | 只依 `adapters.base` | FR-12、FR-15、FR-16、FR-23 |
-| 基礎層 | `domain` | 跨層共用的值物件:`Deployment`、`Budget`、`ChatRequest`、`CallResult`(CHG-20261030-02 審查修正;`adapters.base` 轉匯出) | — | FR-1、FR-11 |
-| 基礎層 | `store` | SQLite 連線(WAL、外鍵)、schema 建立與版本、各表存取 | `domain`、`clock` | FR-1 |
+| 基礎層 | `domain` | 跨層共用的值物件:`Deployment`、`Budget`、`ChatRequest`、`CallResult`(CHG-20261030-02 審查修正;`adapters.base` 轉匯出);共用常數 `KINDS`、`CLOUD_KINDS`、`CALL_STATUSES`、`LEDGER_STATUSES`、`COOLING_STATUSES`、`STATUS_SKIPPED_PRECHECK`(CHG-20261101-02 決策 6) | — | FR-1、FR-11 |
+| 基礎層 | `store` | SQLite 連線(WAL、外鍵)、schema 建立與版本、各表存取;連線取得 `db.ConnSource` / `db.use_conn`(不關閉連線,design D27);全專案唯一放 SQL 的位置 | `domain`、`clock` | FR-1 |
 | 基礎層 | `credentials` | 解析 `credential_ref`(`env:`、`keyring:`) | — | FR-1、NFR-4 |
-| 基礎層 | `redact` | 疑似金鑰遮罩規則(已解析的憑證值由呼叫端以 `extra_secrets` 傳入) | — | FR-14、NFR-4 |
+| 基礎層 | `redact` | 疑似金鑰遮罩規則(已解析的憑證值由呼叫端以 `extra_secrets` 傳入);共用實例 `REDACTOR` | — | FR-14、NFR-4 |
 | 基礎層 | `clock` / `rng` | 可注入的時間與亂數來源 | — | AC-4、AC-14、AC-17、NFR-5 |
 | 基礎層 | `settings` | 資料目錄、埠號、綁定位址;存取 token 雜湊(M3) | M2 不依賴 `store`;M3 讀 settings 表 | NFR-3 |
 
@@ -35,7 +36,8 @@
 flowchart TD
   subgraph 介面層
     OAI[api.openai]
-    ADM[api.admin]
+    ADM[api.admin<br/>套件]
+    DEP[api.deps]
     MCPS[mcp.server<br/>M3]
     BR[mcp.bridge<br/>M3]
     WEB[web<br/>M4]
@@ -72,6 +74,8 @@ flowchart TD
   CLI --> OAI & ADM & MCPS
   CLI --> BR
   OAI --> RT
+  OAI & ADM --> DEP
+  DEP -. conn_factory .-> ST
   MCPS --> RT
   MCPS --> QT
   ADM --> RT & ES & QT & CIO & MCF & ST
@@ -160,3 +164,6 @@ stateDiagram-v2
 - `routing` 不依賴任何 adapter 的內部細節,只認 `Adapter` 介面與註冊表(spec 7.1.2)。上游輸出的歸類由 adapter 在 `call()` 內以 `adapters.base.classify` 完成,`routing` 與 `quota` 只讀取回傳的 status。
 - `adapters.<module>` 只依賴 `adapters.base`;模組之間互不 import。新增一種 AI 不修改任何既有檔案(design D11)。
 - 所有讀時間、取亂數的地方都經 `clock` / `rng`,讓「推進系統時間」與「400 次分布」可測(AC-4、AC-14、AC-17)。
+- **SQL 只在 `store`**:SQL 字串(`SELECT`、`INSERT`、`UPDATE`、`DELETE`、`WITH`、`PRAGMA` 開頭)只可出現在 `src/spillway/store/`;其他模組經 `store.repo` 的函式存取資料(CHG-20261101-02 T3,`tests/contract/test_layering.py::test_sql_only_in_store` 檢查)。
+- 連線生命週期:由開啟者關閉——`Router`(`close_conn=True`)與 `api.deps.request_conn`;`store.db.use_conn` 只交回連線、不關閉(design D27)。
+- 日誌:`adapters.base.load_litellm` 把 `LiteLLM`、`LiteLLM Router`、`LiteLLM Proxy`、`openai`、`anthropic`、`httpx`、`httpcore` 七個 logger 的等級下限設為 INFO(低於 INFO〔NOTSET、DEBUG、自訂 1–19〕時改為 INFO),root logger 開到 DEBUG 也不會印出 prompt 原文(CHG-20261101-02 決策 13)。

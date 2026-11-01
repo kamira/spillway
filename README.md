@@ -8,7 +8,7 @@
 
 ## 狀態
 
-規格階段（M1）。程式尚未開始。
+M2 路由核心已完成(CHG-20261030-02、整理 CHG-20261101-02);M3(CLI 成員與 MCP)、M4(Web UI)尚未開始。
 
 ## 核心概念
 
@@ -31,6 +31,15 @@
 ## 技術選型
 
 Python · FastAPI · LiteLLM SDK · SQLite（WAL）
+
+## 相容性
+
+`/v1/chat/completions` 除了 `model`、`messages`、`stream`、`max_tokens`、`reasoning_effort`、`tools`、`metadata` 這些明列欄位，其他參數只轉交白名單內的 OpenAI 標準參數（`spillway.api.ALLOWED_CHAT_PARAMS`），名單外的鍵一律靜默丟棄、不報錯。
+
+| 參數 | 處理 |
+| --- | --- |
+| `functions`、`function_call`（OpenAI 舊版函式呼叫） | 丟棄，不轉交上游；請改用 `tools` 與 `tool_choice` |
+| 其他不在白名單內的參數 | 丟棄，不轉交上游 |
 
 ## 使用範圍
 

@@ -10,8 +10,16 @@ from datetime import datetime
 from typing import Any
 
 KINDS = ("cli", "api", "local")
+# 有額度與冷卻的成員種類(4.2.3、4.5.2);local 不檢查額度與冷卻
+CLOUD_KINDS = ("cli", "api")
 EFFORTS = ("none", "low", "medium", "high", "max")
 CALL_STATUSES = ("ok", "error", "quota_exhausted", "rate_limited")
+# 會設冷卻的呼叫結果(4.5.2)
+COOLING_STATUSES = ("quota_exhausted", "rate_limited")
+# 預算預檢跳過(4.2.5):只出現在帳本,不是 adapter 的回傳值
+STATUS_SKIPPED_PRECHECK = "skipped_precheck"
+# 契約清單 `usage_ledger.status`(CHG-20261101-02 決策 6:型別維持 frozenset)
+LEDGER_STATUSES = frozenset({*CALL_STATUSES, STATUS_SKIPPED_PRECHECK})
 
 
 @dataclass(frozen=True)

@@ -30,7 +30,8 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 from spillway.clock import Clock
-from spillway.redact import Redactor
+from spillway.domain import LEDGER_STATUSES  # 轉匯出,同一物件(CHG-20261101-02 決策 6)
+from spillway.redact import REDACTOR, Redactor
 from spillway.store import repo
 from spillway.store.db import transaction
 
@@ -45,9 +46,6 @@ __all__ = [
     "RetentionJob",
     "payload_status",
 ]
-
-# 契約清單 `usage_ledger.status`
-LEDGER_STATUSES = frozenset({"ok", "error", "quota_exhausted", "rate_limited", "skipped_precheck"})
 
 PayloadStatus = Literal["ok", "expired", "never_recorded"]
 
@@ -130,7 +128,7 @@ class LedgerWriter:
 
     def __init__(self, conn: sqlite3.Connection, redactor: Redactor | None = None) -> None:
         self._conn = conn
-        self._redactor = redactor or Redactor()
+        self._redactor = redactor if redactor is not None else REDACTOR
 
     def record(self, attempt: Attempt) -> int:
         """寫入並回傳 `usage_ledger.id`。status 不在五個合法值內時丟 `ValueError`、不寫任何列。"""

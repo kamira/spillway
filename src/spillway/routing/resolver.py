@@ -18,20 +18,18 @@ route 成員以 `target.members_of()` 對全部成員(含停用者)比對;成員
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable
 from dataclasses import dataclass
 
 from spillway.domain import Deployment
 from spillway.routing.target import members_of
 from spillway.store import repo
+from spillway.store.db import ConnSource, use_conn
 from spillway.store.repo import Route, RouteTarget
 
 LOCAL_PREFIX = "local/"
 ROUTE_PREFIX = "route:"
 
 TARGET_KINDS = ("local_direct", "route", "implicit")
-
-ConnSource = sqlite3.Connection | Callable[[], sqlite3.Connection]
 
 
 class RouteNotFound(LookupError):
@@ -82,12 +80,11 @@ class Resolver:
     def __init__(self, conn: ConnSource) -> None:
         self._conn_src = conn
 
-    def _conn(self) -> sqlite3.Connection:
-        src = self._conn_src
-        return src if isinstance(src, sqlite3.Connection) else src()
-
     def resolve(self, model: str) -> Target:
-        conn = self._conn()
+        with use_conn(self._conn_src) as conn:
+            return self._resolve(conn, model)
+
+    def _resolve(self, conn: sqlite3.Connection, model: str) -> Target:
         if model.startswith(LOCAL_PREFIX):
             return self._local(conn, model)
         if model.startswith(ROUTE_PREFIX):

@@ -212,3 +212,57 @@ def test_matches(r):
     assert r.matches("Authorization: bearer abc") is True
     assert r.matches("plain text") is False
     assert r.matches("") is False
+
+
+# ---------------------------------------------------------------- CHG-20261101-02 T1:共用實例(決策 7)
+
+
+def test_shared_redactor_instance():
+    from spillway.redact import REDACTOR
+
+    assert isinstance(REDACTOR, Redactor)
+    out, hit = REDACTOR.redact(f"key {FAKE_KEY}")
+    assert hit and FAKE_KEY not in out
+
+
+def test_ledger_writer_defaults_to_shared_redactor(db):
+    from datetime import datetime, timezone
+
+    from spillway.ledger import Attempt, LedgerWriter
+    from spillway.redact import REDACTOR
+
+    w = LedgerWriter(db)
+    assert w._redactor is REDACTOR
+    own = Redactor()
+    assert LedgerWriter(db, own)._redactor is own
+
+    lid = w.record(Attempt(
+        ts=datetime(2026, 11, 1, tzinfo=timezone.utc), status="ok", route_name="r1",
+        deployment_id="d1", request_text=json.dumps([{"role": "user", "content": FAKE_KEY}]),
+        response_text=f"echo {FAKE_KEY}", error=f"upstream said {FAKE_KEY}",
+        route_record_context=1,
+    ))
+    assert db.execute("SELECT COUNT(*) FROM usage_payloads WHERE ledger_id = ?", (lid,)).fetchone()[0] == 1
+    dumped = json.dumps(
+        [tuple(row) for t in ("usage_ledger", "usage_payloads")
+         for row in db.execute(f"SELECT * FROM {t}").fetchall()],
+        default=str,
+    )
+    assert FAKE_KEY not in dumped
+    assert MASK in dumped
+
+
+def test_no_redactor_construction_outside_redact_py():
+    import re
+    from pathlib import Path
+
+    import spillway
+
+    src = Path(spillway.__file__).parent
+    offenders = [
+        f"{p.relative_to(src)}:{i}"
+        for p in src.rglob("*.py") if p.name != "redact.py"
+        for i, line in enumerate(p.read_text("utf-8").splitlines(), 1)
+        if re.search(r"\bRedactor\(", line)
+    ]
+    assert offenders == []

@@ -11,8 +11,9 @@ lifespan 啟動依序:
 4. `Router(conn_factory, registry, clock, rng, close_conn=True)`:每個請求開一條新連線、結束時關閉。
 5. RetentionJob 排程(`RetentionScheduler`):啟動時先清理一次,之後每經過 Clock 上的
    `retention_interval_seconds` 清理一次;背景工作每 `retention_poll_seconds`(真實時間)檢查一次
-   Clock,所以 `FakeClock.advance()` 就能觸發。到期判斷提前一個輪詢間隔(`now >= next_due - poll`),
-   因此兩次清理的間隔在 `[interval - poll, interval]` 之內,最壞延遲 ≤ interval(NFR-5:1 小時內)。
+   Clock,所以 `FakeClock.advance()` 就能觸發。到期判斷提前兩個輪詢間隔(`now >= next_due - 2 × poll`,
+   CHG-20261101-02 決策 14):輪詢抖動(sleep 超時、清理耗時)≤ poll 時,兩次清理的間隔 ≤ interval
+   (NFR-5:1 小時內),最多提早 2 × poll;清理本身耗時超過 poll 的情況不在此上界內。
    清理失敗或讀 Clock 失敗只記例外型別,排程繼續。
 關閉時停止排程工作。
 
@@ -56,7 +57,7 @@ __all__ = ["create_app", "RetentionScheduler", "DEFAULT_RETENTION_INTERVAL_SECON
 _log = logging.getLogger(__name__)
 
 DEFAULT_RETENTION_INTERVAL_SECONDS = 3600     # spec 2.4.5「每小時」
-DEFAULT_RETENTION_POLL_SECONDS = 30.0         # 真實時間的檢查間隔;到期判斷提前 poll,延遲 ≤ 1 小時
+DEFAULT_RETENTION_POLL_SECONDS = 30.0         # 真實時間的檢查間隔;到期判斷提前 2 × poll,延遲 ≤ 1 小時
 
 ConnFactory = Callable[[], sqlite3.Connection]
 
@@ -65,7 +66,8 @@ class RetentionScheduler:
     """以注入的 Clock 計時、定期執行 `RetentionJob.run_once()`。
 
     每次清理開一條新連線、用完關閉。`runs` 為成功次數;`next_due` 為上次清理時間 + interval。
-    背景輪詢在 `now >= next_due - poll_seconds` 時清理(`due()`),最壞延遲 ≤ interval。
+    背景輪詢在 `now >= next_due - 2 × poll_seconds` 時清理(`due()`);輪詢抖動 ≤ poll 時,
+    兩次清理的間隔 ≤ interval。
     輪詢中的任何例外(含 Clock 失敗)只記例外型別,排程繼續;`stop()` 吞掉非取消的例外。
     """
 
@@ -99,11 +101,13 @@ class RetentionScheduler:
         return deleted
 
     def due(self) -> bool:
-        """是否該清理:`now >= next_due - poll`。提前一個輪詢間隔,下一次輪詢前一定會發生的到期
-        也在本輪處理,所以最壞延遲不超過 interval(而不是 interval + poll)。"""
+        """是否該清理:`now >= next_due - 2 × poll`(CHG-20261101-02 決策 14)。
+
+        下一次輪詢最晚在 poll + 抖動之後;提前兩個輪詢間隔,所以輪詢抖動 ≤ poll 時,兩次清理的
+        間隔 ≤ interval(只提前一個 poll 時,多睡一個 poll 就會超過 interval)。最多提早 2 × poll。"""
         if self.next_due is None:
             return True
-        return self._clock.now() >= self.next_due - timedelta(seconds=self.poll_seconds)
+        return self._clock.now() >= self.next_due - timedelta(seconds=2 * self.poll_seconds)
 
     async def _loop(self) -> None:
         while True:

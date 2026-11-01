@@ -12,9 +12,10 @@ from typing import Any
 
 from spillway.adapters.base import AdapterContext, ChatRequest, Deployment
 from spillway.clock import FakeClock
+from tests.helpers import TEST_KEY as KEY
+from tests.helpers import TEST_KEY_ENV
 
-KEY = "sk-test-0000"
-REF = "env:SPILLWAY_TEST_KEY"
+REF = f"env:{TEST_KEY_ENV}"
 MSGS = [{"role": "user", "content": "hi"}]
 
 

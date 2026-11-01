@@ -6,7 +6,12 @@ health_cache=None, close_conn=False)`
 - `await route(req) -> RouteOutcome`:解析 → 篩選(probe=True)→ 排序 → 逐 slot 選擇並呼叫。
 - `await dry_run(route_name_or_model, req) -> Plan`:同一管線到 SlotSelector 為止(probe=False);
   不呼叫 adapter、不寫帳本、不設冷卻。
-- `normalize_effort(value)`:請求 `reasoning_effort` 正規化(決策 29)。
+- `invalidate_health(dep_id)`:移除該成員的健康快取結果,下一次經 route 的請求重新探測
+  (管理 API 修改或刪除成員後呼叫;CHG-20261101-02 決策 12)。
+- `normalize_effort(value)`:請求 `reasoning_effort` 正規化(決策 29);定義在 `spillway.effort`,
+  此處轉匯出(CHG-20261101-02 決策 8)。
+- 回傳型別 `RouteOutcome`、`AttemptInfo`、`Plan`、`PlanSlot`、`PlanEntry`、`PlanExcluded` 定義在
+  `spillway.routing.outcome`,此處轉匯出(CHG-20261101-02 決策 10)。
 
 連線(design D2「每請求一連線」;施工審議波次 3 建議修):
     `conn_factory` 是零參數函式,回傳 `sqlite3.Connection`。每次 `route()` / `dry_run()` 只呼叫
@@ -63,24 +68,38 @@ import logging
 import sqlite3
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from spillway import credentials
 from spillway.adapters.base import AdapterUnavailableError
 from spillway.clock import Clock, Rng
-from spillway.domain import CALL_STATUSES, EFFORTS, CallResult, ChatRequest, Deployment
-from spillway.effort import EffortMapper
+from spillway.domain import (
+    CALL_STATUSES,
+    CLOUD_KINDS,
+    COOLING_STATUSES,
+    STATUS_SKIPPED_PRECHECK,
+    CallResult,
+    ChatRequest,
+    Deployment,
+)
+from spillway.effort import EffortMapper, InvalidEffort, normalize_effort
 from spillway.estimate import Estimate, Estimator
 from spillway.ledger import Attempt, LedgerWriter
 from spillway.quota import QuotaService
-from spillway.redact import Redactor
+from spillway.redact import REDACTOR
 from spillway.routing.filter import (
-    CLOUD_KINDS,
     Candidate,
     CandidateFilter,
     FilterResult,
     HealthCache,
+)
+from spillway.routing.outcome import (
+    AttemptInfo,
+    Plan,
+    PlanEntry,
+    PlanExcluded,
+    PlanSlot,
+    RouteOutcome,
 )
 from spillway.routing.planner import OrderPlanner, Slot, SlotEntry
 from spillway.routing.resolver import Resolver, Target
@@ -101,112 +120,6 @@ __all__ = [
 ConnFactory = Callable[[], sqlite3.Connection]
 
 _log = logging.getLogger(__name__)
-
-_EFFORT_ALIASES = {"minimal": "none"}
-
-
-class InvalidEffort(ValueError):
-    """請求的 `reasoning_effort` 不在五級內(決策 29;T13 轉 422 `validation_error`)。
-
-    訊息不回顯原值以外的內容;原值放在 `value`。
-    """
-
-    def __init__(self, value: object) -> None:
-        super().__init__(
-            f"reasoning_effort 不合法:{value!r},只可為 {', '.join(EFFORTS)}(或 minimal)"
-        )
-        self.value = value
-
-
-def normalize_effort(value: object) -> str | None:
-    """決策 29:None 或空白字串 → None;不分大小寫;`minimal` → `none`;其餘不在五級內丟 `InvalidEffort`。"""
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise InvalidEffort(value)
-    v = value.strip().lower()
-    if not v:
-        return None
-    v = _EFFORT_ALIASES.get(v, v)
-    if v not in EFFORTS:
-        raise InvalidEffort(value)
-    return v
-
-
-# ---------------------------------------------------------------- 回傳型別
-
-
-@dataclass(frozen=True)
-class AttemptInfo:
-    """一次嘗試的摘要(503 body、MCP `ask`)。
-
-    `status`:帳本 status 五值之一;直呼無法呼叫時為 `disabled` / `adapter_unavailable`(不寫帳本)。
-    `error`:已遮罩。`latency_ms`:沒有呼叫 adapter 時為 None。
-    """
-
-    deployment: str
-    status: str
-    slot: int | None
-    error: str | None = None
-    latency_ms: int | None = None
-
-
-@dataclass(frozen=True)
-class RouteOutcome:
-    """`route()` 的結果。`result` 為 None 即 `no_candidate`(T13 回 503)。
-
-    `served_by`、`slot`、`estimate` 為成功那次的成員 id、slot 編號(直呼為 None)、呼叫前預估。
-    `attempts` 依發生順序;`excluded` 為被篩掉的成員 `(deployment_id, reason)`(不含
-    `skipped_precheck`,它已在 attempts 中)。
-    """
-
-    result: CallResult | None
-    served_by: str | None = None
-    slot: int | None = None
-    estimate: Estimate | None = None
-    attempts: tuple[AttemptInfo, ...] = ()
-    excluded: tuple[tuple[str, str], ...] = ()
-
-    @property
-    def ok(self) -> bool:
-        return self.result is not None
-
-
-@dataclass(frozen=True)
-class PlanEntry:
-    deployment: str
-    kind: str
-    weight: str
-    effort: str | None           # EffortMapper 降級後、實際會送出的等級
-    position: int
-    unsorted: bool
-    health: str | None           # cli/api 為 None;local 為 healthy / health_unknown
-    estimate: Estimate | None
-
-
-@dataclass(frozen=True)
-class PlanSlot:
-    number: int | None           # `local/` 直呼為 None
-    entries: tuple[PlanEntry, ...]   # 依注入 Rng 以 SlotSelector.order 抽出的順序
-
-
-@dataclass(frozen=True)
-class PlanExcluded:
-    deployment: str
-    reason: str
-    estimate: Estimate | None = None   # 只有 skipped_precheck 有
-
-
-@dataclass(frozen=True)
-class Plan:
-    route_name: str | None
-    slots: tuple[PlanSlot, ...]
-    excluded: tuple[PlanExcluded, ...]
-    first: str | None            # 本次抽出的第一順位;沒有候選時為 None
-
-    @property
-    def unsorted(self) -> tuple[str, ...]:
-        return tuple(e.deployment for s in self.slots for e in s.entries if e.unsorted)
 
 
 # ---------------------------------------------------------------- Router
@@ -277,7 +190,7 @@ class Router:
         self.filter = CandidateFilter(registry, self.quota, self.estimator, clock, self.health_cache)
         self.planner = OrderPlanner()
         self.selector = SlotSelector(self.quota, rng)
-        self.redactor = Redactor()
+        self.redactor = REDACTOR
 
     # -- 連線 -------------------------------------------------------------------------------
 
@@ -298,6 +211,13 @@ class Router:
 
     def _ledger_for(self, conn: sqlite3.Connection) -> LedgerWriter:
         return self._ledger if self._ledger is not None else LedgerWriter(conn, self.redactor)
+
+    # -- 健康快取 ---------------------------------------------------------------------------
+
+    def invalidate_health(self, dep_id: str) -> None:
+        """移除 `dep_id` 的健康快取結果(CHG-20261101-02 決策 12)。快取與 CandidateFilter 共用,
+        只有經 route 的請求會讀寫;`local/` 直呼不看健康快取。"""
+        self.health_cache.invalidate(dep_id)
 
     # -- route ------------------------------------------------------------------------------
 
@@ -335,15 +255,15 @@ class Router:
         slots, skipped_slot = self._plan(target, fres)
         attempts: list[AttemptInfo] = []
         excluded = [(e.deployment_id, e.reason) for e in fres.excluded
-                    if e.reason != "skipped_precheck"]
+                    if e.reason != STATUS_SKIPPED_PRECHECK]
 
         for ex in fres.excluded:
-            if ex.reason != "skipped_precheck":
+            if ex.reason != STATUS_SKIPPED_PRECHECK:
                 continue
             slot = skipped_slot.get(ex.deployment_id)
             est = ex.estimate
             ledger.record(Attempt(
-                ts=self.clock.now(), status="skipped_precheck", route_name=target.route_name,
+                ts=self.clock.now(), status=STATUS_SKIPPED_PRECHECK, route_name=target.route_name,
                 deployment_id=ex.deployment_id, slot=slot, fallback_depth=0,
                 est_tokens_in=est.tokens_in if est else None,
                 est_tokens_out_p50=est.out_p50 if est else None,
@@ -351,7 +271,7 @@ class Router:
                 est_cost_usd_p90=est.cost_usd_p90 if est else None,
                 route_record_context=target.record_context,
             ))
-            attempts.append(AttemptInfo(ex.deployment_id, "skipped_precheck", slot))
+            attempts.append(AttemptInfo(ex.deployment_id, STATUS_SKIPPED_PRECHECK, slot))
 
         depth = 0
         for slot in slots:
@@ -382,7 +302,7 @@ class Router:
     def _plan(self, target: Target, fres: FilterResult) -> tuple[list[Slot], dict[str, int]]:
         """候選的 slot;另以「假設未被跳過」排一次,取得 skipped_precheck 成員的 slot 編號。"""
         slots = self.planner.plan(target.route_targets, fres.candidates, members=target.members)
-        skipped = [e for e in fres.excluded if e.reason == "skipped_precheck"]
+        skipped = [e for e in fres.excluded if e.reason == STATUS_SKIPPED_PRECHECK]
         if not skipped:
             return slots, {}
         pseudo = list(fres.candidates) + [
@@ -429,7 +349,7 @@ class Router:
             result = dataclasses.replace(
                 result, ok=False, status="error",
                 error=result.error or f"adapter 回傳未知 status {result.status!r}")
-        if status in ("quota_exhausted", "rate_limited") and dep.kind in CLOUD_KINDS:
+        if status in COOLING_STATUSES and dep.kind in CLOUD_KINDS:
             try:
                 self.quota.mark(dep, status)
             except Exception as exc:  # noqa: BLE001 — 冷卻設定失敗不可中斷帳本與 fallback(M18)

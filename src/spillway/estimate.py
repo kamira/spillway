@@ -36,21 +36,19 @@
 from __future__ import annotations
 
 import math
-import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
 
 from spillway.adapters.base import load_litellm, model_string
 from spillway.domain import ChatRequest, Deployment
+from spillway.store import repo
+from spillway.store.db import ConnSource, use_conn
 
 HISTORY_WINDOW = 50
 MIN_SAMPLES = 5
 DEFAULT_OUT_P50 = 500
 DEFAULT_OUT_P90 = 2000
 NO_PRICE_PROVIDERS = frozenset({"codex-cli"})
-
-ConnSource = sqlite3.Connection | Callable[[], sqlite3.Connection]
 
 
 @dataclass(frozen=True)
@@ -85,10 +83,6 @@ class Estimator:
     def __init__(self, conn: ConnSource) -> None:
         self._conn_source = conn
 
-    def _conn(self) -> sqlite3.Connection:
-        src = self._conn_source
-        return src if isinstance(src, sqlite3.Connection) else src()
-
     # ------------------------------------------------------------------ 輸入
     def tokens_in(self, dep: Deployment, req: ChatRequest) -> int:
         n: int | None
@@ -107,19 +101,10 @@ class Estimator:
         """同 route 與成員最近 50 筆 ok 且 tokens_out 非 NULL 的 tokens_out(新到舊)。
 
         `repo.list_ledger` 的 `route_name=None` 代表「不篩選」,無法表達 `IS NULL`,
-        也不能排除 tokens_out 為 NULL 的列,因此這裡直接以參數化 SQL 查詢(唯讀)。
+        也不能排除 tokens_out 為 NULL 的列,因此改用專用的 `repo.recent_tokens_out`。
         """
-        sql = (
-            "SELECT tokens_out FROM usage_ledger "
-            "WHERE deployment_id = ? AND status = 'ok' AND tokens_out IS NOT NULL AND "
-            + ("route_name IS NULL" if route_name is None else "route_name = ?")
-            + " ORDER BY ts DESC, id DESC LIMIT ?"
-        )
-        args: list[Any] = [dep.id]
-        if route_name is not None:
-            args.append(route_name)
-        args.append(HISTORY_WINDOW)
-        return [int(r[0]) for r in self._conn().execute(sql, args)]
+        with use_conn(self._conn_source) as conn:
+            return repo.recent_tokens_out(conn, dep.id, route_name, HISTORY_WINDOW)
 
     def tokens_out(
         self, dep: Deployment, req: ChatRequest, route_name: str | None

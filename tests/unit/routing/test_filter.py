@@ -362,3 +362,29 @@ async def test_health_cache_unit(clock):
     assert c.get("x") is True
     clock.advance(seconds=10)
     assert c.get("x") is None
+
+
+async def test_health_cache_invalidate_only_that_id(clock):
+    """CHG-20261101-02 T8 L1(決策 12):invalidate 只移除該 id,其他 id 不受影響;未快取的 id 不丟例外。"""
+    c = HealthCache(clock)
+    c.put("a", False)
+    c.put("b", True)
+    c.invalidate("a")
+    assert c.get("a") is None
+    assert c.get("b") is True
+    c.invalidate("never-cached")
+    assert c.get("b") is True
+
+
+async def test_router_invalidate_health_uses_shared_cache(db, clock, stub):
+    """`Router.invalidate_health(dep_id)` 作用在 Router 與 CandidateFilter 共用的同一個快取。"""
+    from spillway.clock import SeqRng
+    from spillway.routing import Router
+
+    r = Router(lambda: db, stub, clock, SeqRng([0.0]))
+    assert r.filter.health_cache is r.health_cache
+    r.health_cache.put("loc-1", False)
+    r.health_cache.put("other", False)
+    r.invalidate_health("loc-1")
+    assert r.health_cache.get("loc-1") is None
+    assert r.health_cache.get("other") is False

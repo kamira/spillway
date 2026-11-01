@@ -3,9 +3,12 @@
 量測方式依 spec 11:檢查 `usage_ledger` 欄位;保存天數設為 1 並推進系統時間 2 天,確認過期列已刪除。
 這裡的「執行清理」由 app 的 RetentionScheduler 背景排程完成(不手動呼叫 run_once):輪詢間隔設為
 0.05 秒(真實時間),推進 FakeClock 後等待排程的 `runs` 增加。
+「過期起 ≤ 1 小時刪除」測試(CHG-20261101-02 T9)則把 `spillway.app` 的 `asyncio.sleep` 換成
+`_SteppedSleep`,在固定相位下由排程本身的輪詢推進 FakeClock 並觸發清理。
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import timedelta
 
@@ -66,5 +69,104 @@ async def test_nfr5_payload_expiry_and_ledger_has_no_content(open_spillway, fake
                                        (ledger_id,)).fetchone()[0]
         assert expired == 0 and total == 0
         assert ledger_kept == 1                       # 帳本列保留,只刪內容
+        r = await c.get(f"/api/ledger/{ledger_id}/payload")
+        assert r.status_code == 410 and r.json()["error"]["code"] == "payload_expired"
+
+
+# ---- CHG-20261101-02 T9(決策 14):過期時刻起 ≤ 1 小時刪除(固定相位,由排程本身輪詢觸發) ----
+
+NFR5_POLL = 30          # 排程的 poll_seconds;每次輪詢 FakeClock 前進 poll
+
+
+class _SteppedSleep:
+    """取代 `spillway.app` 裡的 `asyncio.sleep`:排程每次輪詢的 sleep 停在這裡,測試呼叫 `step()`
+    才讓它醒來並把 FakeClock 推進 `seconds`(= poll);醒來後由排程自己的 `_loop` 判斷 `due()` 並清理。"""
+
+    def __init__(self, clock):
+        self._clock = clock
+        self._go = asyncio.Event()
+        self._parked = asyncio.Event()
+
+    async def sleep(self, seconds):
+        self._parked.set()
+        await self._go.wait()
+        self._go.clear()
+        self._clock.advance(seconds=seconds)
+
+    async def wait_parked(self) -> None:
+        await asyncio.wait_for(self._parked.wait(), timeout=5)
+
+    async def step(self) -> None:
+        """放行一次輪詢,等到排程處理完並回到下一次 sleep。"""
+        await self.wait_parked()
+        self._parked.clear()
+        self._go.set()
+        await self.wait_parked()
+
+
+class _AppAsyncio:
+    """只給 `spillway.app` 用的 asyncio 代理:`sleep` 換成 `_SteppedSleep.sleep`,其餘照舊。"""
+
+    def __init__(self, stepped):
+        self.sleep = stepped.sleep
+
+    def __getattr__(self, name):
+        return getattr(asyncio, name)
+
+
+async def test_nfr5_payload_deleted_within_one_hour_of_expiry(open_spillway, fake_api, clock,
+                                                              monkeypatch):
+    # 本測試端到端驗證 NFR-5(過期起 ≤ 1 小時刪除),但提前量為 1 × poll 或 0 時同樣會通過,
+    # 因此分辨不出新舊 `due()`;決策 14(2 × poll)只由 tests/integration/test_retention_schedule.py
+    # 的 L1 抖動測試佐證。固定相位(E − poll/2)也不是最壞情況。
+    import spillway.app as app_module
+
+    stepped = _SteppedSleep(clock)
+    monkeypatch.setattr(app_module, "asyncio", _AppAsyncio(stepped))
+    async with open_spillway(retention_poll_seconds=NFR5_POLL) as h:
+        sched = h.app.state.retention
+        await stepped.wait_parked()                     # 排程已啟動並停在第一次輪詢的 sleep
+        c = h.client
+        r = await c.post("/api/deployments", json={
+            "id": "loc", "model_name": "loc", "kind": "local", "provider": "hosted_vllm",
+            "model": "local-model", "params": {"api_base": fake_api.base_url + "/v1"}, "tags": ["t"]})
+        assert r.status_code == 201, r.text
+        r = await c.put("/api/settings/context", json={"context_retention_days": 1})
+        assert r.status_code == 200
+
+        r = await c.post("/v1/chat/completions",
+                         json={"model": "local/loc", "messages": [{"role": "user", "content": PROMPT}]})
+        assert r.status_code == 200, r.text
+        written_at = clock.now()                         # T
+        ledger_id = (await c.get("/api/ledger")).json()["items"][0]["id"]
+        expires_at = written_at + timedelta(days=1)      # T + 1 天
+
+        def has_payload() -> bool:
+            with h.db() as conn:
+                return conn.execute("SELECT COUNT(*) FROM usage_payloads WHERE ledger_id = ?",
+                                    (ledger_id,)).fetchone()[0] == 1
+
+        assert has_payload()
+        # 固定相位:排程在 T + 1 天前一個 poll 內(T + 1 天 − poll/2)剛清理過
+        pinned = expires_at - timedelta(seconds=NFR5_POLL / 2)   # 不要求 poll 為偶數
+        clock.set(pinned - timedelta(seconds=NFR5_POLL))
+        runs = sched.runs
+        await stepped.step()                             # 由排程本身的輪詢觸發這次清理
+        assert clock.now() == pinned and sched.runs == runs + 1, "固定相位的清理沒有發生"
+        assert clock.now() < expires_at and has_payload()   # T + 1 天前該列仍在
+
+        # 之後 FakeClock 以 poll 步進,由排程本身輪詢觸發清理
+        deleted_at = None
+        while clock.now() < expires_at + timedelta(hours=1):
+            await stepped.step()
+            if deleted_at is None and not has_payload():
+                deleted_at = clock.now()
+        assert deleted_at is not None, "T + 1 天 + 1 小時時該列仍未刪除"
+        assert expires_at < deleted_at <= expires_at + timedelta(hours=1)
+        assert not has_payload()
+
+        with h.db() as conn:                             # 帳本列保留
+            assert conn.execute("SELECT COUNT(*) FROM usage_ledger WHERE id = ?",
+                                (ledger_id,)).fetchone()[0] == 1
         r = await c.get(f"/api/ledger/{ledger_id}/payload")
         assert r.status_code == 410 and r.json()["error"]["code"] == "payload_expired"

@@ -9,16 +9,11 @@ import sqlite3
 import pytest
 
 from spillway.store import repo
-from tests.integration.conftest import TEST_KEY, TEST_KEY_ENV, api_member
+from tests.helpers import TEST_KEY, api_member
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("fake_key_env")]
 
 MSGS = [{"role": "user", "content": "hello"}]
-
-
-@pytest.fixture(autouse=True)
-def _key(monkeypatch):
-    monkeypatch.setenv(TEST_KEY_ENV, TEST_KEY)
 
 
 def assert_error(r, status: int, code: str) -> str:
@@ -158,7 +153,7 @@ async def test_503_does_not_echo_upstream_key(spillway, fake_api):
 
 
 async def test_local_direct_disabled_is_503(spillway, fake_api):
-    from tests.integration.conftest import local_member
+    from tests.helpers import local_member
 
     spillway.add_deployment(local_member("loc-1", fake_api.base_url, enabled=False))
     r = await spillway.client.post("/v1/chat/completions",

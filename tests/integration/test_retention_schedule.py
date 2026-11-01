@@ -117,14 +117,77 @@ async def test_triggers_within_one_poll_after_interval_minus_poll(open_spillway,
 
 
 def test_worst_case_delay_is_at_most_interval(clock):
+    # CHG-20261101-02 決策 14:提前量為 2 × poll,輪詢抖動 ≤ poll 時兩次清理間隔 ≤ interval
     from spillway.app import RetentionScheduler
 
     sched = RetentionScheduler(lambda: None, clock, interval_seconds=3600, poll_seconds=30)
     sched.next_due = clock.now() + timedelta(seconds=3600)
-    clock.advance(seconds=3600 - 30 - 1)
+    clock.advance(seconds=3600 - 2 * 30 - 1)
     assert not sched.due()
-    clock.advance(seconds=1)          # 3600 − poll:本輪就清理,不必等到下一輪(3600 + poll)
+    clock.advance(seconds=1)          # 3600 − 2×poll:本輪就清理,即使下一輪晚到 2×poll 也不超過 interval
     assert sched.due()
+
+
+# ---- CHG-20261101-02 T9(決策 14):輪詢抖動下的上界 ----
+
+JITTER_INTERVAL = 3600
+JITTER_POLL = 70          # 不整除 interval
+
+
+class _OnePollLead:
+    """對照組:CHG-20261101-02 之前的到期判斷(提前 1 × poll)。只用於證明測試分辨得出新舊實作。"""
+
+    def __init__(self, sched):
+        self._sched = sched
+
+    def due(self) -> bool:
+        if self._sched.next_due is None:
+            return True
+        return self._sched._clock.now() >= self._sched.next_due - timedelta(
+            seconds=self._sched.poll_seconds)
+
+
+def _cleanup_gaps(tmp_path, clock, *, step: int, rounds: int = 200, old_lead: bool = False):
+    """以整數秒 FakeClock 模擬排程輪詢:每輪前進 `step` 秒後檢查 `due()`,到期即 `run_once()`。
+
+    回傳相鄰兩次清理的間隔(秒)。`step = 2 × poll` 模擬每次輪詢多睡一個 poll 的抖動。"""
+    from spillway.app import RetentionScheduler
+    from spillway.store.db import connect
+
+    db = tmp_path / "retention-jitter.db"
+    connect(db).close()
+    sched = RetentionScheduler(lambda: connect(db), clock, interval_seconds=JITTER_INTERVAL,
+                               poll_seconds=JITTER_POLL)
+    checker = _OnePollLead(sched) if old_lead else sched
+    sched.run_once()                                  # 啟動時的第一次清理
+    runs = [clock.now()]
+    for _ in range(rounds):
+        clock.advance(seconds=step)
+        if checker.due():
+            assert sched.run_once() is not None
+            runs.append(clock.now())
+    assert sched.runs == len(runs)
+    return [int((b - a).total_seconds()) for a, b in zip(runs, runs[1:])]
+
+
+def test_jitter_of_one_poll_keeps_gap_within_interval(tmp_path, clock):
+    gaps = _cleanup_gaps(tmp_path, clock, step=2 * JITTER_POLL)
+    assert len(gaps) >= 5
+    assert max(gaps) <= JITTER_INTERVAL, gaps
+
+
+def test_jitter_control_one_poll_lead_exceeds_interval(tmp_path, clock):
+    # 對照組:同樣的抖動下,提前量換回 1 × poll 時間隔超過 interval——證明上一則測試分辨得出新舊實作
+    gaps = _cleanup_gaps(tmp_path, clock, step=2 * JITTER_POLL, old_lead=True)
+    assert len(gaps) >= 5
+    assert max(gaps) > JITTER_INTERVAL, gaps
+
+
+def test_without_jitter_cleanup_not_earlier_than_interval_minus_two_polls(tmp_path, clock):
+    gaps = _cleanup_gaps(tmp_path, clock, step=JITTER_POLL)
+    assert len(gaps) >= 2
+    assert min(gaps) >= JITTER_INTERVAL - 2 * JITTER_POLL, gaps
+    assert max(gaps) <= JITTER_INTERVAL, gaps
 
 
 class _FlakyClock:

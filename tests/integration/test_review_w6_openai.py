@@ -14,16 +14,12 @@ import pytest
 from spillway.api import ALLOWED_CHAT_PARAMS, filter_chat_params, validation_message
 from spillway.store import repo
 from tests.fakes.api_upstream.server import FakeApiServer
-from tests.integration.conftest import BASE_URL, TEST_KEY, TEST_KEY_ENV, api_member
+from tests.helpers import api_member
+from tests.integration.conftest import BASE_URL
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("fake_key_env")]
 
 MSGS = [{"role": "user", "content": "hello"}]
-
-
-@pytest.fixture(autouse=True)
-def _key(monkeypatch):
-    monkeypatch.setenv(TEST_KEY_ENV, TEST_KEY)
 
 
 @pytest.fixture

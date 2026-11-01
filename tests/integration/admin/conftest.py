@@ -1,13 +1,17 @@
-"""tests/integration/admin 共用 fixture(CHG-20261030-02 T14)。
+"""tests/integration/admin 共用 fixture(CHG-20261030-02 T14;CHG-20261101-02 T11 決策 19 改用 `create_app()`)。
 
-不依賴 T13 的 `app.py`:以 `FastAPI()` 掛載 `admin.router`,自行設定 `app.state`
-(`registry`、`router`、`conn_factory`、`clock`——與 T13 `create_app` 放的屬性名一致)。
+`make_app` 呼叫 `spillway.app.create_app()`,不再手抄 `app.state` 接線。`registry`、`router`、
+`retention` 在 lifespan 啟動後才存在;`make_client(app)` / `client` 以 `app.router.lifespan_context(app)`
+進出 lifespan(httpx `ASGITransport` 不送 lifespan 事件),與 `tests/integration/conftest.py` 的
+`open_spillway` 同一方式。lifespan 結束後 `app.state` 的屬性仍保留,可在 client 關閉後直接呼叫 handler。
 
-- `make_app(extra_paths=(), rng=None)`:組一個 app;`extra_paths` 給 `AdapterRegistry.discover()`。
+- `make_app(extra_paths=(), rng=None)`:組一個 app;`extra_paths` 給 `AdapterRegistry.discover()`;
+  `rng` 預設 `SeqRng([0.0])`;clock 為根 conftest 的 `FakeClock`;資料庫為 `db_path`。
 - `client`:預設 app 的 httpx `AsyncClient`(`ASGITransport`)。
-- `make_client(app)`:為自訂 app 開 client(async context manager)。
+- `make_client(app)`:為自訂 app 進 lifespan 並開 client(async context manager)。
 - `db`:同一個暫存資料庫的直接連線,供測試準備資料與斷言。
-- 自動設定 `SPILLWAY_TEST_KEY`(假金鑰)與 `SPILLWAY_LOCAL_API_BASE`(指向假上游,決策 25)。
+- 自動設定 `SPILLWAY_TEST_KEY`(假金鑰,`tests/helpers.py` 的 `fake_key_env`)與
+  `SPILLWAY_LOCAL_API_BASE`(指向假上游,CHG-20261030-02 決策 25)。
 """
 from __future__ import annotations
 
@@ -20,24 +24,13 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from spillway import credentials
-from spillway.adapters.base import AdapterContext, AdapterRegistry
-from spillway.api import admin
+from spillway.app import create_app
 from spillway.clock import FakeClock, SeqRng
-from spillway.routing import Router
 from spillway.store import db as store_db
-
-from .helpers import KEY
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
 
 
 @pytest.fixture(autouse=True)
-def _admin_env(monkeypatch: pytest.MonkeyPatch, fake_api: Any) -> None:
-    monkeypatch.setenv("SPILLWAY_TEST_KEY", KEY)
+def _admin_env(fake_key_env: str, monkeypatch: pytest.MonkeyPatch, fake_api: Any) -> None:
     monkeypatch.setenv("SPILLWAY_LOCAL_API_BASE", fake_api.base_url + "/v1")
 
 
@@ -58,29 +51,18 @@ def db(db_path: Path) -> Iterator[Any]:
 @pytest.fixture
 def make_app(db_path: Path, clock: FakeClock):
     def _make(extra_paths: tuple[Path, ...] | list[Path] = (), rng: Any = None) -> FastAPI:
-        registry = AdapterRegistry(AdapterContext(credentials.resolve, clock))
-        registry.discover(extra_paths)
-
-        def conn_factory():
-            return store_db.connect(db_path)
-
-        app = FastAPI()
-        app.include_router(admin.router)
-        app.state.registry = registry
-        app.state.conn_factory = conn_factory
-        app.state.clock = clock
-        app.state.router = Router(conn_factory, registry, clock, rng or SeqRng([0.0]),
-                                  close_conn=True)
-        return app
+        return create_app(clock=clock, rng=rng or SeqRng([0.0]),
+                          extra_adapter_paths=tuple(extra_paths), db_path=db_path)
 
     return _make
 
 
 @contextlib.asynccontextmanager
 async def _client_for(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
 
 
 @pytest.fixture
