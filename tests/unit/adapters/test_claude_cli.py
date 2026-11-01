@@ -5,7 +5,9 @@
 """
 from __future__ import annotations
 
+import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +22,11 @@ from spillway.adapters.base import (
     CliRunner,
     Deployment,
     available_models,
+    load_models_yaml,
     validate_manifest,
 )
 from spillway.adapters.claude_cli import MANIFEST, create
-from spillway.adapters.claude_cli.adapter import CLAUDE_ENV_REMOVE, messages_to_prompt
+from spillway.adapters.claude_cli.adapter import ENV_REMOVE, MCP_OFF, build_argv, messages_to_prompt
 from spillway.clock import FakeClock, SeqRng
 
 pytestmark = pytest.mark.anyio
@@ -121,7 +124,7 @@ def test_messages_to_prompt():
 # ---- argv、stdin、cwd、環境 ---------------------------------------------------------------
 
 async def test_argv_stdin_cwd_env(fake_cli, adapter, data_dir, monkeypatch):
-    for name in CLAUDE_ENV_REMOVE:
+    for name in ENV_REMOVE:
         monkeypatch.setenv(name, "fake-value")
     monkeypatch.setenv("OPENAI_API_KEY", "fake-openai")          # codex 的清單,claude 不移除
     monkeypatch.setenv("CLAUDE_CODE_" + "OAUTH_TOKEN", "fake")   # 官方登入變數照常繼承
@@ -137,13 +140,17 @@ async def test_argv_stdin_cwd_env(fake_cli, adapter, data_dir, monkeypatch):
     assert Path(rec["cwd"]).resolve() == work.resolve()
     assert rec["spillway_depth"] == "1"
     present = rec["env_present"]
-    assert not any(present[n] for n in CLAUDE_ENV_REMOVE)
+    assert not any(present[n] for n in ENV_REMOVE)
     assert present["OPENAI_API_KEY"] is True
     assert present["CLAUDE_CODE_" + "OAUTH_TOKEN"] is True
 
 
+def test_mcp_off_constant():
+    assert MCP_OFF == ("--strict-mcp-config",)
+
+
 def test_env_remove_list_is_decision_9():
-    assert CLAUDE_ENV_REMOVE == (
+    assert ENV_REMOVE == (
         "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
         "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
     )
@@ -259,7 +266,7 @@ async def test_shutdown_and_truncated_are_error():
     home = Path(os.environ["SPILLWAY_HOME"])
     killed = StubRunner(CliOutput(exit_code=-15, stdout="", stderr="", killed_reason="shutdown"))
     result = await create(ctx(runner=killed, data_dir=home)).call(dep(), req(), None)
-    assert (result.status, result.error) == ("error", "shutdown")
+    assert result.status == "error" and "(shutdown)" in result.error
     trunc = StubRunner(CliOutput(exit_code=0, stdout='{"result": "x', stderr="",
                                  stdout_truncated=True))
     result = await create(ctx(runner=trunc, data_dir=home)).call(dep(), req(), None)
@@ -279,7 +286,7 @@ async def test_runner_receives_env_contract():
         dep(timeout=12), req(), None)
     (argv, kw), = runner.calls
     assert argv[0] == "claude"
-    assert tuple(kw["env_remove"]) == CLAUDE_ENV_REMOVE
+    assert tuple(kw["env_remove"]) == ENV_REMOVE
     assert kw["env_set"] == {"SPILLWAY_DEPTH": "1"}
     assert kw["timeout"] == 12.0 and kw["stdin"] == "[User]\nhi"
 
@@ -353,3 +360,125 @@ async def test_admin_lists_module_and_rejects_second_member(fake_cli, tmp_path, 
             assert r.status_code == 409, r.text
             assert r.json()["error"]["code"] == "provider_single"
     assert fake_cli.records() == []
+
+
+# ---- 施工審議 T4 回歸(arbiter fix list 3–9)-----------------------------------------------
+
+def _stub_adapter(stdout: str, exit_code: int = 0, stderr: str = "") -> tuple[Any, StubRunner]:
+    runner = StubRunner(CliOutput(exit_code=exit_code, stdout=stdout, stderr=stderr))
+    return create(ctx(runner=runner, data_dir=Path(os.environ["SPILLWAY_HOME"]))), runner
+
+
+async def test_is_error_true_with_exit_zero_is_classified(fake_cli, adapter):
+    fake_cli.set("claude", "quota", exit_code=0)
+    result, _ = await _one(fake_cli, adapter)
+    assert (result.ok, result.status) == (False, "quota_exhausted")
+
+
+async def test_model_answer_not_used_for_classification(fake_cli, adapter):
+    """D3:結束碼 ≠ 0 但 is_error 不是 true 時,模型回答(含 rate limit 字樣)不進判定。"""
+    fake_cli.set("claude", "ok", result="Here is how to handle a rate limit or overloaded API",
+                 exit_code=2)
+    result, _ = await _one(fake_cli, adapter)
+    assert (result.ok, result.status) == (False, "error")
+    assert "rate limit" not in (result.error or "")
+
+
+async def test_nonzero_exit_uses_stderr_for_classification():
+    a, _ = _stub_adapter('{"type":"result","is_error":false,"result":"fine answer"}', exit_code=1,
+                         stderr="API Error: rate limit exceeded")
+    result = await a.call(dep(), req(), None)
+    assert result.status == "rate_limited" and "rate limit" in result.error
+
+
+async def test_quota_wins_when_both_signals_match(fake_cli, adapter):
+    fake_cli.set("claude", "quota", result="usage limit reached; rate limit also hit")
+    result, _ = await _one(fake_cli, adapter)
+    assert result.status == "quota_exhausted"
+
+
+@pytest.mark.parametrize("cost", ["NaN", "Infinity", "-Infinity", "-0.5", "true", '"0.1"'])
+async def test_bad_cost_is_none(cost):
+    a, _ = _stub_adapter('{"is_error":false,"result":"x","total_cost_usd":%s}' % cost)
+    result = await a.call(dep(), req(), None)
+    assert result.status == "ok" and result.cost_usd is None
+
+
+@pytest.mark.parametrize(("usage", "expected"), [
+    ({"input_tokens": 10}, 10),
+    ({"input_tokens": 10, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 3000}, 3210),
+    ({"cache_read_input_tokens": 7}, 7),
+    ({"input_tokens": 10, "cache_creation_input_tokens": -5, "cache_read_input_tokens": "9"}, 10),
+    ({"input_tokens": True, "cache_read_input_tokens": 1.5}, None),
+    ({}, None),
+])
+async def test_tokens_in_sums_cache_fields(usage, expected):
+    a, _ = _stub_adapter(json.dumps({"is_error": False, "result": "x",
+                                     "usage": {**usage, "output_tokens": 4}}))
+    result = await a.call(dep(), req(), None)
+    assert (result.tokens_in, result.tokens_out) == (expected, 4)
+
+
+async def test_ok_sets_finish_reason_stop(fake_cli, adapter):
+    result, _ = await _one(fake_cli, adapter)
+    assert result.status == "ok" and result.finish_reason == "stop"
+
+
+async def test_model_starting_with_dash_rejected(fake_cli, adapter):
+    d = Deployment(id="c", model_name="c", kind="cli", provider="claude-cli", model="--dangerous")
+    result = await adapter.call(d, req(), None)
+    assert result.status == "error" and "'-'" in result.error
+    assert fake_cli.records("claude") == []
+    with pytest.raises(ValueError):
+        build_argv("-x", None, [], [])
+
+
+@pytest.mark.parametrize("timeout", [0, -1, True, float("nan"), float("inf"), "abc"])
+async def test_bad_timeout_rejected(fake_cli, adapter, timeout):
+    result = await adapter.call(dep(timeout=timeout), req(), None)
+    assert result.status == "error" and "timeout" in result.error
+    assert fake_cli.records("claude") == []
+
+
+async def test_timeout_none_means_no_limit():
+    a, runner = _stub_adapter('{"is_error":false,"result":"x"}')
+    assert (await a.call(dep(timeout=None), req(), None)).status == "ok"
+    assert runner.calls[0][1]["timeout"] is None
+
+
+async def test_verbose_array_without_result_has_own_message():
+    a, _ = _stub_adapter('[{"type":"system","subtype":"init"}]')
+    result = await a.call(dep(), req(), None)
+    assert result.status == "error" and "缺少 result 事件" in result.error
+    assert "不是 JSON" not in result.error
+
+
+@pytest.mark.parametrize("messages", [
+    [{"role": "tool", "content": "tool output"}],
+    [{"role": "assistant", "content": None, "tool_calls": [{"id": "x"}]}],
+    [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:x"}}]}],
+    [{"role": "user", "content": "   "}],
+])
+async def test_empty_prompt_is_error_without_spawn(fake_cli, adapter, messages):
+    result = await adapter.call(dep(), req(messages), None)
+    assert result.status == "error" and "沒有可送出的文字訊息" in result.error
+    assert fake_cli.records("claude") == []
+
+
+def test_messages_to_prompt_is_base_implementation():
+    from spillway.adapters import base
+
+    assert messages_to_prompt is base.messages_to_prompt
+
+
+def test_manifest_ctx_matches_models_yaml():
+    models = load_models_yaml(SRC / "adapters" / "claude_cli" / "models.yaml")
+    assert {m.capabilities["ctx"] for m in models} == {MANIFEST.default_capabilities["ctx"]}
+
+
+def test_harness_fails_loudly_without_registry_instance(monkeypatch):
+    from tests.fakes import claude_cli as harness
+
+    monkeypatch.setitem(sys.modules, harness.CONTRACT_TEST_MODULE, None)
+    with pytest.raises(AssertionError):
+        harness.call_status_harness(None)

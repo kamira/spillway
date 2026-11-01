@@ -21,7 +21,7 @@ MANIFEST = AdapterManifest(
     # 上游值經 params.effort_args 的 `{effort}` 模板傳給 `claude --effort`(spec 6.3.2;決策 10)
     effort_map={"none": None, "low": "low", "medium": "medium", "high": "high", "max": "max"},
     default_signals=copy.deepcopy(CLAUDE_DEFAULT_SIGNALS),
-    default_capabilities={"ctx": 200000, "tools": False, "vision": False,
+    default_capabilities={"ctx": 1000000, "tools": False, "vision": False,
                           "efforts": ["low", "medium", "high", "max"]},
     default_params={"timeout": 600, "effort_args": ["--effort", "{effort}"], "extra_args": []},
     requires=("claude",),

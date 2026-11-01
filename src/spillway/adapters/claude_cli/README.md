@@ -33,7 +33,7 @@ claude -p --output-format json --model <model> [effort 參數] --strict-mcp-conf
 
 | 鍵 | 說明 | 預設 |
 |----|------|------|
-| `timeout` | 逾時秒數(spec 7.3.6);逾時殺整個 process group,回 `error` | 600 |
+| `timeout` | 逾時秒數(spec 7.3.6),必須是正數;`null` 為不設上限;逾時殺整個 process group,回 `error` | 600 |
 | `effort_args` | effort 參數模板,`{effort}` 換成 `effort_map` 的值;設為 `[]` 則不傳 | `["--effort", "{effort}"]` |
 | `extra_args` | 附加在 `--strict-mcp-config` 之後的參數 | `[]` |
 | `cwd` | 工作目錄(spec 7.3.4) | 閘道資料目錄下的 `work/claude`(不存在就建立) |
@@ -43,14 +43,19 @@ claude -p --output-format json --model <model> [effort 參數] --strict-mcp-conf
 ## 行為
 
 - effort(spec 6.3):`none` 或未指定時不傳;`low`/`medium`/`high`/`max` 經 `effort_args` 以同名值傳給 `--effort`。
-- 成功:`text` 取 JSON `result`;token 取 `usage.input_tokens`/`output_tokens`;花費取 `total_cost_usd`,
-  扣抵 `credit_pool` 額度(spec 5.2.2)。`--verbose` 時輸出為事件陣列,取最後一個 `type == "result"` 的物件。
+- prompt:`adapters.base.messages_to_prompt`(spec 7.5.1,與 codex_cli 共用);沒有任何文字訊息時回 `error`、不起子行程。
+- 成功:`text` 取 JSON `result`;`tokens_in` = `usage.input_tokens` + `cache_creation_input_tokens` +
+  `cache_read_input_tokens`(只計非負整數,三者皆缺為 None;施工審議 T4 補記),`tokens_out` 取
+  `usage.output_tokens`;花費取 `total_cost_usd`(有限且 ≥ 0,否則為 None),扣抵 `credit_pool` 額度
+  (spec 5.2.2);`finish_reason` 為 `stop`。`--verbose` 時輸出為事件陣列,取最後一個 `type == "result"` 的物件。
 - 上游訊號(spec 5.3.1 claude-cli 列):
   - `quota_exhausted`:`is_error` 為 true 且訊息符合 `credit|usage limit|extra usage`
   - `rate_limited`:訊息符合 `rate limit|overloaded`
   - 其他 `is_error` 為 true 或結束碼 ≠ 0 → `error`
-- `error`(決策 12):逾時、輸出非 JSON 或超過上限被截斷、找不到執行檔或其他 `OSError`、被停機終止
-  (`error="shutdown"`)、`cli_runner` 未注入、`data_dir` 未注入且沒設 `params.cwd`。
+  - 判定用的訊息只在 `is_error` 為 true 時取 JSON `result`,否則取 stderr(模型回答不進判定)
+- `error`(決策 12):逾時、輸出非 JSON、事件陣列缺少 result 事件、超過上限被截斷、找不到執行檔或其他
+  `OSError`、被停機終止(訊息含 `(shutdown)`)、`cli_runner` 未注入、`data_dir` 未注入且沒設 `params.cwd`、
+  `model` 以 `-` 開頭、`params.timeout` 不是正數。
 - `health()`:不起子行程,回 True。
 - 沒有 `list_models()`:可用模型只來自 `models.yaml`,`GET /api/adapters` 不起子行程。
 

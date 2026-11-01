@@ -49,7 +49,10 @@ def _registry_instance() -> Any:
 
 
 def attach_runner(instance: Any, data_dir: Path) -> None:
-    """把 `instance.context` 換成帶 `CliRunner`(沿用既有的)與 `data_dir` 的 AdapterContext。"""
+    """把 `instance.context` 換成帶 `CliRunner`(沿用既有的)與 `data_dir` 的 AdapterContext。
+
+    替換會留在該測試模組的 registry 實例上;每次 harness 呼叫都以當次的 `$SPILLWAY_HOME` 重設
+    `data_dir`,不會沿用前一個測試的暫存目錄。"""
     ctx = instance.context
     runner = ctx.cli_runner if ctx.cli_runner is not None else CliRunner()
     instance.context = dataclasses.replace(ctx, cli_runner=runner, data_dir=data_dir)
@@ -67,10 +70,12 @@ def call_status_harness(fake_api: Any) -> list[tuple[Deployment, Any]]:
     home = Path(os.environ["SPILLWAY_HOME"])
     fake = install_fake_on_path(home)
     instance = _registry_instance()
-    if instance is not None:
-        attach_runner(instance, home)
+    if instance is None:
+        raise AssertionError(f"找不到 {CONTRACT_TEST_MODULE}.MODULES 中的 {MODULE} 實例,無法注入 CliRunner")
+    attach_runner(instance, home)
     dep = Deployment(id="claude_cli-cli", model_name="claude_cli-cli", kind="cli",
-                     provider="claude-cli", model="claude-sonnet-5-5")
+                     provider="claude-cli", model="claude-sonnet-5-5",
+                     params={"timeout": 30})
 
     def set_mode(mode: str) -> None:
         fake.set("claude", MODE_TO_SCENARIO[mode])
