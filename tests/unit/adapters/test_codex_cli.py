@@ -356,7 +356,8 @@ async def test_non_json_is_error(real):
 async def test_timeout_is_error_and_file_deleted(real):
     adapter, fake = real
     fake.set("codex", "timeout")
-    result = await adapter.call(dep(timeout=0.5), req(), None)
+    # 逾時要長於假 codex 啟動並寫出開始紀錄所需時間(0.5 秒在負載下會在寫紀錄前被殺,測試偶發失敗)
+    result = await adapter.call(dep(timeout=2.0), req(), None)
     assert result.status == "error" and "逾時" in result.error
     rec = fake.records("codex")[-1]
     assert not Path(rec["argv"][rec["argv"].index("-o") + 1]).exists()
