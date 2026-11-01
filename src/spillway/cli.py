@@ -20,8 +20,9 @@ serve:
   `app.state.shutting_down = True`(Router 不再開始新嘗試,回 503 `shutting_down`),uvicorn 停止接新連線並
   等待進行中請求至多 `graceful_timeout` 秒(預設 30,傳給 `timeout_graceful_shutdown`),期滿取消請求
   task(CliRunner 在取消路徑殺 process group、帳本記 `error="shutdown"`);lifespan 結束時
-  `terminate_all(grace=5)` 為後備。第二次 SIGINT 為 uvicorn 的 `force_exit`(略過 lifespan),由
-  `_run_server` 的 `finally` 與 `atexit` 呼叫 `kill_all_sync()`。環境變數 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`
+  `terminate_all(grace=5)` 為後備。停機中再收到 SIGINT 為 uvicorn 的 `force_exit`(略過 lifespan):立即
+  取消進行中請求(CliRunner SIGKILL 子行程 group),並在 uvicorn 重送訊號之前於 `capture_signals` 內同步
+  `kill_all_sync()`;`_run_server` 的 `finally` 與 `atexit` 也呼叫它(force_exit 時帳本列可能不及寫入)。環境變數 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`
   **僅供測試**縮短等待上限,正式使用不要設定。
 - uvicorn access log 保留(只有方法、路徑、狀態碼,不含 body)。
 
@@ -36,17 +37,24 @@ migration,含舊版庫的備份;不做埠檢查)並產生存取 token。token �
 from __future__ import annotations
 
 import argparse
+import asyncio
 import atexit
+import contextlib
 import os
 import socket
 import sqlite3
 import sys
 from pathlib import Path
+from collections.abc import Iterator
 from types import FrameType
-from typing import Any
+from typing import TYPE_CHECKING
 
 from spillway import settings
 from spillway.adapters.base import DEFAULT_DRAIN_TIMEOUT, DEFAULT_TERM_GRACE
+if TYPE_CHECKING:   # uvicorn 延遲 import(init 不需要它)
+    import uvicorn
+    from fastapi import FastAPI
+
 from spillway.store.db import (
     DataDirLockedError,
     MigrationError,
@@ -119,29 +127,66 @@ def _preflight(host: str, port: int, data_dir: Path) -> int:
     return 0
 
 
-def _graceful_server(config: Any, app: Any) -> Any:
-    """回傳 uvicorn.Server 子類別的實例:第一個 SIGTERM/SIGINT 先設 `app.state.shutting_down = True`
-    (決策 16 ①:Router 不再開始新嘗試),再交給 uvicorn 原本的 `handle_exit`(保留第二次 SIGINT
-    的 `force_exit` 與結束後重送訊號的行為)。"""
-    import asyncio
+def _graceful_server(config: uvicorn.Config, app: FastAPI) -> uvicorn.Server:
+    """回傳 uvicorn.Server 子類別的實例(決策 16、圖 4)。
 
+    - 第一個 SIGTERM/SIGINT:先設 `app.state.shutting_down = True`(Router 不再開始新嘗試),再交給
+      uvicorn 原本的 `handle_exit`(保留第二次 SIGINT 的 `force_exit` 與結束後重送訊號的行為)。
+    - 轉為 `force_exit` 的那一刻:在事件迴圈上立即取消全部進行中的請求 task——CliRunner 的取消路徑
+      馬上 SIGKILL 子行程 group,連線結束,uvicorn 的 `wait_closed()` 不必等滿停機上限。
+    - 期滿取消後、lifespan 結束前:有限時間等待被取消的請求走完取消路徑(帳本 `error="shutdown"`)。
+    - `capture_signals` 結束(uvicorn 重送訊號)之前同步 `kill_all_sync()`:SIGTERM 後再 SIGINT
+      (force_exit 略過 lifespan,且最後重送的 SIGTERM 是預設處置、行程立刻結束,`finally`/`atexit`
+      都不會跑)也不留子行程。
+
+    依賴的 uvicorn 內部行為(已對 uvicorn 0.54.0 `server.py` 核對;L2 子行程測試為絆線):
+    `handle_exit` 設 `should_exit`/`force_exit`;`shutdown()` 期滿取消 `server_state.tasks` 但不等待,
+    `force_exit` 時略過 `lifespan.shutdown()`;`self.lifespan` 於 `_serve` 建立、`shutdown()` 時呼叫其
+    `shutdown` 方法;`capture_signals()` 在離開時還原處理器並以相反順序 `signal.raise_signal` 重送。"""
     import uvicorn
 
+    runner = app.state.cli_runner
+
     class _GracefulServer(uvicorn.Server):
+        _loop: asyncio.AbstractEventLoop | None = None
+
+        async def startup(self, sockets: list[socket.socket] | None = None) -> None:
+            self._loop = asyncio.get_running_loop()
+            await super().startup(sockets)
+
         def handle_exit(self, sig: int, frame: FrameType | None) -> None:
             app.state.shutting_down = True
+            was_forced = self.force_exit
             super().handle_exit(sig, frame)
+            if self.force_exit and not was_forced and self._loop is not None:
+                try:   # 訊號處理器內不直接取消;排到事件迴圈上(也會喚醒 selector)
+                    self._loop.call_soon_threadsafe(self._cancel_inflight)
+                except RuntimeError:   # 迴圈已關閉:capture_signals/finally/atexit 仍會殺子行程
+                    pass
+
+        def _cancel_inflight(self) -> None:
+            for task in list(self.server_state.tasks):
+                task.cancel(msg="force exit")
+
+        @contextlib.contextmanager
+        def capture_signals(self) -> Iterator[None]:
+            with super().capture_signals():   # uvicorn 在它的離開處重送收到的訊號
+                try:
+                    yield
+                finally:
+                    runner.kill_all_sync()   # 在重送訊號之前;不需要事件迴圈
 
         async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
             # uvicorn 期滿取消請求 task 後**不等它們結束**就跑 lifespan 結束,且在 serve() 內重送訊號
             # (SIGTERM 為預設處置,行程立刻結束)——被取消的請求來不及走完 CliRunner 的取消路徑
             # (killpg SIGTERM→寬限→SIGKILL)與 Router 寫帳本 error="shutdown"。這裡在 lifespan 結束前
-            # 有限時間等待那些 task(force_exit 會略過 lifespan,也就不等)。
+            # 有限時間等待那些 task(force_exit 會略過 lifespan,也就不等;等待中轉為 force_exit 時
+            # `_cancel_inflight` 再次取消,CliRunner 立即 SIGKILL,task 很快結束)。
             lifespan_shutdown = self.lifespan.shutdown
 
             async def drain_then_lifespan_shutdown() -> None:
                 pending = [t for t in self.server_state.tasks if not t.done()]
-                if pending:
+                if pending and not self.force_exit:
                     await asyncio.wait(pending, timeout=CANCELLED_DRAIN_TIMEOUT)
                 await lifespan_shutdown()
 

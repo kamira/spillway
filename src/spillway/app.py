@@ -47,7 +47,13 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from spillway import credentials, settings
-from spillway.adapters.base import AdapterContext, AdapterRegistry, CliRunner, load_litellm
+from spillway.adapters.base import (
+    DEFAULT_TERM_GRACE,
+    AdapterContext,
+    AdapterRegistry,
+    CliRunner,
+    load_litellm,
+)
 from spillway.api import install_error_handlers
 from spillway.api import admin
 from spillway.api import openai as openai_api
@@ -197,7 +203,8 @@ def create_app(
             yield
         finally:
             await retention.stop()
-            await runner.terminate_all(grace=5)   # T8(決策 16 ③):停機後備
+            # CHG-20261101-03 T8(決策 16 ③):停機後備,SIGTERM→5 秒→SIGKILL
+            await runner.terminate_all(grace=DEFAULT_TERM_GRACE)
 
     app = FastAPI(title="spillway", lifespan=lifespan, docs_url=None, redoc_url=None,
                   openapi_url=None)

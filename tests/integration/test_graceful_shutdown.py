@@ -12,7 +12,13 @@ L2(子行程 `spillway serve`,`SPILLWAY_TEST_GRACEFUL_TIMEOUT=2`,環境一律經
   且不會再啟動假 claude;
 ② `os.killpg` 對 serve 的 process group 送 SIGINT(模擬終端 Ctrl-C):假 claude 自成 session,不因此立即
   結束,其後同 ①;
-③ 連送兩次 SIGINT(force_exit,略過 lifespan):serve 結束後找不到假行程。
+③ 連送兩次 SIGINT(force_exit,略過 lifespan):serve 結束後找不到假行程;
+④ SIGTERM 後再 SIGINT(同樣 force_exit;uvicorn 最後以預設處置重送 SIGTERM):不留假行程;
+③④ 以停機上限 20 秒的 serve 執行,斷言 force_exit 立即生效(遠小於 20 秒)。
+
+停機期間新進請求回 503 只在行程內驗證(`test_new_task_request_while_shutting_down_is_503`):子行程中
+uvicorn 收到訊號後隨即關閉監聽 socket 與閒置連線,新請求到不了 app(連線失敗),L2 只斷言「不被服務、
+不啟動新的假 claude」。
 """
 from __future__ import annotations
 
@@ -31,6 +37,7 @@ import httpx
 import pytest
 
 from spillway import cli
+from spillway.adapters.base import DEFAULT_TERM_GRACE
 from spillway.store import repo
 from spillway.store.db import connect
 from tests.fakes.cli_upstream import FakeCli, install, safe_subprocess_env
@@ -39,7 +46,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
 REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 GRACEFUL = 2.0
-TERM_GRACE = 5.0   # CliRunner 預設 SIGTERM→SIGKILL 寬限
+SLOW_GRACEFUL = 20.0   # force_exit 測試:必須遠早於這個上限結束
+TERM_GRACE = DEFAULT_TERM_GRACE   # CliRunner SIGTERM→SIGKILL 寬限
 SLACK = 3.0
 TASK_BODY = {"model": "t", "messages": [{"role": "user", "content": "do it"}],
              "metadata": {"mode": "task"}}
@@ -118,6 +126,23 @@ def test_finally_kills_all_children(monkeypatch):
     assert calls == ["kill"]
 
 
+def test_capture_signals_kills_children_before_uvicorn_reraises(monkeypatch):
+    """`capture_signals` 離開時先 `kill_all_sync()`,之後 uvicorn 才重送訊號。"""
+    from spillway.adapters.base import CliRunner
+
+    order: list[str] = []
+    monkeypatch.setattr(CliRunner, "kill_all_sync", lambda self, grace=None: order.append("kill"))
+    monkeypatch.setattr(signal, "raise_signal", lambda sig: order.append(f"raise {sig}"))
+    seen = _capture_server(monkeypatch)
+    with pytest.raises(_Captured):
+        cli._run_server("127.0.0.1", 8787)
+    order.clear()
+    server = seen["server"]
+    with server.capture_signals():
+        server.handle_exit(signal.SIGTERM, None)
+    assert order == ["kill", f"raise {signal.SIGTERM}"]
+
+
 @pytest.mark.anyio
 @pytest.mark.usefixtures("fake_key_env")
 async def test_new_task_request_while_shutting_down_is_503(spillway, fake_cli, monkeypatch):
@@ -141,7 +166,7 @@ async def test_new_task_request_while_shutting_down_is_503(spillway, fake_cli, m
 
 # ---- L2:子行程 ----------------------------------------------------------------------------
 
-pytestmark_l2 = pytest.mark.skipif(shutil.which("pgrep") is None, reason="需要 pgrep(macOS 驗收平台)")
+skip_without_pgrep = pytest.mark.skipif(shutil.which("pgrep") is None, reason="需要 pgrep(macOS 驗收平台)")
 
 
 def _free_port() -> int:
@@ -167,12 +192,12 @@ def _pid_alive(pid: int) -> bool:
 
 
 class Serve:
-    def __init__(self, home: Path) -> None:
+    def __init__(self, home: Path, graceful: float = GRACEFUL) -> None:
         self.home = home
         self.fake = FakeCli(home, install(home / "fake-cli-bin"))
         base = {k: v for k, v in os.environ.items() if k not in REAL_KEY_VARS}
         base.update(SPILLWAY_HOME=str(home), PYTHONPATH=str(SRC), LITELLM_LOCAL_MODEL_COST_MAP="True")
-        base[cli.TEST_GRACEFUL_TIMEOUT_ENV] = str(GRACEFUL)
+        base[cli.TEST_GRACEFUL_TIMEOUT_ENV] = str(graceful)
         self.env = safe_subprocess_env(base, fake_bin=self.fake.bin_dir)
         self.port = _free_port()
         self.url = f"http://127.0.0.1:{self.port}"
@@ -241,12 +266,9 @@ class Serve:
             conn.close()
 
 
-@pytest.fixture
-def serve(tmp_path):
-    home = tmp_path / "home"
+def _open_serve(home: Path, graceful: float):
     home.mkdir()
-    s = Serve(home)
-    records: list[dict[str, Any]] = []
+    s = Serve(home, graceful)
     try:
         s.wait_ready()
         s.setup_member_and_route()
@@ -254,15 +276,25 @@ def serve(tmp_path):
         yield s
     finally:
         s.stop()
-        records = s.fake.records("claude")
         # 保險:殺掉任何殘留的假 claude group,再刪控制目錄(假 CLI 偵測到也會自行結束)
-        for rec in records:
+        for rec in s.fake.records("claude"):
             if _group_alive(rec["pid"]):
                 try:
                     os.killpg(rec["pid"], signal.SIGKILL)
                 except ProcessLookupError:
                     pass
         shutil.rmtree(s.fake.control_dir, ignore_errors=True)
+
+
+@pytest.fixture
+def serve(tmp_path):
+    yield from _open_serve(tmp_path / "home", GRACEFUL)
+
+
+@pytest.fixture
+def slow_serve(tmp_path):
+    """停機上限 20 秒:分得出 force_exit(立即)與 graceful(等滿上限)。"""
+    yield from _open_serve(tmp_path / "home", SLOW_GRACEFUL)
 
 
 def _wait_fake_started(s: Serve) -> dict[str, Any]:
@@ -295,7 +327,7 @@ def _assert_shutdown_outcome(s: Serve, rec: dict[str, Any], box: dict[str, Any])
         assert box["resp"].status_code != 200
 
 
-@pytestmark_l2
+@skip_without_pgrep
 def test_sigterm_waits_graceful_then_kills_cli_group_and_records_shutdown(serve):
     s = serve
     box = s.start_task_request()
@@ -309,7 +341,7 @@ def test_sigterm_waits_graceful_then_kills_cli_group_and_records_shutdown(serve)
     _assert_shutdown_outcome(s, rec, box)
 
 
-@pytestmark_l2
+@skip_without_pgrep
 def test_sigint_to_process_group_does_not_hit_cli_child_directly(serve):
     s = serve
     box = s.start_task_request()
@@ -325,17 +357,44 @@ def test_sigint_to_process_group_does_not_hit_cli_child_directly(serve):
     _assert_shutdown_outcome(s, rec, box)
 
 
-@pytestmark_l2
-def test_double_sigint_force_exit_leaves_no_cli_process(serve):
-    s = serve
+FORCE_LIMIT = TERM_GRACE + SLACK   # force_exit 時的結束上限(遠小於 SLOW_GRACEFUL)
+
+
+def _assert_forced_outcome(s: Serve, rec: dict[str, Any], box: dict[str, Any], elapsed: float) -> None:
+    assert not _group_alive(rec["pid"]), "force_exit 後假 claude 或其孫行程仍在"
+    assert not _pid_alive(rec["pid"])
+    assert elapsed < FORCE_LIMIT, f"force_exit 沒有立即生效({elapsed:.1f}s)"
+    assert s.proc.returncode != 0
+    assert len(s.fake.records("claude")) == 1
+    box["thread"].join(10)
+
+
+@skip_without_pgrep
+def test_double_sigint_force_exit_is_prompt_and_leaves_no_cli_process(slow_serve):
+    s = slow_serve
     box = s.start_task_request()
     rec = _wait_fake_started(s)
 
     os.killpg(s.proc.pid, signal.SIGINT)
     time.sleep(0.3)
+    start = time.monotonic()
     os.killpg(s.proc.pid, signal.SIGINT)                     # 第二次:uvicorn force_exit,略過 lifespan
-    s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
-    assert s.proc.returncode != 0
-    assert not _group_alive(rec["pid"]), "force_exit 後假 claude 或其孫行程仍在"
-    assert not _pid_alive(rec["pid"])
-    box["thread"].join(10)
+    s.wait_exit(SLOW_GRACEFUL + SLACK)
+    _assert_forced_outcome(s, rec, box, time.monotonic() - start)
+
+
+@skip_without_pgrep
+def test_sigterm_then_sigint_force_exit_is_prompt_and_leaves_no_cli_process(slow_serve):
+    """SIGTERM 後再 SIGINT:uvicorn 依相反順序重送,最後是預設處置的 SIGTERM(行程立即結束,
+    `finally`/`atexit` 不會跑);子行程必須在重送之前就被殺掉。"""
+    s = slow_serve
+    box = s.start_task_request()
+    rec = _wait_fake_started(s)
+
+    s.proc.send_signal(signal.SIGTERM)
+    time.sleep(0.3)
+    start = time.monotonic()
+    s.proc.send_signal(signal.SIGINT)
+    s.wait_exit(SLOW_GRACEFUL + SLACK)
+    assert s.proc.returncode == -signal.SIGTERM, s.err
+    _assert_forced_outcome(s, rec, box, time.monotonic() - start)
