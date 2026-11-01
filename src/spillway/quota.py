@@ -6,18 +6,15 @@ from __future__ import annotations
 
 import calendar
 import math
-import sqlite3
-from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from spillway.clock import Clock, to_iso
 from spillway.domain import COOLING_STATUSES, Budget, Deployment
 from spillway.store import repo
+from spillway.store.db import ConnSource, use_conn
 
 RATE_LIMIT_COOLDOWN = timedelta(seconds=60)   # spec 4.5.2
 NONE_WINDOW_REPROBE = timedelta(hours=1)      # spec 5.1 window=none
-
-ConnSource = sqlite3.Connection | Callable[[], sqlite3.Connection]
 
 
 def _utc(dt: datetime) -> datetime:
@@ -62,15 +59,12 @@ class QuotaService:
 
     # ------------------------------------------------------------ 共用
 
-    def _conn(self) -> sqlite3.Connection:
-        src = self._conn_src
-        return src if isinstance(src, sqlite3.Connection) else src()
-
     def _now(self, now: datetime | None) -> datetime:
         return _utc(self._clock.now() if now is None else now)
 
     def _budget(self, dep: Deployment) -> Budget | None:
-        return repo.get_budget(self._conn(), dep.id)
+        with use_conn(self._conn_src) as conn:
+            return repo.get_budget(conn, dep.id)
 
     # ------------------------------------------------------------ 期間(5.1)
 
@@ -119,7 +113,8 @@ class QuotaService:
         if start is not None:
             sql += " AND ts >= ? AND ts < ?"
             args += [to_iso(start), to_iso(self.next_reset(budget, now))]
-        return float(self._conn().execute(sql, args).fetchone()[0])
+        with use_conn(self._conn_src) as conn:
+            return float(conn.execute(sql, args).fetchone()[0])
 
     def remaining(self, dep: Deployment, now: datetime | None = None) -> float:
         now = self._now(now)
@@ -168,12 +163,13 @@ class QuotaService:
         else:
             until = now + RATE_LIMIT_COOLDOWN
         until = until.replace(microsecond=0)  # 存到秒(spec 2.1.2)
-        conn = self._conn()
-        repo.mark_exhausted_until(conn, dep.id, until)
-        # 冷卻只延長不縮短(M27):回傳寫入後讀回的實際值
-        stored = repo.get_budget(conn, dep.id)
+        with use_conn(self._conn_src) as conn:
+            repo.mark_exhausted_until(conn, dep.id, until)
+            # 冷卻只延長不縮短(M27):回傳寫入後讀回的實際值
+            stored = repo.get_budget(conn, dep.id)
         return stored.exhausted_until if stored else until
 
     def clear(self, dep: Deployment) -> None:
         """手動清除冷卻(5.3.3)。"""
-        repo.set_exhausted_until(self._conn(), dep.id, None)
+        with use_conn(self._conn_src) as conn:
+            repo.set_exhausted_until(conn, dep.id, None)

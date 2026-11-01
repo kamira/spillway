@@ -1,6 +1,6 @@
 """OpenAI 相容端點 `/v1/*`(spec 9.1、9.2、1.1.3、4.1、4.5.3、5.4.5;CHG-20261030-02 T13)。
 
-依賴 `request.app.state` 的 `router`(`spillway.routing.Router`)、`clock`、`conn_factory`(見 `app.py`)。
+依賴 `request.app.state` 的 `router`(`spillway.routing.Router`)、`clock`、`conn_factory`(見 `app.py`;經 `api.deps.request_conn` 取用)。
 
 `POST /v1/chat/completions`
 - body 以 Pydantic 驗證(OpenAI 相容欄位);其他欄位只轉交 `spillway.api.ALLOWED_CHAT_PARAMS`
@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from spillway.api import ApiError, filter_chat_params, redact_echo
+from spillway.api.deps import request_conn
 from spillway.domain import CallResult, ChatRequest
 from spillway.effort import InvalidEffort, normalize_effort
 from spillway.redact import REDACTOR
@@ -157,12 +158,9 @@ async def chat_completions(body: ChatCompletionBody, request: Request) -> JSONRe
 @router.get("/v1/models")
 async def list_models(request: Request) -> dict[str, Any]:
     state = request.app.state
-    conn = state.conn_factory()
-    try:
+    with request_conn(request) as conn:
         routes = sorted(r.name for r in repo.list_routes(conn))
         deps = repo.list_deployments(conn)
-    finally:
-        conn.close()
     ids: list[str] = []
     seen: set[str] = set()
     for name in [*routes, *sorted({d.model_name for d in deps}),

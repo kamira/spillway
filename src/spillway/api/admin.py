@@ -6,8 +6,8 @@ design D13、D15、D22;決策 6、16、17、22、24、25、32)。
 依賴(一律從 `request.app.state` 取得,與 T13 `create_app` 放的屬性名一致):
 - `registry`:`AdapterRegistry`(已 `discover()`,帶 `AdapterContext`)
 - `router`:`routing.Router`(dry-run 與 `/api/estimate` 用)
-- `conn_factory`:零參數函式,每次呼叫回傳**新開**的 `sqlite3.Connection`;本模組每個請求呼叫一次、
-  請求結束時關閉(與 `Router(..., close_conn=True)` 的假設相同)
+- `conn_factory`:零參數函式,每次呼叫回傳**新開**的 `sqlite3.Connection`;本模組每個請求經
+  `api.deps.request_conn(request)` 呼叫一次、請求結束時關閉(與 `Router(..., close_conn=True)` 的假設相同)
 - `clock`:`spillway.clock.Clock`
 
 錯誤(spec 9.1.2;決策 16、17、22):一律 `{"error": {"code", "message"}}`,格式工具與
@@ -43,8 +43,7 @@ import logging
 import math
 import sqlite3
 import time
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
@@ -76,6 +75,7 @@ from spillway.api import (
     redact_echo,
     validation_message,
 )
+from spillway.api.deps import request_conn
 from spillway.clock import to_iso
 from spillway.domain import (
     CALL_STATUSES,
@@ -155,15 +155,6 @@ router = APIRouter(prefix="/api", route_class=_AdminRoute)
 
 
 # ================================================================ 共用
-
-
-@contextmanager
-def _db(request: Request) -> Iterator[sqlite3.Connection]:
-    conn = request.app.state.conn_factory()
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 def _clock(request: Request) -> Any:
@@ -357,7 +348,7 @@ def _check_cardinality(conn: sqlite3.Connection, registry: Any, dep: Deployment)
 @router.get("/deployments")
 async def list_deployments(request: Request) -> dict[str, Any]:
     """`{"deployments": [成員, …]}`(依 id 排序;成員格式同 `GET /api/deployments/{id}`)。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         return {"deployments": [_dep_out(d) for d in repo.list_deployments(conn)]}
 
 
@@ -368,7 +359,7 @@ async def create_deployment(request: Request, body: DeploymentIn) -> dict[str, A
     if body.id is None:
         raise _invalid("body.id", "Field required")
     dep = body.to_deployment(body.id, None)
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         with transaction(conn):
             if conn.execute("SELECT 1 FROM deployments WHERE id = ?", (dep.id,)).fetchone():
                 raise ApiError(409, "conflict", redact_echo(f"成員 id 已存在:{dep.id}"))
@@ -382,7 +373,7 @@ async def get_deployment(request: Request, dep_id: str) -> dict[str, Any]:
     """單一成員:`id`、`model_name`、`kind`、`provider`、`model`、`params`、`credential_ref`、
     `capabilities`、`enabled`、`tags[]`、`budget`(`{type, limit_amount, window, reset_anchor,
     exhausted_until}` 或 null)。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         return _dep_out(_load_dep(conn, dep_id))
 
 
@@ -398,7 +389,7 @@ async def update_deployment(request: Request, dep_id: str, body: DeploymentIn) -
     if body.id is not None and body.id != dep_id:
         raise _invalid("body.id", "不可變更成員 id(必須與路徑相同)")
     now = _clock(request).now()
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         with transaction(conn):
             old = _load_dep(conn, dep_id)
             until = old.budget.exhausted_until if old.budget is not None else None
@@ -414,7 +405,7 @@ async def update_deployment(request: Request, dep_id: str, body: DeploymentIn) -
 @router.delete("/deployments/{dep_id}", status_code=204)
 async def delete_deployment(request: Request, dep_id: str) -> Response:
     """刪除成員;tags、budget、route_targets 串聯刪除,帳本列保留(孤兒列)。回 204。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         if not repo.delete_deployment(conn, dep_id):
             raise _not_found(f"成員 {dep_id}")
     return Response(status_code=204)
@@ -423,7 +414,7 @@ async def delete_deployment(request: Request, dep_id: str) -> Response:
 @router.post("/deployments/{dep_id}/clear-cooldown")
 async def clear_cooldown(request: Request, dep_id: str) -> dict[str, Any]:
     """清除 `exhausted_until`(spec 5.3.3,`QuotaService.clear`);回成員。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         dep = _load_dep(conn, dep_id)
         QuotaService(conn, _clock(request)).clear(dep)
         return _dep_out(_load_dep(conn, dep_id))
@@ -447,7 +438,7 @@ async def test_deployment(request: Request, dep_id: str) -> dict[str, Any]:
     """
     clock = _clock(request)
     registry = request.app.state.registry
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         dep = _load_dep(conn, dep_id)
         try:
             adapter = registry.get(dep)
@@ -566,7 +557,7 @@ def _load_group(conn: sqlite3.Connection, name: str) -> repo.Group:
 @router.get("/groups")
 async def list_groups(request: Request) -> dict[str, Any]:
     """`{"groups": [群組, …]}`(依 name 排序;格式同單一群組)。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         deps = repo.list_deployments(conn)
         return {"groups": [_group_out(g, deps) for g in repo.list_groups(conn)]}
 
@@ -574,7 +565,7 @@ async def list_groups(request: Request) -> dict[str, Any]:
 @router.post("/groups", status_code=201)
 async def create_group(request: Request, body: GroupIn) -> dict[str, Any]:
     """建立群組;重複 name → 409 `conflict`。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         with transaction(conn):
             if repo.get_group(conn, body.name) is not None:
                 raise ApiError(409, "conflict", redact_echo(f"群組已存在:{body.name}"))
@@ -586,14 +577,14 @@ async def create_group(request: Request, body: GroupIn) -> dict[str, Any]:
 async def get_group(request: Request, name: str) -> dict[str, Any]:
     """`{name, selector: {all, any, none}, members: [{id, model_name, kind, provider, enabled}]}`;
     `members` 為目前符合選擇器的成員預覽(含停用者,依 id 排序)。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         return _group_out(_load_group(conn, name), repo.list_deployments(conn))
 
 
 @router.put("/groups/{name}")
 async def update_group(request: Request, name: str, body: GroupUpdate) -> dict[str, Any]:
     """取代選擇器;不存在 → 404。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         with transaction(conn):
             _load_group(conn, name)
             repo.save_group(conn, repo.Group(name, body.selector.model_dump()))
@@ -603,7 +594,7 @@ async def update_group(request: Request, name: str, body: GroupUpdate) -> dict[s
 @router.delete("/groups/{name}", status_code=204)
 async def delete_group(request: Request, name: str) -> Response:
     """刪除群組;仍被 route 參照 → 409 `conflict`(message 列出 route 名)。回 204。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         with transaction(conn):
             _load_group(conn, name)
             refs = [r.name for r in repo.list_routes(conn) if r.target.get("group") == name]
@@ -720,7 +711,7 @@ def _check_group_exists(conn: sqlite3.Connection, target: Mapping[str, Any]) -> 
 @router.get("/routes")
 async def list_routes(request: Request) -> dict[str, Any]:
     """`{"routes": [route, …]}`(依 name 排序;格式同單一 route)。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         return {"routes": [_route_out(conn, r) for r in repo.list_routes(conn)]}
 
 
@@ -729,7 +720,7 @@ async def create_route(request: Request, body: RouteIn) -> dict[str, Any]:
     """建立 route;`{group}` 目標的群組必須存在(否則 422);重複 name → 409 `conflict`。"""
     if body.name is None:
         raise _invalid("body.name", "Field required")
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         with transaction(conn):
             if repo.get_route(conn, body.name) is not None:
                 raise ApiError(409, "conflict", redact_echo(f"route 已存在:{body.name}"))
@@ -740,7 +731,7 @@ async def create_route(request: Request, body: RouteIn) -> dict[str, Any]:
 
 @router.get("/routes/{name}")
 async def get_route(request: Request, name: str) -> dict[str, Any]:
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         return _route_out(conn, _load_route(conn, name))
 
 
@@ -750,7 +741,7 @@ async def update_route(request: Request, name: str, body: RouteIn) -> dict[str, 
     由 Router 依目標過濾,不在此刪除)。"""
     if body.name is not None and body.name != name:
         raise _invalid("body.name", "不可變更 route 名稱(必須與路徑相同)")
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         with transaction(conn):
             _load_route(conn, name)
             _check_group_exists(conn, body.target)
@@ -761,7 +752,7 @@ async def update_route(request: Request, name: str, body: RouteIn) -> dict[str, 
 @router.delete("/routes/{name}", status_code=204)
 async def delete_route(request: Request, name: str) -> Response:
     """刪除 route 與其 route_targets。回 204。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         if not repo.delete_route(conn, name):
             raise _not_found(f"route {name}")
     return Response(status_code=204)
@@ -772,7 +763,7 @@ async def put_route_order(request: Request, name: str, body: OrderIn) -> dict[st
     """儲存拖曳結果(spec 9.3)。成員不存在或不屬 route 目標 → 422 `member_not_in_target`
     (message 列出成員 id);以 `repo.replace_route_targets` 單一交易取代全部 route_targets
     (9.3.2;驗證失敗時舊資料不變)。回 route(含新的 `order`)。`slots` 為空清單等同還原預設。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         with transaction(conn):
             route = _load_route(conn, name)
             members = {d.id for d in members_of(route.target, repo.list_deployments(conn),
@@ -793,7 +784,7 @@ async def put_route_order(request: Request, name: str, body: OrderIn) -> dict[st
 @router.delete("/routes/{name}/order", status_code=204)
 async def delete_route_order(request: Request, name: str) -> Response:
     """還原預設順序(spec 4.3.4):刪除該 route 的全部 route_targets。回 204。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         with transaction(conn):
             _load_route(conn, name)
             repo.replace_route_targets(conn, name, [])
@@ -876,7 +867,7 @@ async def _dry_run(request: Request, model: str, req: ChatRequest) -> Plan:
 async def dry_run_route(request: Request, name: str, body: ChatBody) -> dict[str, Any]:
     """以範例請求模擬路由(不呼叫上游、不寫帳本);route 不存在 → 404。body 的 `model` 忽略。
     回應為 Plan JSON(見 `_plan_out`)。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         _load_route(conn, name)
     plan = await _dry_run(request, f"route:{name}", body.to_request(f"route:{name}"))
     return _plan_out(plan)
@@ -950,7 +941,7 @@ async def list_ledger(
     """
     since = _parse_time(from_, "query.from")
     until = _parse_time(to, "query.to")
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         rows = repo.list_ledger(conn, route_name=route, deployment_id=deployment, status=status,
                                 since=since, until=until, limit=page_size,
                                 offset=(page - 1) * page_size)
@@ -979,7 +970,7 @@ async def get_payload(request: Request, ledger_id: int) -> dict[str, Any]:
     200:`{ledger_id, ts, request_json, response_text, bytes, truncated, redacted}`(內容已於寫入時遮罩);
     已過保存期限 → 410 `payload_expired`;從未記錄或帳本列不存在 → 404 `not_found`。
     """
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         try:
             st = payload_status(conn, ledger_id, _clock(request).now())
         except LedgerNotFound:
@@ -1020,14 +1011,14 @@ def _context_out(conn: sqlite3.Connection) -> dict[str, Any]:
 async def get_context_settings(request: Request) -> dict[str, Any]:
     """`{record_context_default: bool, context_retention_days: int, context_max_bytes: int}`;
     資料庫缺鍵時為常數預設值(決策 24),讀取不寫入資料列。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         return _context_out(conn)
 
 
 @router.put("/settings/context")
 async def put_context_settings(request: Request, body: ContextSettingsIn) -> dict[str, Any]:
     """部分更新(同一交易);回更新後的三個值。"""
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         with transaction(conn):
             for key, value in body.model_dump(exclude_none=True).items():
                 repo.set_setting(conn, key, value)
@@ -1064,7 +1055,7 @@ async def dashboard(request: Request) -> dict[str, Any]:
     """
     clock = _clock(request)
     now = clock.now().astimezone(timezone.utc)
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         quota = QuotaService(conn, clock)
         rows = conn.execute(
             "SELECT d.id, d.model_name, d.kind, d.provider, d.enabled, b.type AS b_type, "
@@ -1178,7 +1169,7 @@ async def list_adapters(request: Request) -> dict[str, Any]:
     """
     registry = request.app.state.registry
     ctx = AdapterContext(credentials=credentials.resolve, clock=_clock(request))
-    with _db(request) as conn:
+    with request_conn(request) as conn:
         deps = [(r[0], r[1]) for r in conn.execute("SELECT kind, provider FROM deployments")]
     modules = registry.modules()
     counts = _module_counts(registry, modules, deps)
