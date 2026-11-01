@@ -42,6 +42,7 @@ from spillway.adapters.base import (
     Deployment,
     SignalsError,
     classify,
+    cli_timeout,
     effort_to_upstream,
     messages_to_prompt,
     resolve_signals,
@@ -109,19 +110,6 @@ def tokens_in_of(usage: Mapping[str, Any]) -> int | None:
     values = [n for n in (_nonneg_int(usage.get(k)) for k in _INPUT_TOKEN_FIELDS) if n is not None]
     return sum(values) if values else None
 
-
-def _timeout(v: Any) -> float | None:
-    if v is None:
-        return None
-    if isinstance(v, bool):
-        raise ValueError("params.timeout 必須是正數(秒)")
-    try:
-        t = float(v)
-    except (TypeError, ValueError):
-        raise ValueError("params.timeout 必須是正數(秒)") from None
-    if not math.isfinite(t) or t <= 0:
-        raise ValueError("params.timeout 必須是正數(秒)")
-    return t
 
 
 def build_argv(model: str, upstream_effort: str | None, effort_args: list[str],
@@ -191,7 +179,7 @@ class ClaudeCliAdapter:
         except SignalsError as exc:
             return _error(f"params.signals 不合法:{exc}")
         try:
-            timeout = _timeout(params.get("timeout"))
+            timeout = cli_timeout(params.get("timeout"))   # adapters.base 共用驗證
             argv = build_argv(dep.model, effort_to_upstream(self.manifest, effort),
                               _str_list(params.get("effort_args"), "effort_args"),
                               _str_list(params.get("extra_args"), "extra_args"))

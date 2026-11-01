@@ -567,3 +567,19 @@ async def test_shutdown_during_spawn_window_kills_new_child(runner, tmp_path, ma
     assert out.exit_code == -signal.SIGKILL
     _assert_no_leftovers(d, marker)
     assert runner.active_pids == ()
+
+
+# ---- 終審 I1a:CLI 模組共用的 params.timeout 驗證 ----------------------------------------------
+
+@pytest.mark.parametrize("v", [0, -1, -0.5, True, False, float("nan"), float("inf"),
+                               float("-inf"), "abc", [1], {}])
+def test_cli_timeout_rejects(v):
+    from spillway.adapters.base import cli_timeout
+    with pytest.raises(ValueError, match="params.timeout 必須是正數"):
+        cli_timeout(v)
+
+
+@pytest.mark.parametrize("v, expected", [(None, None), (1, 1.0), (0.25, 0.25), ("3", 3.0)])
+def test_cli_timeout_accepts(v, expected):
+    from spillway.adapters.base import cli_timeout
+    assert cli_timeout(v) == expected

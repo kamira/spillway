@@ -398,3 +398,19 @@ async def test_second_codex_member_409_provider_single(home):
             mods = {m["module"]: m for m in (await c.get("/api/adapters")).json()["modules"]}
     assert mods["codex_cli"]["cardinality"] == "single"
     assert app.state.cli_runner.active_pids == ()
+
+
+# ---- 終審 I1a:params.timeout 驗證與 claude_cli 一致 ------------------------------------------
+
+@pytest.mark.parametrize("timeout", [0, -1, True, False, float("nan"), float("inf"), "abc", [1]])
+async def test_bad_timeout_rejected_without_process(home, timeout):
+    result, spy = await spy_call(home, timeout=timeout)
+    assert result.status == "error" and "params.timeout 必須是正數(秒)" in result.error
+    assert spy.calls == []
+
+
+@pytest.mark.parametrize("timeout, expected", [(None, None), (12, 12.0), ("2.5", 2.5)])
+async def test_good_timeout_passed_to_runner(home, timeout, expected):
+    result, spy = await spy_call(home, timeout=timeout)
+    assert result.status == "ok"
+    assert spy.calls[0]["timeout"] == expected

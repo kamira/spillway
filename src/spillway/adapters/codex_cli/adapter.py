@@ -29,6 +29,7 @@ from spillway.adapters.base import (
     Deployment,
     SignalsError,
     classify,
+    cli_timeout,
     effort_to_upstream,
     messages_to_prompt,
     resolve_signals,
@@ -158,9 +159,9 @@ class CodexCliAdapter:
         except ValueError as exc:
             return _error(str(exc))
         try:
-            timeout = float(params["timeout"]) if params.get("timeout") is not None else None
-        except (TypeError, ValueError):
-            return _error("params.timeout 必須是數字(秒)")
+            timeout = cli_timeout(params.get("timeout"))   # 與 claude_cli 同一驗證(終審 I1a)
+        except ValueError as exc:
+            return _error(str(exc))
         extra = params.get("extra_args") or []
         problem = _extra_args_problem(extra)
         if problem is not None:

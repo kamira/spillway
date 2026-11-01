@@ -6,7 +6,8 @@
 `AdapterRegistry` 與合約檢查、HTTP 存活探測 `probe_http`、經 LiteLLM 呼叫上游的共用 adapter 基底
 `LiteLLMApiAdapter`(各內建模組的 `LiteLLMAdapter` 繼承它)、子行程執行器 `CliRunner` 與 `CliOutput`
 (CHG-20261101-03 決策 8;CLI 模組經 `AdapterContext.cli_runner` 使用)、CLI 模組共用的
-messages → prompt 轉換 `messages_to_prompt`、`content_text`(spec 7.5.1)。
+messages → prompt 轉換 `messages_to_prompt`、`content_text`(spec 7.5.1)與 `params.timeout` 驗證
+`cli_timeout`。
 """
 from spillway.adapters.base.api_adapter import LiteLLMApiAdapter
 from spillway.adapters.base.cli_prompt import content_text, messages_to_prompt
@@ -17,6 +18,7 @@ from spillway.adapters.base.cli_runner import (
     KILLED_REASONS,
     CliOutput,
     CliRunner,
+    cli_timeout,
 )
 from spillway.adapters.base.contract import contract_problems, layering_violations
 from spillway.adapters.base.effort import effort_to_upstream
@@ -85,7 +87,7 @@ __all__ = [
     # 共用 adapter 基底(CHG-20261101-02 決策 11)
     "LiteLLMApiAdapter",
     # 子行程執行器(CHG-20261101-03 決策 8)
-    "CliOutput", "CliRunner", "DEFAULT_DRAIN_TIMEOUT", "DEFAULT_MAX_OUTPUT_BYTES",
+    "CliOutput", "CliRunner", "cli_timeout", "DEFAULT_DRAIN_TIMEOUT", "DEFAULT_MAX_OUTPUT_BYTES",
     "DEFAULT_TERM_GRACE", "KILLED_REASONS",
     # Messages 轉 CLI prompt(spec 7.5.1;CHG-20261101-03 T4 審議)
     "content_text", "messages_to_prompt",

@@ -22,6 +22,9 @@ max_output_bytes=8 MiB) -> CliOutput`
   以 `CliOutput.stdout_truncated`/`stderr_truncated` 標記。輸出以 UTF-8(`errors="replace"`)解碼。
 - 找不到執行檔、argv 過長(E2BIG)等啟動錯誤以 `OSError` 往上丟,由模組對應成 `error`。
 
+`cli_timeout(v)`:CLI 模組 `params.timeout` 的共用驗證(None 不設上限;bool、非數字、非有限、≤ 0 →
+`ValueError`),兩個 CLI 模組都以它把設定錯誤對應成 `error`。
+
 併發名額(決策 7;由 Router 取得、模組不碰):`try_acquire(key, limit)`(同步、不 await)、
 `release(key)`、`in_flight(key)`。`active_pids`(唯讀)列出進行中子行程,供測試與診斷。
 
@@ -34,16 +37,19 @@ max_output_bytes=8 MiB) -> CliOutput`
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import signal
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 __all__ = [
     "CliOutput",
     "CliRunner",
+    "cli_timeout",
     "DEFAULT_DRAIN_TIMEOUT",
     "DEFAULT_MAX_OUTPUT_BYTES",
     "DEFAULT_TERM_GRACE",
@@ -54,6 +60,25 @@ DEFAULT_TERM_GRACE = 5.0                    # SIGTERM 之後等多久才 SIGKILL
 DEFAULT_DRAIN_TIMEOUT = 2.0                 # 主行程結束後讀管線的上限(秒)
 DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024  # stdout、stderr 各自的上限
 KILLED_REASONS = ("timeout", "cancelled", "shutdown")
+
+_TIMEOUT_ERROR = "params.timeout 必須是正數(秒)"
+
+
+def cli_timeout(v: Any) -> float | None:
+    """CLI 模組 `params.timeout` 的共用驗證(終審 I1a):None → None(擁有者明確取消上限);
+    bool、無法轉 float、非有限或 ≤ 0 → `ValueError`;其餘回 float(秒)。"""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        raise ValueError(_TIMEOUT_ERROR)
+    try:
+        t = float(v)
+    except (TypeError, ValueError):
+        raise ValueError(_TIMEOUT_ERROR) from None
+    if not math.isfinite(t) or t <= 0:
+        raise ValueError(_TIMEOUT_ERROR)
+    return t
+
 
 _POLL = 0.02          # 等 group 結束的輪詢間隔(秒)
 _READ_CHUNK = 65536
