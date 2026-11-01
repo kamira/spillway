@@ -6,6 +6,7 @@ local 成員 `loc-1` 的 route」送請求。FakeClock 全程不前進:第二次
 """
 from __future__ import annotations
 
+import importlib
 import logging
 import socket
 from typing import Any
@@ -14,11 +15,13 @@ import pytest
 
 from spillway.routing import Router
 
-from .helpers import assert_error, local_member
+from .helpers import api_member, assert_error, local_member
 
 pytestmark = pytest.mark.anyio
 
 ROUTE = "lr"
+# `spillway.adapters.base.litellm_call` 這個屬性名被同名函式轉匯出遮住,改以 importlib 取模組
+litellm_call = importlib.import_module("spillway.adapters.base.litellm_call")
 MSGS = [{"role": "user", "content": "hello"}]
 
 
@@ -110,27 +113,74 @@ async def test_delete_removes_id_from_health_cache(open_spillway, fake_api):
         assert cache.get("loc-1") is None
 
 
-async def test_debug_root_logger_does_not_log_prompt(open_spillway, fake_api, caplog, capfd):
-    """root logger 為 DEBUG 時,經 route 的請求不會讓 LiteLLM/SDK/httpx 把 prompt 印進日誌。
+FLOOR_LOGGERS = ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy", "openai", "anthropic", "httpx",
+                 "httpcore")
+
+
+async def _setup_member(h: Any, kind: str, fake_api: Any) -> None:
+    """target 只含單一成員 `m-1` 的 route `lr`;local(hosted_vllm)或 api(openai_api 模組)。"""
+    if kind == "local":
+        body = local_member("m-1", tags=["m-1"], fake_api=fake_api)
+    else:
+        body = api_member("m-1", tags=["m-1"], fake_api=fake_api)
+    r = await h.client.post("/api/deployments", json=body)
+    assert r.status_code == 201, r.text
+    r = await h.client.post("/api/routes", json={
+        "name": ROUTE, "target": {"tags": {"all": [], "any": ["m-1"], "none": []}}})
+    assert r.status_code == 201, r.text
+
+
+async def _debug_request_logs(open_spillway: Any, fake_api: Any, caplog: Any, capfd: Any,
+                              kind: str, prompt: str) -> tuple[str, str]:
+    """root logger 為 DEBUG 下經 route 送一次含 `prompt` 的請求;回 (caplog 文字, capfd stderr)。"""
+    caplog.set_level(logging.DEBUG)
+    async with open_spillway() as h:
+        await _setup_member(h, kind, fake_api)
+        capfd.readouterr()
+        caplog.clear()
+        r = await _chat(h, [{"role": "user", "content": prompt}])
+        assert r.status_code == 200, r.text
+        assert r.headers["X-Spillway-Served-By"] == "m-1"
+        assert logging.getLogger().isEnabledFor(logging.DEBUG)
+        return caplog.text, capfd.readouterr().err
+
+
+@pytest.fixture
+def _restore_floor_levels():
+    saved = {n: logging.getLogger(n).level for n in FLOOR_LOGGERS}
+    yield
+    for n, lvl in saved.items():
+        logging.getLogger(n).setLevel(lvl)
+
+
+@pytest.mark.parametrize("kind", ["local", "api"])
+async def test_debug_root_logger_does_not_log_prompt(open_spillway, fake_api, caplog, capfd, kind,
+                                                     _restore_floor_levels):
+    """root logger 為 DEBUG 時,經 route 的請求(local 的 hosted_vllm 與 api 的 openai_api 模組)
+    不會讓 LiteLLM/SDK/httpx 把 prompt 印進日誌(決策 13)。
 
     caplog 只看得到會 propagate 到 root 的紀錄;LiteLLM 另掛自己的 stderr handler,所以也檢查
     `capfd` 擷取的 stderr(決策審議 D19)。
     """
-    prompt = "zebra-quokka-prompt-7731"
-    root = logging.getLogger()
-    saved = root.level
-    caplog.set_level(logging.DEBUG)
-    try:
-        async with open_spillway() as h:
-            await _setup(h, fake_api.base_url + "/v1")
-            capfd.readouterr()
-            caplog.clear()
-            r = await _chat(h, [{"role": "user", "content": prompt}])
-            assert r.status_code == 200, r.text
-            assert r.headers["X-Spillway-Served-By"] == "loc-1"
-            assert root.isEnabledFor(logging.DEBUG)
-            err = capfd.readouterr().err
-            assert prompt not in caplog.text
-            assert prompt not in err
-    finally:
-        root.setLevel(saved)
+    prompt = f"zebra-quokka-prompt-{kind}-7731"
+    text, err = await _debug_request_logs(open_spillway, fake_api, caplog, capfd, kind, prompt)
+    assert prompt not in text
+    assert prompt not in err
+
+
+@pytest.mark.parametrize("kind", ["local", "api"])
+async def test_control_without_floor_prompt_is_logged(open_spillway, fake_api, caplog, capfd, kind,
+                                                      monkeypatch, _restore_floor_levels):
+    """對照組:`_floor_loggers` 不做事且七個 logger 為 NOTSET 時,同樣的請求會把 prompt 印進日誌
+    (證明上一個測試分辨得出有無下限)。"""
+    monkeypatch.setattr(litellm_call, "_floor_loggers", lambda: None)
+    for n in FLOOR_LOGGERS:
+        logging.getLogger(n).setLevel(logging.NOTSET)
+    prompt = f"zebra-quokka-prompt-{kind}-control-7731"
+    text, err = await _debug_request_logs(open_spillway, fake_api, caplog, capfd, kind, prompt)
+    assert prompt in text
+    leakers = {rec.name.split(".")[0] for rec in caplog.records if prompt in rec.getMessage()}
+    # 本版 LiteLLM:兩種成員都由 LiteLLM 印出;api(openai_api)另由 openai SDK(`openai._base_client`)印出
+    assert "LiteLLM" in leakers, leakers
+    if kind == "api":
+        assert "openai" in leakers, leakers

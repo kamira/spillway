@@ -13,7 +13,7 @@ anthropic_api、openai_api、litellm 模組只經這裡呼叫 LiteLLM,不直接 
   tokenizer,退回 tiktoken;CHG-20261030-02 M13)。應用層的 `estimate` 也用同一個函式。
   不註冊任何 callback、不傳 `callbacks`。
 - `load_litellm()` 另把 `LOG_FLOOR_LOGGERS` 七個 logger(LiteLLM 與它呼叫的 SDK、HTTP 程式庫)的
-  等級在 DEBUG 或 NOTSET 時設為 INFO,其他等級不動,不改 `propagate` 與 handler
+  等級低於 INFO(NOTSET、DEBUG 與自訂 1–19)時設為 INFO,INFO 以上不動,不改 `propagate` 與 handler
   (CHG-20261101-02 決策 13):prompt 回顯與 request options 只在 DEBUG 輸出。
 - 模型字串一律經 `model_string(dep)`(spec 7.2.1;M11、M14):provider 為 `litellm`(直通)時原樣
   使用 `dep.model`(必須含 `/`),其他 provider 一律 `<provider>/<model>`,即使 model 已以
@@ -112,10 +112,11 @@ def load_litellm() -> Any:
 
 
 def _floor_loggers() -> None:
-    """`LOG_FLOOR_LOGGERS` 的等級為 DEBUG 或 NOTSET 時改為 INFO;其他等級、propagate、handler 不動。"""
+    """`LOG_FLOOR_LOGGERS` 的等級低於 INFO(NOTSET、DEBUG 與自訂 1–19)時改為 INFO;
+    INFO 以上、propagate、handler 不動。"""
     for name in LOG_FLOOR_LOGGERS:
         logger = logging.getLogger(name)
-        if logger.level in (logging.NOTSET, logging.DEBUG):
+        if logger.level < logging.INFO:
             logger.setLevel(logging.INFO)
 
 
