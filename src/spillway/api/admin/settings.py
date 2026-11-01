@@ -1,12 +1,15 @@
-"""`/api/settings/context`(CHG-20261101-02 決策 9)。"""
+"""`/api/settings/context`(CHG-20261101-02 決策 9)與 `/api/settings/token/rotate`
+(CHG-20261101-03 T7 決策 14)。"""
 from __future__ import annotations
 
 import sqlite3
 from typing import Any
 
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
+from spillway import settings as spillway_settings
 from spillway.api.deps import request_conn
 from spillway.store import repo
 from spillway.store.db import transaction
@@ -56,3 +59,15 @@ async def put_context_settings(request: Request, body: ContextSettingsIn) -> dic
             for key, value in body.model_dump(exclude_none=True).items():
                 repo.set_setting(conn, key, value)
         return _context_out(conn)
+
+
+# ================================================================ /api/settings/token/rotate
+
+
+@router.post("/settings/token/rotate", response_model=None)
+async def rotate_access_token(request: Request) -> JSONResponse:
+    """重新產生存取 token:資料庫只存 SHA-256,回應 `{"token": "..."}` 是明文唯一一次出現
+    (決策 14;`Cache-Control: no-store`)。不讀 body、不寫帳本、不記錄 token。"""
+    with request_conn(request) as conn:
+        token = spillway_settings.rotate_access_token(conn)
+    return JSONResponse({"token": token}, headers={"Cache-Control": "no-store"})

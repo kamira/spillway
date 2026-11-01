@@ -1,11 +1,14 @@
 """FastAPI app 組裝(CHG-20261030-02 T13 擁有;design D1、D2、D4;spec 2.4.5、7.6.6)。
 
 `create_app(*, clock=None, rng=None, extra_adapter_paths=(), db_path=None,
-retention_interval_seconds=3600, retention_poll_seconds=30.0) -> FastAPI`
+retention_interval_seconds=3600, retention_poll_seconds=30.0, issue_token=False) -> FastAPI`
 
 lifespan 啟動依序:
 1. `load_litellm()`:本地價格表(`LITELLM_LOCAL_MODEL_COST_MAP=True`)、關閉 verbose 與遙測。
 2. 建立資料目錄,`store.db.connect(db_path)` 一次以執行 migration(隨即關閉)。
+   `issue_token=True`(`spillway serve` 傳入;CHG-20261101-03 決策 14)時接著 `_ensure_token(app)`:
+   資料庫沒有 `access_token_sha256` 就產生 token、只存雜湊,並以單行(`TOKEN_NOTICE` + token)印到
+   stderr——只印這一次,不經 logging。行程內使用 `create_app()` 的測試預設不產生。
 3. `AdapterRegistry(AdapterContext(credentials.resolve, clock)).discover(extra_adapter_paths)`;
    `AdapterConflictError`(7.6.6)直接往上丟 → 啟動失敗(`spillway serve` 以非 0 退出)。
 4. `Router(conn_factory, registry, clock, rng, close_conn=True)`:每個請求開一條新連線、結束時關閉。
@@ -27,13 +30,14 @@ lifespan 啟動依序:
 - `retention`:`RetentionScheduler`(`runs` 成功次數、`task`、`run_once()`)
 `registry`、`router`、`retention` 在 lifespan 啟動後才存在。
 
-秘密:本檔不記錄請求內容;日誌只記例外型別。
+秘密:本檔不記錄請求內容;日誌只記例外型別。存取 token 明文只出現在 `_ensure_token` 的 stderr 一行。
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import sqlite3
+import sys
 from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -52,7 +56,10 @@ from spillway.routing import Router
 from spillway.store.db import connect
 
 __all__ = ["create_app", "RetentionScheduler", "DEFAULT_RETENTION_INTERVAL_SECONDS",
-           "DEFAULT_RETENTION_POLL_SECONDS"]
+           "DEFAULT_RETENTION_POLL_SECONDS", "TOKEN_NOTICE"]
+
+# serve 首次啟動印到 stderr 的單行前綴(後接 token 明文;決策 14)
+TOKEN_NOTICE = "spillway: 已產生存取 token(只顯示這一次,資料庫只存雜湊): "
 
 _log = logging.getLogger(__name__)
 
@@ -136,6 +143,18 @@ class RetentionScheduler:
         self.task = task   # 保留參照,讓呼叫端可確認已結束
 
 
+def _ensure_token(app: FastAPI) -> None:
+    """資料庫沒有存取 token 雜湊時產生一個,並把明文以單行印到 stderr(只此一次;CHG-20261101-03
+    決策 14)。不經 logging,所以不會進入日誌檔或 caplog。"""
+    conn = app.state.conn_factory()
+    try:
+        token = settings.ensure_access_token(conn)
+    finally:
+        conn.close()
+    if token is not None:
+        print(TOKEN_NOTICE + token, file=sys.stderr, flush=True)
+
+
 def create_app(
     *,
     clock: Clock | None = None,
@@ -144,6 +163,7 @@ def create_app(
     db_path: Path | str | None = None,
     retention_interval_seconds: float = DEFAULT_RETENTION_INTERVAL_SECONDS,
     retention_poll_seconds: float = DEFAULT_RETENTION_POLL_SECONDS,
+    issue_token: bool = False,
 ) -> FastAPI:
     clk: Clock = clock if clock is not None else SystemClock()
     rnd: Rng = rng if rng is not None else SystemRng()
@@ -158,6 +178,8 @@ def create_app(
         load_litellm()
         path.parent.mkdir(parents=True, exist_ok=True)
         conn_factory().close()   # migration(D3)
+        if issue_token:   # CHG-20261101-03 T7(決策 14):只有 serve 傳入
+            _ensure_token(app)
         runner = app.state.cli_runner   # 由 create_app 在 lifespan 之前建立(T2;停機路徑也用它)
         registry = AdapterRegistry(AdapterContext(credentials=credentials.resolve, clock=clk,
                                                   cli_runner=runner, data_dir=path.parent))
