@@ -2,18 +2,17 @@
 
 - U3:anthropic_api 的 `default_signals` 另含 400+`credit balance`(quota)與 529(rate_limit)。
 - U4:上游只回工具呼叫時,`CallResult.tool_calls` 有值、`text` 為空字串、`ok=True`。
-- S-T6-1 (a):三份 `adapter.py` 內容相同(模組之間不可互相 import,共用碼先以相同性測試防漂移)。
+- S-T6-1 (a):三個模組的 `LiteLLMAdapter` 都是 `adapters.base.LiteLLMApiAdapter` 子類別且未覆寫
+  call/health(CHG-20261101-02 決策 11 取代原本的逐字相同性測試)。
 - M11:模型字串規則只在 `adapters.base.model_string`,adapter 不再自帶分支。
 """
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import litellm
 import pytest
 
-import spillway.adapters as adapters_pkg
 from spillway.adapters.base import LiteLLMResult
 
 from .cases import CASES, KEY, REF, MODULE_NAMES, Resolver, adapter, dep, request
@@ -110,15 +109,17 @@ async def test_plain_text_response_has_no_tool_calls(case, fake_api):
     assert r.finish_reason in ("stop", "end_turn")
 
 
-# ---- S-T6-1 (a):三份 adapter.py 相同 ------------------------------------------------------
+# ---- S-T6-1 (a):三個模組共用 adapters.base.LiteLLMApiAdapter(CHG-20261101-02 決策 11)------
 
-def test_builtin_adapter_py_files_are_identical():
-    root = Path(adapters_pkg.__file__).parent
-    texts = {name: (root / name / "adapter.py").read_text(encoding="utf-8") for name in MODULE_NAMES}
-    first = texts[MODULE_NAMES[0]]
-    assert all(t == first for t in texts.values()), (
-        "anthropic_api、openai_api、litellm 的 adapter.py 必須逐字相同;"
-        "共用邏輯應放進 adapters.base(審議 S-T6-1)")
+def test_builtin_adapters_subclass_shared_api_adapter_without_overrides():
+    from spillway.adapters.base import LiteLLMApiAdapter
+
+    for name in MODULE_NAMES:
+        mod = importlib.import_module(f"spillway.adapters.{name}.adapter")
+        cls = mod.LiteLLMAdapter
+        assert issubclass(cls, LiteLLMApiAdapter), name
+        assert cls.call is LiteLLMApiAdapter.call, f"{name} 不可覆寫 call(審議 S-T6-1)"
+        assert cls.health is LiteLLMApiAdapter.health, f"{name} 不可覆寫 health(審議 S-T6-1)"
 
 
 @pytest.mark.parametrize("name", MODULE_NAMES)

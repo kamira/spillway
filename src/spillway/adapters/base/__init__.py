@@ -3,8 +3,10 @@
 匯出:值物件(types)、`Adapter` Protocol 與 `AdapterContext`、`AdapterManifest` 與驗證、
 `models.yaml` 解析、`classify` 與 signals 規則、`effort_to_upstream`、`litellm_call`、
 `model_string`(模型字串規則)、`load_litellm`(LiteLLM 載入與設定的唯一入口)、
-`AdapterRegistry` 與合約檢查、HTTP 存活探測 `probe_http`。
+`AdapterRegistry` 與合約檢查、HTTP 存活探測 `probe_http`、經 LiteLLM 呼叫上游的共用 adapter 基底
+`LiteLLMApiAdapter`(各內建模組的 `LiteLLMAdapter` 繼承它)。
 """
+from spillway.adapters.base.api_adapter import LiteLLMApiAdapter
 from spillway.adapters.base.contract import contract_problems, layering_violations
 from spillway.adapters.base.effort import effort_to_upstream
 from spillway.adapters.base.litellm_call import (
@@ -69,6 +71,8 @@ __all__ = [
     "load_litellm", "model_string", "PASSTHROUGH_PROVIDER",
     # 健康探測(決策 10)
     "PROBE_TIMEOUT", "probe_http",
+    # 共用 adapter 基底(CHG-20261101-02 決策 11)
+    "LiteLLMApiAdapter",
     # registry / contract
     "AdapterConflictError", "AdapterRegistry", "AdapterUnavailableError", "ModelsListing",
     "ModuleInfo", "available_models", "contract_problems", "layering_violations",
