@@ -20,6 +20,7 @@ __all__ = ["request_conn"]
 
 @contextmanager
 def request_conn(request: Any) -> Iterator[sqlite3.Connection]:
+    """以 `request.app.state.conn_factory()` 開一條連線,離開 `with` 時關閉(含例外)。"""
     conn = request.app.state.conn_factory()
     try:
         yield conn

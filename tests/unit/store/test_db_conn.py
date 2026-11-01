@@ -10,6 +10,8 @@ import sqlite3
 
 import pytest
 
+import spillway.estimate as estimate_mod
+import spillway.quota as quota_mod
 from spillway.clock import SeqRng
 from spillway.domain import CallResult, ChatRequest, Deployment
 from spillway.routing import resolver as resolver_mod
@@ -18,9 +20,6 @@ from spillway.store import db as store_db
 from spillway.store import repo
 from spillway.store.db import ConnSource, use_conn
 from spillway.store.repo import Route
-
-import spillway.estimate as estimate_mod
-import spillway.quota as quota_mod
 
 
 @pytest.fixture

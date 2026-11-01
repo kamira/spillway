@@ -167,6 +167,7 @@ def use_conn(source: ConnSource) -> Iterator[sqlite3.Connection]:
     `source` 為連線時直接交回;為零參數 callable 時呼叫一次並交回其結果(例如 Router 綁定的
     `_conn`,回傳本次請求 contextvar 中的連線)。其他型別丟 `TypeError`。
     """
+    # isinstance 必須在 callable() 之前:sqlite3.Connection 本身也有 `__call__`(callable() 為 True)
     if isinstance(source, sqlite3.Connection):
         yield source
     elif callable(source):

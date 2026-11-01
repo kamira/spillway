@@ -24,8 +24,10 @@ pytestmark = pytest.mark.anyio
 def _alive(conn: sqlite3.Connection) -> bool:
     try:
         conn.execute("SELECT 1")
-    except sqlite3.ProgrammingError:
-        return False
+    except sqlite3.ProgrammingError as exc:
+        if "closed database" in str(exc):     # "Cannot operate on a closed database."
+            return False
+        raise
     return True
 
 
@@ -113,6 +115,7 @@ async def test_models_endpoint_opens_and_closes_one(spillway):
     r = await spillway.client.get("/v1/models")
     assert r.status_code == 200, r.text
     assert len(f.opened) == 1 and f.closed_count() == 1
+    assert f.threads == [threading.get_ident()]
 
 
 async def test_replaced_conn_factory_is_used_by_next_request(spillway):
@@ -133,4 +136,5 @@ async def test_direct_handler_call_with_simple_namespace(spillway, fake_api):
     out = await admin.test_deployment(SimpleNamespace(app=spillway.app), "a")
     assert out["deployment"] == "a" and out["ok"] is True, out
     assert len(f.opened) == 1 and f.closed_count() == 1
+    assert f.threads == [threading.get_ident()]
     assert len(spillway.ledger()) == 1
