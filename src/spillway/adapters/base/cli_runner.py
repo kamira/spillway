@@ -12,15 +12,16 @@ max_output_bytes=8 MiB) -> CliOutput`
 - 逾時(`timed_out=True`、`killed_reason="timeout"`)、`run` 所在 task 被取消(`CancelledError`,
   `killed_reason="cancelled"`,例外照常往上丟)、停機(`terminate_all`/`kill_all_sync`,
   `killed_reason="shutdown"`)一律 `os.killpg` 整個 group:SIGTERM,group 在 `term_grace`
-  (預設 5 秒)內沒有全部結束就 SIGKILL。孫行程在同一 group,一併結束。
+  (預設 5 秒)內沒有全部結束就 SIGKILL。孫行程在同一 group,一併結束。取消被重複遞送
+  (anyio/Starlette 位準觸發的 cancel scope)時改為同步立即 SIGKILL,`CancelledError` 照常往上丟。
 - 主行程結束後最多再等 `drain_timeout`(預設 2 秒)讀完管線;孫行程仍持有 stdout 時不無限等待。
   `run` 回傳前 group 若仍有殘留行程,一併終止(整個 group 屬於這一次呼叫)。
 - stdout、stderr 各自超過 `max_output_bytes` 時截斷(其餘照讀照丟,不讓子行程卡在滿管線),
-  `stdout_truncated`/`stderr_truncated` 標記。輸出以 UTF-8(`errors="replace"`)解碼。
+  以 `CliOutput.stdout_truncated`/`stderr_truncated` 標記。輸出以 UTF-8(`errors="replace"`)解碼。
 - 找不到執行檔、argv 過長(E2BIG)等啟動錯誤以 `OSError` 往上丟,由模組對應成 `error`。
 
 併發名額(決策 7;由 Router 取得、模組不碰):`try_acquire(key, limit)`(同步、不 await)、
-`release(key)`、`in_flight(key)`。
+`release(key)`、`in_flight(key)`。`active_pids`(唯讀)列出進行中子行程,供測試與診斷。
 
 停機(決策 16):`async terminate_all(grace=None)`(lifespan 結束的後備)、`kill_all_sync(grace=None)`
 (同步,給 `_run_server` 的 `finally` 與 `atexit`;事件迴圈已停時也能用)。
@@ -163,7 +164,7 @@ class CliRunner:
     # ------------------------------------------------------------ 執行
     @property
     def active_pids(self) -> tuple[int, ...]:
-        """進行中子行程(主行程)的 pid;亦即各自的 pgid。"""
+        """進行中子行程(主行程)的 pid,亦即各自的 pgid;供測試與停機診斷,呼叫端不需要它。"""
         return tuple(self._active)
 
     async def run(
@@ -180,6 +181,8 @@ class CliRunner:
         args = [str(a) for a in argv]
         if not args:
             raise ValueError("argv 不可為空")
+        if isinstance(env_remove, str):   # 防呆:字串會被逐字元當成變數名
+            raise TypeError("env_remove 必須是變數名的序列,不可為單一字串")
         env = dict(os.environ)
         for name in env_remove:
             env.pop(name, None)
@@ -204,39 +207,29 @@ class CliRunner:
         tasks = list(readers)
         if data is not None:
             tasks.append(asyncio.create_task(_feed(proc.stdin, data)))
+
         timed_out = False
-        reason: str | None = None
+        cancel_exc: asyncio.CancelledError | None = None   # 原樣往上丟(anyio 依它辨識自己的取消)
+        own_reason: str | None = None
         try:
-            try:
-                await asyncio.wait_for(proc.wait(), timeout)
-            except TimeoutError:
-                timed_out = True
-                self._reasons.setdefault(pgid, "timeout")
-                await self._terminate_group(pgid, proc, self.term_grace)
-            # 主行程已結束:有限時間讀完管線(孫行程可能仍持有 stdout)
-            await asyncio.wait(readers, timeout=self.drain_timeout)
-            if _group_alive(pgid):   # 殘留的孫行程:整個 group 屬於這次呼叫
-                await self._terminate_group(pgid, proc, self.term_grace)
-        except asyncio.CancelledError:
-            self._reasons.setdefault(pgid, "cancelled")
-            await self._terminate_group(pgid, proc, self.term_grace)
-            raise
-        finally:
-            if _group_alive(pgid):   # 再次被取消等情況的最後防線
-                _signal_group(pgid, signal.SIGKILL)
-            pending = [t for t in tasks if not t.done()]
-            for t in pending:
-                t.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-                transport = getattr(proc, "_transport", None)   # 管線仍被 group 外的行程持有
-                if transport is not None:
-                    transport.close()
-            for t in tasks:
-                if t.done() and not t.cancelled():
-                    t.exception()   # 取出例外,避免 "never retrieved" 警告
+            await asyncio.wait_for(proc.wait(), timeout)
+        except TimeoutError:
+            timed_out, own_reason = True, "timeout"
+        except asyncio.CancelledError as exc:
+            cancel_exc, own_reason = exc, "cancelled"
+        except BaseException:
             self._active.pop(pgid, None)
-            reason = self._reasons.pop(pgid, None)
+            self._reasons.pop(pgid, None)
+            self._finish_sync(pgid, proc, tasks)
+            raise
+        # 先登出(任何 await 之前):之後不論收尾被怎樣打斷,_active/_reasons 都不會殘留
+        self._active.pop(pgid, None)
+        shutdown_reason = self._reasons.pop(pgid, None)
+        reason = own_reason or shutdown_reason
+        late = await self._cleanup(pgid, proc, readers, tasks, terminate=own_reason is not None)
+        cancel_exc = cancel_exc or late
+        if cancel_exc is not None:
+            raise cancel_exc
         return CliOutput(
             exit_code=proc.returncode,
             stdout=out.text(),
@@ -246,6 +239,55 @@ class CliRunner:
             stdout_truncated=out.truncated,
             stderr_truncated=err.truncated,
         )
+
+    async def _cleanup(self, pgid: int, proc: asyncio.subprocess.Process,
+                       readers: list[asyncio.Task], tasks: list[asyncio.Task], *,
+                       terminate: bool) -> asyncio.CancelledError | None:
+        """收尾:(必要時)SIGTERM→grace→SIGKILL、有限時間讀完管線、終止 group 殘留行程。
+
+        收尾在 `asyncio.shield` 內跑,邊緣觸發的取消(asyncio、uvicorn)不會打斷 SIGTERM→grace。
+        取消若被重複遞送(anyio/Starlette 的 cancel scope 為位準觸發,每個 await 都會再被取消),
+        就放棄等待、改以同步方式立刻 SIGKILL 整個 group 並結束;回傳期間收到的 `CancelledError`
+        (沒有則為 None),由 `run` 原樣往上丟。
+        """
+        async def finish() -> None:
+            if terminate:
+                await self._terminate_group(pgid, proc, self.term_grace)
+            # 主行程已結束:有限時間讀完管線(孫行程可能仍持有 stdout)
+            await asyncio.wait(readers, timeout=self.drain_timeout)
+            if _group_alive(pgid):   # 殘留的孫行程:整個 group 屬於這次呼叫
+                await self._terminate_group(pgid, proc, self.term_grace)
+
+        caught: asyncio.CancelledError | None = None
+        job = asyncio.ensure_future(finish())
+        try:
+            await asyncio.shield(job)
+        except asyncio.CancelledError as exc:
+            caught = exc
+            job.cancel()
+        finally:
+            self._finish_sync(pgid, proc, tasks)
+        return caught
+
+    @staticmethod
+    def _finish_sync(pgid: int, proc: asyncio.subprocess.Process,
+                     tasks: list[asyncio.Task]) -> None:
+        """同步的最後防線(不 await):group 仍在就 SIGKILL,取消未完成的讀寫 task。"""
+        if _group_alive(pgid):
+            _signal_group(pgid, signal.SIGKILL)
+        pending = [t for t in tasks if not t.done()]
+        for t in pending:
+            t.cancel()
+        if pending:
+            # 管線仍被 group 外的行程(setsid 的孫行程)持有,或收尾被強制中止:asyncio 的 Process
+            # 沒有公開的「關閉管線」API,不關 transport 會留下開著的 fd 與 ResourceWarning。
+            # `_transport` 是 asyncio.subprocess.Process 自己實作 kill/wait 用的同一個物件。
+            transport = getattr(proc, "_transport", None)
+            if transport is not None:
+                transport.close()
+        for t in tasks:
+            if t.done() and not t.cancelled():
+                t.exception()   # 取出例外,避免 "never retrieved" 警告
 
     async def _terminate_group(self, pgid: int, proc: asyncio.subprocess.Process,
                                grace: float) -> None:

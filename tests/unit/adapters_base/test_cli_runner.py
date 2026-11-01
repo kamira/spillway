@@ -17,6 +17,7 @@ import time
 import uuid
 from pathlib import Path
 
+import anyio
 import pytest
 
 from spillway.adapters.base import (
@@ -286,6 +287,78 @@ async def test_cancel_with_sigterm_ignored_still_kills(runner, piddir, marker):
     _assert_no_leftovers(piddir, marker)
 
 
+def _group_gone(pgid: int, timeout: float = 3.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:   # macOS:group 只剩尚未回收的 zombie 時回 EPERM;再等回收
+            pass
+        time.sleep(0.02)
+    return False
+
+
+def _assert_runner_clean(runner: CliRunner, d: Path, marker: str) -> None:
+    assert runner.active_pids == ()
+    assert runner._reasons == {}
+    child = int((d / "child.pid").read_text())
+    assert _group_gone(child), "process group 仍有殘留行程"
+    _assert_no_leftovers(d, marker)
+
+
+async def test_anyio_move_on_after_level_triggered_cancel(piddir, marker):
+    """anyio cancel scope 會在每個 await 重新遞送取消:收尾不可卡住,也不可留下行程或登記。
+
+    term_grace 設 5 秒且子、孫行程都不理 SIGTERM:若收尾仍在等 grace,經過時間會超過 5 秒。
+    """
+    runner = CliRunner(term_grace=5.0, drain_timeout=DRAIN)
+    t0 = time.monotonic()
+    with anyio.move_on_after(1.0) as scope:
+        await runner.run([PY, "-c", SPAWN_GRANDCHILD, str(piddir), marker,
+                          "child_ignore_term,gc_ignore_term"], cwd=None, timeout=60)
+    assert scope.cancelled_caught
+    assert time.monotonic() - t0 < 1.0 + 2.0
+    _assert_runner_clean(runner, piddir, marker)
+
+
+async def test_anyio_nested_cancel_scope(runner, piddir, marker):
+    """外層 scope 取消、內層 scope 包住 run:CancelledError 往上丟到外層,group 被收掉。"""
+    with anyio.CancelScope() as outer:
+        async with anyio.create_task_group() as tg:
+            async def call():
+                with anyio.CancelScope():
+                    await runner.run([PY, "-c", SPAWN_GRANDCHILD, str(piddir), marker],
+                                     cwd=None, timeout=60)
+            tg.start_soon(call)
+            await _wait_files(piddir)
+            outer.cancel()
+    assert outer.cancelled_caught
+    _assert_runner_clean(runner, piddir, marker)
+
+
+async def test_asyncio_cancel_keeps_term_grace(piddir, marker):
+    """一次性(邊緣觸發)取消:收尾在 shield 內完成 SIGTERM→grace→SIGKILL。"""
+    runner = CliRunner(term_grace=GRACE, drain_timeout=DRAIN)
+    task = asyncio.create_task(runner.run([PY, "-c", SPAWN_GRANDCHILD, str(piddir), marker,
+                                           "child_ignore_term"], cwd=None, timeout=60))
+    await _wait_files(piddir)
+    await asyncio.sleep(0.1)
+    t0 = time.monotonic()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert time.monotonic() - t0 >= GRACE * 0.8   # 有等 grace,不是直接 SIGKILL
+    _assert_runner_clean(runner, piddir, marker)
+
+
+async def test_env_remove_rejects_bare_string(runner):
+    with pytest.raises(TypeError):
+        await runner.run([PY, "-c", "pass"], env_remove="PATH", cwd=None, timeout=5)
+    assert runner.active_pids == ()
+
+
 async def _start_two(runner, tmp_path, marker):
     dirs = [tmp_path / "a", tmp_path / "b"]
     tasks = []
@@ -373,9 +446,9 @@ def test_try_acquire_release_in_flight():
 # ================================================================ L2:app 注入
 
 async def test_create_app_injects_same_cli_runner():
+    """`app.state.cli_runner` 與 AdapterContext.cli_runner 為同一實例;lifespan 重進仍同一個;不同 app 不共用。"""
     from spillway.app import create_app
 
-    """`app.state.cli_runner` 與 AdapterContext.cli_runner 為同一實例;lifespan 重進仍同一個;不同 app 不共用。"""
     app = create_app()
     runner = app.state.cli_runner
     assert isinstance(runner, CliRunner)
@@ -424,6 +497,23 @@ def _layering(tmp_path, src: str) -> list[str]:
         "from os import execvp as e\n",
         "import pty\n",
         "import importlib\nimportlib.import_module('subprocess')\n",
+        "import os.path\nos.system('ls')\n",
+        "import os.path as p\nimport os\nos.system('ls')\n",
+        "import os.path as p\nos.system('ls')\n",
+        "import asyncio\nasync def f():\n    await asyncio.get_running_loop().subprocess_exec(None, 'x')\n",
+        "import asyncio\nasync def f(loop):\n    await loop.subprocess_shell(None, 'x')\n",
+        "import multiprocessing\n",
+        "from multiprocessing import Process\n",
+        "import multiprocessing.pool\n",
+        "import concurrent.futures\nconcurrent.futures.ProcessPoolExecutor()\n",
+        "from concurrent.futures import ProcessPoolExecutor\n",
+        "import concurrent.futures as cf\ncf.ProcessPoolExecutor()\n",
+        "import posix\nposix.system('ls')\n",
+        "import posix\nposix.posix_spawn('/bin/x', ['x'], {})\n",
+        "from posix import system\n",
+        "import os\nos.fork()\n",
+        "import os\nos.forkpty()\n",
+        "from os import fork\n",
     ],
 )
 def test_subprocess_use_is_a_layering_violation(tmp_path, src):
@@ -439,6 +529,9 @@ def test_subprocess_use_is_a_layering_violation(tmp_path, src):
         "import os\nos.unlink('x')\nos.environ.get('A')\nos.path.join('a', 'b')\n",
         "import platform\nplatform.system()\n",
         "import asyncio\nasyncio.sleep(0)\n",
+        "import os.path\nos.path.join('a', 'b')\n",
+        "import concurrent.futures\nconcurrent.futures.ThreadPoolExecutor()\n",
+        "import posix\nposix.getpid()\n",
     ],
 )
 def test_allowed_stdlib_use_passes(tmp_path, src):

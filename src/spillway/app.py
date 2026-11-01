@@ -158,7 +158,9 @@ def create_app(
         load_litellm()
         path.parent.mkdir(parents=True, exist_ok=True)
         conn_factory().close()   # migration(D3)
-        registry = AdapterRegistry(AdapterContext(credentials=credentials.resolve, clock=clk, cli_runner=app.state.cli_runner))
+        runner = app.state.cli_runner   # 由 create_app 在 lifespan 之前建立(T2;停機路徑也用它)
+        registry = AdapterRegistry(AdapterContext(credentials=credentials.resolve, clock=clk,
+                                                  cli_runner=runner))
         registry.discover(extra)   # AdapterConflictError → 啟動失敗(7.6.6)
         app.state.registry = registry
         app.state.router = Router(conn_factory, registry, clk, rnd, close_conn=True)
@@ -175,7 +177,8 @@ def create_app(
                   openapi_url=None)
     app.state.clock = clk
     app.state.rng = rnd
-    app.state.cli_runner = CliRunner()   # CHG-20261101-03 T2:注入 AdapterContext.cli_runner(決策 8)
+    # CHG-20261101-03 T2(決策 8):必須在 lifespan 之前存在;lifespan 注入 AdapterContext.cli_runner
+    app.state.cli_runner = CliRunner()
     app.state.db_path = path
     app.state.conn_factory = conn_factory
     install_error_handlers(app)
