@@ -16,6 +16,13 @@ serve:
   Ctrl-C / SIGTERM:uvicorn 先完成正常關閉(lifespan shutdown、停止 RetentionJob 排程),再依 Unix
   慣例把收到的訊號重新送給自己,行程以該訊號結束(shell 看到 130 / 143,`subprocess` 看到 −2 / −15),
   不回 0;這讓上層的行程管理器分得出「被要求停止」與「自己結束」。本模組不改寫此行為。
+- graceful shutdown(CHG-20261101-03 T8;決策 16、圖 4):第一個 SIGTERM/SIGINT 設
+  `app.state.shutting_down = True`(Router 不再開始新嘗試,回 503 `shutting_down`),uvicorn 停止接新連線並
+  等待進行中請求至多 `graceful_timeout` 秒(預設 30,傳給 `timeout_graceful_shutdown`),期滿取消請求
+  task(CliRunner 在取消路徑殺 process group、帳本記 `error="shutdown"`);lifespan 結束時
+  `terminate_all(grace=5)` 為後備。第二次 SIGINT 為 uvicorn 的 `force_exit`(略過 lifespan),由
+  `_run_server` 的 `finally` 與 `atexit` 呼叫 `kill_all_sync()`。環境變數 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`
+  **僅供測試**縮短等待上限,正式使用不要設定。
 - uvicorn access log 保留(只有方法、路徑、狀態碼,不含 body)。
 
 init(決策 14、15):建立資料目錄與 `work/claude`、`work/codex`;在資料目錄鎖內開啟資料庫(執行
@@ -29,12 +36,17 @@ migration,含舊版庫的備份;不做埠檢查)並產生存取 token。token �
 from __future__ import annotations
 
 import argparse
+import atexit
+import os
 import socket
 import sqlite3
 import sys
 from pathlib import Path
+from types import FrameType
+from typing import Any
 
 from spillway import settings
+from spillway.adapters.base import DEFAULT_DRAIN_TIMEOUT, DEFAULT_TERM_GRACE
 from spillway.store.db import (
     DataDirLockedError,
     MigrationError,
@@ -49,6 +61,10 @@ __all__ = ["main"]
 EXIT_USAGE = 2
 EXIT_STARTUP_FAILED = 1
 WORK_SUBDIRS = ("claude", "codex")   # 決策 10、11:CLI 模組未設定 cwd 時的工作目錄
+GRACEFUL_TIMEOUT = 30.0   # 決策 16 ②:停機時等待進行中請求的上限(秒)
+TEST_GRACEFUL_TIMEOUT_ENV = "SPILLWAY_TEST_GRACEFUL_TIMEOUT"   # 僅供測試,見 _test_graceful_timeout
+# 期滿取消後等被取消的請求走完 CliRunner 取消路徑的上限:SIGTERM 寬限 + 讀管線上限 + 1 秒
+CANCELLED_DRAIN_TIMEOUT = DEFAULT_TERM_GRACE + DEFAULT_DRAIN_TIMEOUT + 1.0
 
 
 def _port(value: str) -> int:
@@ -103,7 +119,52 @@ def _preflight(host: str, port: int, data_dir: Path) -> int:
     return 0
 
 
-def _run_server(host: str, port: int) -> int:
+def _graceful_server(config: Any, app: Any) -> Any:
+    """回傳 uvicorn.Server 子類別的實例:第一個 SIGTERM/SIGINT 先設 `app.state.shutting_down = True`
+    (決策 16 ①:Router 不再開始新嘗試),再交給 uvicorn 原本的 `handle_exit`(保留第二次 SIGINT
+    的 `force_exit` 與結束後重送訊號的行為)。"""
+    import asyncio
+
+    import uvicorn
+
+    class _GracefulServer(uvicorn.Server):
+        def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+            app.state.shutting_down = True
+            super().handle_exit(sig, frame)
+
+        async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+            # uvicorn 期滿取消請求 task 後**不等它們結束**就跑 lifespan 結束,且在 serve() 內重送訊號
+            # (SIGTERM 為預設處置,行程立刻結束)——被取消的請求來不及走完 CliRunner 的取消路徑
+            # (killpg SIGTERM→寬限→SIGKILL)與 Router 寫帳本 error="shutdown"。這裡在 lifespan 結束前
+            # 有限時間等待那些 task(force_exit 會略過 lifespan,也就不等)。
+            lifespan_shutdown = self.lifespan.shutdown
+
+            async def drain_then_lifespan_shutdown() -> None:
+                pending = [t for t in self.server_state.tasks if not t.done()]
+                if pending:
+                    await asyncio.wait(pending, timeout=CANCELLED_DRAIN_TIMEOUT)
+                await lifespan_shutdown()
+
+            self.lifespan.shutdown = drain_then_lifespan_shutdown   # type: ignore[method-assign]
+            await super().shutdown(sockets)
+
+    return _GracefulServer(config)
+
+
+def _test_graceful_timeout() -> float | None:
+    """**僅供測試**:環境變數 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`(秒)覆寫 serve 的停機等待上限,讓子行程
+    測試不必等 30 秒。正式使用不要設定;值不合法(非數字或 ≤ 0)時忽略。"""
+    raw = os.environ.get(TEST_GRACEFUL_TIMEOUT_ENV)
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _run_server(host: str, port: int, graceful_timeout: float = GRACEFUL_TIMEOUT) -> int:
     if rc := _preflight(host, port, settings.data_dir()):
         return rc
 
@@ -111,13 +172,19 @@ def _run_server(host: str, port: int) -> int:
 
     from spillway import app as app_module
 
-    config = uvicorn.Config(app_module.create_app(issue_token=True), host=host, port=port,
-                            lifespan="on", log_level="info", access_log=True)
-    server = uvicorn.Server(config)
+    app = app_module.create_app(issue_token=True)
+    runner = app.state.cli_runner
+    # 決策 16 ④:第二次 Ctrl-C(force_exit)會略過 lifespan;finally 與 atexit 是子行程清理的最後防線
+    atexit.register(runner.kill_all_sync)
+    config = uvicorn.Config(app, host=host, port=port, lifespan="on", log_level="info",
+                            access_log=True, timeout_graceful_shutdown=graceful_timeout)
+    server = _graceful_server(config, app)
     try:
         server.run()
     except SystemExit as exc:   # uvicorn 部分版本在啟動失敗時直接 sys.exit
         return exc.code if isinstance(exc.code, int) and exc.code != 0 else EXIT_STARTUP_FAILED
+    finally:
+        runner.kill_all_sync()
     return 0 if server.started else EXIT_STARTUP_FAILED
 
 
@@ -165,4 +232,6 @@ def main(argv: list[str] | None = None) -> int:
         allowed = ", ".join(sorted(settings.ALLOWED_HOSTS))
         _err(f"拒絕綁定 {args.host!r}:M3 仍只允許 {allowed}")
         return EXIT_USAGE
+    if (graceful := _test_graceful_timeout()) is not None:
+        return _run_server(args.host, args.port, graceful_timeout=graceful)
     return _run_server(args.host, args.port)

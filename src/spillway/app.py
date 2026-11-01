@@ -197,6 +197,7 @@ def create_app(
             yield
         finally:
             await retention.stop()
+            await runner.terminate_all(grace=5)   # T8(決策 16 ③):停機後備
 
     app = FastAPI(title="spillway", lifespan=lifespan, docs_url=None, redoc_url=None,
                   openapi_url=None)
