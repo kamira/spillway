@@ -46,7 +46,7 @@ def _claude_args() -> list[str]:
 
 
 def _codex_args(out: Path, prompt: str = "[User]\nhello codex") -> list[str]:
-    return ["exec", "--json", "--skip-git-repo-check", "-m", "gpt-5-codex", "-o", str(out),
+    return ["exec", "--json", "--skip-git-repo-check", "--ignore-user-config", "-m", "gpt-5-codex", "-o", str(out),
             "-c", "mcp_servers={}", "--", prompt]
 
 

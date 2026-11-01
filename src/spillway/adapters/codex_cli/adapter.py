@@ -1,11 +1,12 @@
 """codex_cli 模組的 adapter:以 `codex exec` 子行程處理請求(spec 7.4、5.2.3、5.3.1、6.3;
 CHG-20261101-03 決策 9、11、12)。完整說明見 README.md。
 
-    codex exec --json --skip-git-repo-check -m <model> -o <暫存檔>
+    codex exec --json --skip-git-repo-check --ignore-user-config -m <model> -o <暫存檔>
           [-c model_reasoning_effort=<值>] <params.extra_args...> -c mcp_servers={} -- <prompt>
 
-- `-c mcp_servers={}` 固定為 `--` 前最後一個 `-c`,`extra_args` 無法覆寫;`extra_args` 不可含 `--`
-  或裸位置引數(`_extra_args_problem`)。子行程只經 `AdapterContext.cli_runner.run()` 啟動。
+- `--ignore-user-config` 與 `-c mcp_servers={}` 固定附加(決策 11 與擁有者冒煙補記:`-c mcp_servers={}`
+  與 config.toml 合併而非取代,故另不讀 config.toml);`extra_args` 不可含 `--`、裸位置引數、
+  設定 `mcp_servers` 的 `-c`/`--config` 或 `-p`/`--profile`(`_extra_args_problem`)。子行程只經 `AdapterContext.cli_runner.run()` 啟動。
 - `-o` 暫存檔以 `tempfile.mkstemp`(0600)建立,`finally` 刪除。環境移除 `ENV_REMOVE`、設 `SPILLWAY_DEPTH=1`
   (其他成員 `env:` 憑證變數由 Router 移除)。
 - prompt 以 `adapters.base.messages_to_prompt` 串成(決策 12a);為空時回 `error`、不起子行程。
@@ -35,12 +36,13 @@ from spillway.adapters.base import (
     resolve_signals,
 )
 
-__all__ = ["CodexCliAdapter", "ENV_REMOVE", "ENV_SET", "MCP_OFF", "messages_to_prompt"]
+__all__ = ["CodexCliAdapter", "ENV_REMOVE", "ENV_SET", "IGNORE_USER_CONFIG", "MCP_OFF", "messages_to_prompt"]
 
 EXECUTABLE = "codex"
 ENV_REMOVE = ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL")   # 決策 9(codex 固定清單)
 ENV_SET = {"SPILLWAY_DEPTH": "1"}
 MCP_OFF = ("-c", "mcp_servers={}")                                    # 決策 11:固定停用全部 MCP
+IGNORE_USER_CONFIG = "--ignore-user-config"   # 決策 11 補記:不讀 $CODEX_HOME/config.toml(其中的 MCP)
 WORK_SUBDIR = ("work", "codex")
 _ERROR_TAIL = 1000   # 錯誤訊息只留最後這麼多字元
 
@@ -49,15 +51,33 @@ def _error(message: str) -> CallResult:
                       status="error", error=message)
 
 
+def _config_key(value: str) -> str:
+    """`-c` 值的鍵(`=` 前),去掉空白與引號,供比對 `mcp_servers`。"""
+    return value.split("=", 1)[0].replace(" ", "").replace('"', "").replace("'", "")
+
+
 def _extra_args_problem(extra: Any) -> str | None:
-    """`extra_args` 不合法時回原因:非字串清單、含 `--`、或含裸位置引數(不以 `-` 開頭,且前一個元素
-    不是不帶 `=` 的選項)。位置引數會被 codex 當成 prompt 或子命令(如 `resume`)。"""
+    """`extra_args` 不合法時回原因:非字串清單、含 `--`、含裸位置引數(不以 `-` 開頭,且前一個元素
+    不是不帶 `=` 的選項;位置引數會被 codex 當成 prompt 或子命令如 `resume`)、以 `-c`/`--config`
+    設定 `mcp_servers`(會與 `mcp_servers={}` 合併而加回 MCP),或 `-p`/`--profile`(疊加 profile 設定檔)。"""
     if not isinstance(extra, Sequence) or isinstance(extra, str) \
             or not all(isinstance(a, str) for a in extra):
         return "params.extra_args 必須是字串清單"
     for i, a in enumerate(extra):
         if a == "--":
             return "params.extra_args 不可含 `--`"
+        if a in ("-p", "--profile") or a.startswith("--profile="):
+            return "params.extra_args 不可含 `-p`/`--profile`"
+        if a.startswith("--config="):
+            value = a[len("--config="):]
+        elif a.startswith("-c") and a not in ("-c",):
+            value = a[2:]
+        elif i > 0 and extra[i - 1] in ("-c", "--config"):
+            value = a
+        else:
+            value = None
+        if value is not None and _config_key(value).startswith("mcp_servers"):
+            return "params.extra_args 不可設定 mcp_servers"
         if not a.startswith("-"):
             prev = extra[i - 1] if i > 0 else ""
             if not (prev.startswith("-") and "=" not in prev):
@@ -67,7 +87,8 @@ def _extra_args_problem(extra: Any) -> str | None:
 
 def build_argv(model: str, output_file: str, upstream_effort: str | None,
                extra_args: Sequence[str], prompt: str) -> list[str]:
-    argv = [EXECUTABLE, "exec", "--json", "--skip-git-repo-check", "-m", model, "-o", output_file]
+    argv = [EXECUTABLE, "exec", "--json", "--skip-git-repo-check", IGNORE_USER_CONFIG,
+            "-m", model, "-o", output_file]
     if upstream_effort is not None:
         argv += ["-c", f"model_reasoning_effort={upstream_effort}"]
     argv += [*extra_args, *MCP_OFF, "--", prompt]   # MCP_OFF 為 `--` 前最後一個 -c

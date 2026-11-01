@@ -437,6 +437,7 @@ def test_m3a_acceptance_operation(tmp_path):
             assert rec["env_present"]["SPILLWAY_TEST_KEY"] is False
             assert rec["spillway_depth"] == "1"
             assert ("-c", "mcp_servers={}") in list(zip(argv, argv[1:])) and argv[-2] == "--", argv
+            assert "--ignore-user-config" in argv, argv
         obs["fake_cli_records"] = {
             "claude": len(claude_recs), "codex": len(codex_recs),
             "claude_env_present": sorted({v for r in claude_recs for v in CLAUDE_VARS if r["env_present"][v]}),
@@ -447,6 +448,7 @@ def test_m3a_acceptance_operation(tmp_path):
             "claude_strict_mcp_config": all("--strict-mcp-config" in r["argv"] for r in claude_recs),
             "codex_mcp_servers_empty_then_dashdash": all(
                 r["argv"][-2] == "--" and "mcp_servers={}" in r["argv"] for r in codex_recs),
+            "codex_ignore_user_config": all("--ignore-user-config" in r["argv"] for r in codex_recs),
         }
 
         # ---- rotate:回應帶新 token,資料庫只存雜湊

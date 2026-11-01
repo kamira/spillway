@@ -96,7 +96,8 @@ async def test_argv_exact_without_effort(home):
     result, spy = await spy_call(home)
     assert result.status == "ok", result.error
     c = spy.calls[0]
-    assert c["argv"] == ["codex", "exec", "--json", "--skip-git-repo-check", "-m", "gpt-5.5",
+    assert c["argv"] == ["codex", "exec", "--json", "--skip-git-repo-check", "--ignore-user-config",
+                         "-m", "gpt-5.5",
                          "-o", str(c["out_file"]), "-c", "mcp_servers={}", "--", "[User]\nhi"]
     assert not any(a.startswith("model_reasoning_effort") for a in c["argv"])
     assert c["stdin"] is None
@@ -114,15 +115,30 @@ async def test_effort_mapping(home, level, upstream):
     assert argv[i + 1:i + 3] == ["-c", "mcp_servers={}"]
 
 
-async def test_extra_args_cannot_override_mcp_off(home):
-    extra = ["-c", "mcp_servers.gw.command=x"]
-    _, spy = await spy_call(home, extra_args=extra)
+async def test_ignore_user_config_always_present(home):
+    # 擁有者冒煙(2026-11-02):`-c mcp_servers={}` 與 config.toml 合併而非取代,使用者設定的 MCP 仍載入;
+    # 決策 11 補記:固定加 `--ignore-user-config`(不讀 $CODEX_HOME/config.toml,登入仍用 CODEX_HOME)
+    _, spy = await spy_call(home, extra_args=["--full-auto"])
     argv = spy.calls[0]["argv"]
-    i = argv.index("mcp_servers={}")
-    assert argv[i - 1] == "-c"
-    assert all(argv.index(a) < i - 1 for a in extra)              # MCP_OFF 在每個 extra arg 之後
-    assert argv[i + 1] == "--" and argv[-2] == "--"
-    assert [j for j, a in enumerate(argv) if a == "-c"][-1] == i - 1   # `--` 前最後一個 -c
+    assert argv.count("--ignore-user-config") == 1
+    assert argv.index("--ignore-user-config") < argv.index("--")
+
+
+@pytest.mark.parametrize("extra", [
+    ["-c", "mcp_servers.gw.command=x"],
+    ["--config", "mcp_servers={gw={command='x'}}"],
+    ["--config=mcp_servers.gw.command=x"],
+    ["-cmcp_servers.gw.command=x"],
+    ["-c", ' "mcp_servers" .gw.command=x'],
+    ["-p", "work"],
+    ["--profile", "work"],
+    ["--profile=work"],
+], ids=["c", "config", "config-eq", "c-joined", "quoted-key", "p", "profile", "profile-eq"])
+async def test_extra_args_cannot_add_mcp_or_profile(home, extra):
+    spy = SpyRunner()
+    result = await create(ctx(spy, home)).call(dep(extra_args=extra), req(), None)
+    assert result.status == "error" and "extra_args" in result.error
+    assert spy.calls == []
 
 
 @pytest.mark.parametrize("extra", [["--", "x"], ["resume"], ["--sandbox=read-only", "x"], "--x"],
@@ -339,7 +355,7 @@ async def test_fake_record_env_flags_and_cleanup(real, home, monkeypatch):
     assert rec["spillway_depth"] == "1"
     assert not any(rec["env_present"][v] for v in ENV_REMOVE)
     argv = rec["argv"]
-    assert argv[:4] == ["exec", "--json", "--skip-git-repo-check", "-m"]
+    assert argv[:5] == ["exec", "--json", "--skip-git-repo-check", "--ignore-user-config", "-m"]
     assert ["-c", "model_reasoning_effort=xhigh"] == argv[argv.index("model_reasoning_effort=xhigh") - 1:][:2]
     assert "mcp_servers={}" in argv and argv[-2:] == ["--", "[User]\nresume --last"]
     assert Path(rec["cwd"]).resolve() == (home / "work" / "codex").resolve()
