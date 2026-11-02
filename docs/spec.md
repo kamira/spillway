@@ -8,6 +8,8 @@
 
 修訂：2026-11-01 CHG-20261101-03（schema v2：冷卻移至 `cooldowns` 表，`budgets` 移除 `exhausted_until`（2.2、2.3、4.5.2、5.3.2、5.3.3、9.2）；4.2.4 CLI 成員併發上限；6.3.2 模組 `default_params.effort_args` 視為已設定；7.3.2 子行程環境移除清單；7.4.3 固定以 `-c mcp_servers={}` 停用全部 MCP；9.2.4 成員與總覽回應的 `cooling_until`、`cooling_reason`）
 
+修訂：2026-11-02 CHG-20261102-01（8.1 MCP server：群組端點與 session 綁定、群組名 `all` 保留、檢查順序、401 `unauthorized`、遞迴防護 403、工具輸出與錯誤結果、`list_changed` 送達範圍、`mcp-stdio` 結束碼；8.2 設定輸出一律以 `SPILLWAY_TOKEN` 參照 token、回應 `variants`／`notes`、模板與 `TOOL_FORMATS`、8.2.4 改為實作的實際輸出；新增 9.1.4 Host／Origin；9.2 `/api/mcp/config` 參數、`/mcp/<group>`、新增 9.2.5 群組名 `all` 保留；第 10 節 8 個畫面、UI-5 刪除「內嵌 token 切換」、新增 UI-8；AC-9、AC-11 改寫；新增 12.3 AC-22）
+
 ## 1 範圍與名詞定義
 
 本規格定義單人使用的 LLM 路由閘道之資料模型、路由規則、介面與驗收標準；目的、選型與風險見企劃書。
@@ -528,84 +530,208 @@ LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1�
 
 ### 8.1 MCP server
 
-8.1.1 傳輸：Streamable HTTP，端點 `http://127.0.0.1:<port>/mcp/<group>`；`/mcp/all` 暴露全部 route。
+8.1.1 傳輸：Streamable HTTP（有 session），端點 `http://127.0.0.1:<port>/mcp/<group>`；`/mcp/all` 暴露全部 route。`<group>` 不是既有群組且不是 `all` 時，開新 session 的請求（不帶 `Mcp-Session-Id`）必須回傳 HTTP 404，錯誤碼 `not_found`。群組名 `all` 為保留字（9.2.5）。
 
-8.1.2 不支援 HTTP 的工具必須使用 stdio 橋接命令 `spillway mcp-stdio --group <group>`，橋接將請求轉發至 8.1.1 的端點。
+8.1.2 不支援 HTTP 的工具必須使用 stdio 橋接命令 `spillway mcp-stdio --group <group> [--port 8787]`，橋接將請求轉發至 `http://127.0.0.1:<port>/mcp/<group>`（主機固定，不提供 `--host`）；token 取自環境變數 `SPILLWAY_TOKEN`。橋接不開啟資料庫、不經系統代理。結束碼：
 
-8.1.3 驗證：請求必須帶 `Authorization: Bearer <token>`；token 於首次設定時產生，`settings` 只存其 SHA-256 雜湊。
+| 結束碼 | 情況 |
+| --- | --- |
+| 0 | stdin 結束，且進行中的請求皆已回應 |
+| 1 | 閘道未啟動、其他 HTTP 狀態或傳輸錯誤、閘道連線意外結束、stdin 結束後 5 秒內未收到回應 |
+| 2 | `SPILLWAY_TOKEN` 未設定、空白或含 CR/LF，或 `SPILLWAY_DEPTH` 含 CR/LF；不連線 |
+| 3 | 被閘道拒絕（HTTP 401、403、404、503） |
+| 130 | Ctrl-C（SIGINT） |
 
-8.1.4 群組端點暴露的 route：`target.group` 等於該群組名稱者。
+被閘道拒絕時，橋接必須對每個尚未回應的 request 寫出 JSON-RPC 錯誤 `{"code": -32000, "message": "<錯誤碼>: rejected by gateway (HTTP <狀態碼>)", "data": {"code": "<錯誤碼>", "http_status": <狀態碼>}}`；錯誤碼依狀態碼為 401 `unauthorized`、403 `recursion_blocked`、404 `not_found`、503 `shutting_down`。結束碼 1 的錯誤不帶 `data.code`。
 
-8.1.5 Route 或群組變更後，系統必須發送 `notifications/tools/list_changed`。
+8.1.3 驗證：請求必須帶 `Authorization: Bearer <token>`；token 於首次設定時產生，`settings` 只存其 SHA-256 雜湊。適用於 `/mcp/*` 的 POST、GET、DELETE；scheme 比對不分大小寫；token 雜湊每次請求讀取，rotate 立即生效（舊 token 下一次請求即被拒）。缺少 header、格式錯誤、雜湊不符或尚未產生 token 時回傳 HTTP 401，錯誤碼 `unauthorized`，並帶 `WWW-Authenticate: Bearer`（不帶 `resource_metadata`）。
 
-8.1.6 遞迴防護：請求帶 `X-Spillway-Depth` 且值 ≥ 1 時必須拒絕，錯誤碼 `recursion_blocked`；stdio 橋接必須將環境變數 `SPILLWAY_DEPTH` 轉為此 header。
+8.1.4 群組端點暴露的 route：`target.group` 等於該群組名稱者。Session 綁定建立它的群組：以同一 session id 改打別的群組時回傳 HTTP 404，body 為 MCP SDK 的 JSON-RPC 格式（例外於 9.1.2）。群組在 session 期間被刪除時，該 session 的 `tools/list` 回空清單、`ask` 回 `route_not_found`。
 
-| Tool | 輸入 | 輸出 |
+8.1.5 Route 或群組變更後，系統必須發送 `notifications/tools/list_changed`；initialize 宣告 `tools.listChanged = true`。通知送至所有列過或呼叫過工具的 session（不區分群組），但只送達已開啟 GET 通知串流的 session；未開啟者在下一次 `tools/list` 取得新清單。
+
+8.1.6 遞迴防護：請求帶 `X-Spillway-Depth` 且值 ≥ 1 時必須拒絕，HTTP 403，錯誤碼 `recursion_blocked`；在驗證 token 之前判斷；任一 `X-Spillway-Depth` 值不符 `^[0-9]+$`（含空字串、`-1`、`+1`）或 ≥ 1 即拒絕。stdio 橋接必須將環境變數 `SPILLWAY_DEPTH` 轉為此 header（值為空或未設定時不送）。
+
+8.1.7 `/mcp/*` 請求的檢查順序：Host／Origin（9.1.4）→ 遞迴防護（8.1.6）→ Bearer（8.1.3）→ 停機中或尚未啟動完成回傳 HTTP 503，錯誤碼 `shutting_down` → 群組存在（8.1.1）。以上錯誤皆為 9.1.2 格式。MCP SDK 傳輸層產生的錯誤（400 Content-Type 或 session id 缺漏、404 session 不存在、406、413、503 session 數達上限 100）body 為 JSON-RPC 或純文字，例外於 9.1.2。
+
+| Tool | 輸入 | 輸出（`structuredContent`） |
 | --- | --- | --- |
-| `ask` | `route`（enum，該群組的 route）、`prompt`、`effort`（選填，enum） | 回應文字、實際處理的成員、slot、`cost_usd` |
-| `list_routes` | 無 | route 名稱、mode、各 slot 的成員順序 |
-| `quota_status` | 無 | 群組內各成員的額度類型、剩餘、冷卻至 |
+| `ask` | `route`（enum，該群組的 route；群組無 route 時為不設 enum 的字串，說明列「目前無 route」）、`prompt`（非空字串）、`effort`（選填，enum 五級）；不接受其他鍵 | `{text, served_by, slot, cost_usd, tokens_in, tokens_out}`；`content` 為一段回應文字。不露出預估值 |
+| `list_routes` | 無 | `{"routes": [{name, mode, ordered, slots: [{slot, members: [{id, effort, weight}]}]}]}`；`ordered` 為 `manual`（有手動排序，只列已儲存的 slot，與 `GET /api/routes/{name}` 同源）或 `default`（依 4.3.2 產生；chat route 不列 cli 成員） |
+| `quota_status` | 無 | `{"members": [{id, kind, provider, budget_type, remaining, window, cooling_until, cooling_reason}]}`；範圍為群組選擇器涵蓋的成員（與 `GET /api/groups/{name}` 的成員預覽同源；`all` 為全部成員），依 id 排序；推導與 `/api/dashboard` 相同 |
+
+8.1.8 `ask` 以 route 名稱解析（不會退回同名成員的隱含 route），帳本與 `/v1` 同一路徑寫入。三個工具的 outputSchema 皆為 `type: object`、`required: []`，成功與錯誤結果都相容。
+
+8.1.9 工具錯誤結果：一律為 `CallToolResult`，`isError = true`，`content` 為一段 JSON 文字，`structuredContent` 為 `{"error": {"code": "<錯誤碼>", "message": "<說明>"}, "attempts": [...]}`（不是 JSON-RPC error）。錯誤碼：`route_not_found`（route 不存在，或 session 綁定的群組已被刪除）、`no_candidate`（帶 `attempts`，每項 `{deployment, status, slot}`）、`validation_error`（route 不是本群組可見的 route、prompt 為空、effort 不在五級內或多餘參數）、`shutting_down`（停機期滿，進行中的 `ask` 已取消）、`internal_error`（非預期錯誤，訊息只含例外型別）。
+
+8.1.10 已知差異：`list_routes` 的 `manual` 只列已儲存的 slot；Router 實際路由另把未列入的成員依預設順序接在後面、略過已不屬 route 目標的成員（4.3），兩者可能不同。
 
 ### 8.2 設定輸出
 
-8.2.1 介面：`GET /api/mcp/config?group=<group>&tool=<tool>`，回傳設定內容、建議放置的檔案路徑、所需環境變數。
+8.2.1 介面：`GET /api/mcp/config?group=<group>&tool=<tool>`。`tool` 為 `claude-code`、`codex`、`cursor`、`gemini`、`stdio` 之一，其他值回傳 HTTP 422，錯誤碼 `validation_error`；`group` 不存在且不是 `all` 時回傳 HTTP 404，錯誤碼 `not_found`。回應：
 
-8.2.2 設定內容預設以環境變數 `SPILLWAY_TOKEN` 參照 token；使用者開啟「內嵌 token」時才可輸出明文，UI 必須同步顯示警告。
-
-8.2.3 每種工具的格式必須以模板檔 `templates/mcp/<tool>.j2` 維護；新增工具只新增模板檔。
-
-8.2.4 各工具的欄位名稱以實作當時該工具的官方文件為準；下表為初版模板。
-
-| 工具 | 放置位置 | 形式 |
-| --- | --- | --- |
-| Claude Code | 執行命令，或專案 `.mcp.json` | `claude mcp add --transport http` |
-| Codex | `~/.codex/config.toml` | `[mcp_servers.<name>]` |
-| Cursor | `~/.cursor/mcp.json` 或專案 `.cursor/mcp.json` | `mcpServers` JSON |
-| Gemini CLI | `~/.gemini/settings.json` | `mcpServers` JSON（`httpUrl`） |
-| 通用 stdio | 任何支援 stdio 的工具 | `command` + `args` |
-
-群組 `coding`、埠號 8787 的輸出範例：
-
-```bash
-# Claude Code
-claude mcp add --transport http spillway-coding http://127.0.0.1:8787/mcp/coding \
-  --header "Authorization: Bearer ${SPILLWAY_TOKEN}"
+```json
+{
+  "group": "coding",
+  "tool": "codex",
+  "variants": [
+    {"label": "~/.codex/config.toml", "scope": "user", "format": "toml",
+     "path": "~/.codex/config.toml", "filename": "config.toml", "content": "…"},
+    {"label": "codex mcp add 命令", "scope": "user", "format": "command",
+     "path": null, "filename": null, "content": "…"}
+  ],
+  "env": ["SPILLWAY_TOKEN"],
+  "notes": [{"severity": "info", "text": "…"}],
+  "format": "toml", "path": "~/.codex/config.toml", "content": "…"
+}
 ```
 
+`variants` 為可套用的放置方式，第一項為建議做法；`scope` 為 `user` 或 `project`，`format` 為 `command`、`json` 或 `toml`；命令類的 `path`、`filename` 為 null。頂層 `format`、`path`、`content` 等於 `variants[0]`。`notes` 的 `severity` 為 `info` 或 `warn`。
+
+8.2.2 設定內容一律以環境變數 `SPILLWAY_TOKEN` 參照 token，不輸出明文（資料庫只存雜湊，閘道無法事後取得明文）。
+
+8.2.3 每種工具的每個 variant 以一個模板檔 `templates/mcp/<tool>.<variant>.j2` 維護，與程式內的 `TOOL_FORMATS` 對應；新增工具只新增模板檔與 `TOOL_FORMATS` 一行。模板變數為 `name`（`spillway-<group>`）、`url`、`group`、`port`（serve 綁定埠）、`command`、`args_prefix`；群組名依格式跳脫（JSON 字串、TOML 字串與鍵、shell 單引號、URL 路徑段編碼）。stdio 的 `command` 為此台機器上 `spillway` 的絕對路徑（找不到時為 Python 直譯器加 `-m spillway`），模板不含 `SPILLWAY_DEPTH`。
+
+8.2.4 各工具的欄位名稱以實作當時該工具的官方文件為準。下表與範例為實作（CHG-20261102-01）的實際輸出。
+
+| 工具（`tool`） | `variants`（依序） | 放置位置 | `notes` |
+| --- | --- | --- | --- |
+| Claude Code（`claude-code`） | ① 專案 `.mcp.json`（`type: http`）② `claude mcp add --transport http` 命令（header 以單引號傳入） | 專案根目錄 `.mcp.json`；命令 | warn：local／user scope 是否在執行期展開 `${SPILLWAY_TOKEN}` 官方文件未載明，以 `claude mcp get` 確認顯示字面值 |
+| Codex（`codex`） | ① `[mcp_servers.<name>]`（`bearer_token_env_var`、`tool_timeout_sec = 600`）② `codex mcp add` 命令 | `~/.codex/config.toml`；命令 | info：先設定 `SPILLWAY_TOKEN`；`tool_timeout_sec` 預設 60 秒，此處設為 600 |
+| Cursor（`cursor`） | ① `mcpServers` JSON ② 同內容，專案層級 | `~/.cursor/mcp.json`；專案 `.cursor/mcp.json` | info：先在啟動 Cursor 的環境設定 `SPILLWAY_TOKEN` |
+| Gemini CLI（`gemini`） | ① `mcpServers` JSON（`httpUrl`）② `mcpServers` JSON（stdio，`mcp-stdio`） | `~/.gemini/settings.json` | warn：若 401 或 `gemini mcp list` 顯示未連線，改用 variants[1]；info：stdio 的 `command` 為此台機器的絕對路徑 |
+| 通用 stdio（`stdio`） | ① Claude Code 專案 `.mcp.json`（`type: stdio`）② Cursor ③ Codex ④ Gemini CLI | 各工具的設定檔 | info：`command` 為此台機器的絕對路徑，換機器或重裝後須重新產生 |
+
+各工具的 stdio variant 以各自的寫法參照環境變數：Claude Code `${SPILLWAY_TOKEN}`、Cursor `${env:SPILLWAY_TOKEN}`、Codex `env_vars = ["SPILLWAY_TOKEN"]`、Gemini CLI `$SPILLWAY_TOKEN`。
+
+群組 `coding`、埠號 8787 的輸出範例（`spillway` 位於 `/usr/local/bin/spillway` 時）：
+
+`claude-code variants[0]`（.mcp.json）：
+
+```json
+{
+  "mcpServers": {
+    "spillway-coding": {
+      "type": "http",
+      "url": "http://127.0.0.1:8787/mcp/coding",
+      "headers": {
+        "Authorization": "Bearer ${SPILLWAY_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+`claude-code variants[1]`：
+
+```bash
+claude mcp add --transport http spillway-coding http://127.0.0.1:8787/mcp/coding --header 'Authorization: Bearer ${SPILLWAY_TOKEN}'
+```
+
+`codex variants[0]`（~/.codex/config.toml）：
+
 ```toml
-# Codex — ~/.codex/config.toml
 [mcp_servers.spillway-coding]
 url = "http://127.0.0.1:8787/mcp/coding"
 bearer_token_env_var = "SPILLWAY_TOKEN"
+tool_timeout_sec = 600
 ```
+
+`codex variants[1]`：
+
+```bash
+codex mcp add spillway-coding --url http://127.0.0.1:8787/mcp/coding --bearer-token-env-var SPILLWAY_TOKEN
+```
+
+`cursor variants[0]`、`variants[1]`（~/.cursor/mcp.json、.cursor/mcp.json）：
 
 ```json
 {
   "mcpServers": {
     "spillway-coding": {
       "url": "http://127.0.0.1:8787/mcp/coding",
-      "headers": { "Authorization": "Bearer ${env:SPILLWAY_TOKEN}" }
+      "headers": {
+        "Authorization": "Bearer ${env:SPILLWAY_TOKEN}"
+      }
     }
   }
 }
 ```
+
+`gemini variants[0]`（~/.gemini/settings.json）：
 
 ```json
 {
   "mcpServers": {
     "spillway-coding": {
       "httpUrl": "http://127.0.0.1:8787/mcp/coding",
-      "headers": { "Authorization": "Bearer $SPILLWAY_TOKEN" }
+      "headers": {
+        "Authorization": "Bearer $SPILLWAY_TOKEN"
+      }
     }
   }
 }
 ```
 
+`gemini variants[1]`、`stdio variants[3]`（~/.gemini/settings.json）：
+
 ```json
-{ "command": "spillway", "args": ["mcp-stdio", "--group", "coding"] }
+{
+  "mcpServers": {
+    "spillway-coding": {
+      "command": "/usr/local/bin/spillway",
+      "args": ["mcp-stdio", "--group", "coding", "--port", "8787"],
+      "env": {
+        "SPILLWAY_TOKEN": "$SPILLWAY_TOKEN"
+      }
+    }
+  }
+}
 ```
 
-上述三個 JSON 依序為 Cursor、Gemini CLI、通用 stdio。
+`stdio variants[0]`（Claude Code .mcp.json）：
+
+```json
+{
+  "mcpServers": {
+    "spillway-coding": {
+      "type": "stdio",
+      "command": "/usr/local/bin/spillway",
+      "args": ["mcp-stdio", "--group", "coding", "--port", "8787"],
+      "env": {
+        "SPILLWAY_TOKEN": "${SPILLWAY_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+`stdio variants[1]`（Cursor ~/.cursor/mcp.json）：
+
+```json
+{
+  "mcpServers": {
+    "spillway-coding": {
+      "command": "/usr/local/bin/spillway",
+      "args": ["mcp-stdio", "--group", "coding", "--port", "8787"],
+      "env": {
+        "SPILLWAY_TOKEN": "${env:SPILLWAY_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+`stdio variants[2]`（Codex ~/.codex/config.toml）：
+
+```toml
+[mcp_servers.spillway-coding]
+command = "/usr/local/bin/spillway"
+args = ["mcp-stdio", "--group", "coding", "--port", "8787"]
+env_vars = ["SPILLWAY_TOKEN"]
+```
+
+每段程式碼區塊即該 variant 的 `content` 全文。
 
 ## 9 HTTP API
 
@@ -619,6 +745,13 @@ bearer_token_env_var = "SPILLWAY_TOKEN"
 
 9.1.3 `/v1/chat/completions` 回應必須帶 header `X-Spillway-Served-By`（成員 id）與 `X-Spillway-Slot`。
 
+9.1.4 Host／Origin 檢查（全部端點，含 `/v1`、`/api`、`/mcp`；先於路由執行）：
+
+- 每個請求必須剛好帶一個 `Host`，且完整符合 `^(127\.0\.0\.1|localhost)(:[0-9]{1,5})?$`（不分大小寫；埠號不比對）；否則回傳 HTTP 403，錯誤碼 `host_not_allowed`。`[::1]`、`localhost.`、`evil.localhost`、空值、重複的 `Host`、HTTP/1.0 無 `Host` 皆拒絕。
+- 請求帶 `Origin` 時，必須剛好一個，且完整等於（不分大小寫）`http://127.0.0.1:<port>` 或 `http://localhost:<port>`（`<port>` 為 serve 綁定埠）；結尾斜線、`null`、其他埠皆不符，回傳 HTTP 403，錯誤碼 `origin_not_allowed`。沒有 `Origin` 的請求（CLI、SDK）一律放行。
+- 錯誤格式依 9.1.2；websocket 請求被拒時以 close code 1008 關閉。
+- 不變式：所有 GET 端點不得改變狀態。
+
 ### 9.2 端點
 
 | 方法 | 路徑 | 用途 |
@@ -629,16 +762,17 @@ bearer_token_env_var = "SPILLWAY_TOKEN"
 | GET / POST / PUT / DELETE | `/api/deployments[/{id}]` | 成員 CRUD（含 tag、額度） |
 | POST | `/api/deployments/{id}/test` | 送出一次測試呼叫並回傳結果 |
 | POST | `/api/deployments/{id}/clear-cooldown` | 清除冷卻（刪除該成員的 `cooldowns` 列） |
-| GET / POST / PUT / DELETE | `/api/groups[/{name}]` | 群組 CRUD；GET 含符合的成員預覽 |
+| GET / POST / PUT / DELETE | `/api/groups[/{name}]` | 群組 CRUD；GET 含符合的成員預覽；名稱 `all` 為保留字（9.2.5） |
 | GET / POST / PUT / DELETE | `/api/routes[/{name}]` | Route CRUD |
 | PUT | `/api/routes/{name}/order` | 儲存拖曳結果：body 為 slot 清單，每個 slot 含成員 id、effort、優先權重 |
 | DELETE | `/api/routes/{name}/order` | 還原預設順序（4.3.4） |
 | POST | `/api/routes/{name}/dry-run` | 以範例請求模擬路由，回傳候選與順序，不呼叫上游 |
 | GET | `/api/ledger` | 帳本查詢；參數 `from`、`to`、`deployment`、`route`、`status`、`page` |
-| GET | `/api/mcp/config` | MCP 設定輸出（8.2） |
+| GET | `/api/mcp/config` | MCP 設定輸出（8.2）；參數 `group`（群組名或 `all`）、`tool`（`claude-code`、`codex`、`cursor`、`gemini`、`stdio`） |
 | POST | `/api/config/import` | 匯入 YAML；參數 `mode=merge\|replace` |
 | GET | `/api/config/export` | 匯出 YAML |
 | POST | `/api/settings/token/rotate` | 重新產生存取 token |
+| POST / GET / DELETE | `/mcp/<group>` | MCP Streamable HTTP 端點（8.1；需 Bearer token） |
 
 9.2.1 Context 與預估相關端點：
 
@@ -657,6 +791,8 @@ bearer_token_env_var = "SPILLWAY_TOKEN"
 9.2.3 `POST /api/deployments` 與 `POST /api/config/import` 違反 7.6.5 時回傳 HTTP 409，錯誤碼 `provider_single`。
 
 9.2.4 `/api/deployments` 的成員物件與 `/api/dashboard` 的各成員必須帶頂層欄位 `cooling_until`（UTC ISO 8601 字串）與 `cooling_reason`（`quota_exhausted` 或 `rate_limited`）；兩者只在冷卻尚未到期時有值，到期後為 null（與 4.2.6「到期自動恢復」一致；`cooldowns` 列保留至下次設定或清除）。`budget` 物件不含冷卻欄位；`PUT` 帶 `budget: null` 只刪除額度設定，不影響冷卻。
+
+9.2.5 群組名 `all` 為保留字（`/mcp/all` 暴露全部 route）：`POST /api/groups` 的 `name` 為 `all` 時回傳 HTTP 422，錯誤碼 `validation_error`。群組沒有改名端點（`PUT /api/groups/{name}` 只取代選擇器）。
 
 ### 9.3 拖曳儲存格式
 
@@ -678,7 +814,7 @@ PUT /api/routes/review/order
 
 ## 10 Web UI 畫面清單
 
-Web UI 共 7 個畫面，左側固定導覽；各畫面 layout 見 [UI layout 設計稿](ui/)；目的與範圍見 [企劃書](proposal.md)。
+Web UI 共 8 個畫面，左側固定導覽；UI-1–UI-7 的 layout 見 [UI layout 設計稿](ui/)，UI-8 沒有 layout 稿，版面於 M4 的 CHG 決定；目的與範圍見 [企劃書](proposal.md)。
 
 | 編號 | 畫面 | 用途 | 主要操作 |
 | --- | --- | --- | --- |
@@ -686,9 +822,10 @@ Web UI 共 7 個畫面，左側固定導覽；各畫面 layout 見 [UI layout �
 | UI-2 | 成員 | 成員清單與編輯（類型、供應商、模型以選單選取；能力、額度、tag、憑證參照） | 新增、測試呼叫、啟用切換 |
 | UI-3 | 群組與 Tag | 以 all、any、none 編輯選擇器，即時預覽符合的成員 | 新增群組、編輯 tag |
 | UI-4 | Route | Route 清單；編輯頁以拖曳調整 slot 與成員順序，逐成員以選單設定 effort 與優先權重（高、中、低）；route 層級勾選「預估額度檢查」與「記錄 context」 | 拖曳、還原預設、dry-run |
-| UI-5 | MCP 設定 | 選群組與工具，顯示設定內容與放置路徑 | 複製、下載、內嵌 token 切換 |
+| UI-5 | MCP 設定 | 選群組與工具，顯示各放置方式（`variants`）的設定內容、放置路徑與注意事項（8.2.1） | 複製、下載 |
 | UI-6 | 帳本 | 每次嘗試的紀錄，含預估與實際 token、花費；點選列開啟請求與回應內容 | 篩選、匯出 CSV |
 | UI-7 | 設定 | 首次設定精靈、YAML 匯入匯出、存取 token、埠號、context 記錄預設與保存天數 | 匯入、匯出、重新產生 token |
+| UI-8 | （名稱待定；候選「API」「API 參考」「API 文件」「介面目錄」「開發者」） | 只列 MCP 介面，內容於執行期產生、與程式一致（資料來源 `mcp_catalog(app, group)`），依類型分四大類：連線（各群組端點 URL、傳輸、驗證方式、`mcp-stdio`）、工具（`ask`、`list_routes`、`quota_status` 的說明與 inputSchema／outputSchema）、通知（`tools/list_changed`）、錯誤碼；不列 `/api/*` 與 `/v1` | 以可折疊索引切換大類 |
 
 ### 10.1 拖曳規則（UI-4）
 
@@ -740,9 +877,9 @@ Web UI 共 7 個畫面，左側固定導覽；各畫面 layout 見 [UI layout �
 | AC-6 | G2 | 每個成員皆設有額度 | 開啟 UI-1 | 每個成員顯示剩餘額度或冷卻至 |
 | AC-7 | G3 | NFR-1 資料量 | 執行 1,000 次 dry-run | P95 < 20 ms |
 | AC-8 | G5 | 空資料庫 | 依首次設定精靈加入 1 個 API 成員並呼叫 | 計時 ≤ 10 分鐘 |
-| AC-9 | G6 | 群組 `coding` 已建立 | 將 UI-5 輸出套用到 Claude Code、Codex、Cursor、Gemini CLI | 四者皆能列出並呼叫 `ask` |
+| AC-9 | G6 | 群組 `coding` 已建立 | 將 `GET /api/mcp/config`（UI-5 的資料來源）輸出套用到 Claude Code、Codex、Cursor、Gemini CLI | 四者皆能列出並呼叫 `ask` |
 | AC-10 | G7 | 已有完整設定 | 匯出後於空資料庫匯入 | 成員、群組、route、拖曳順序一致；匯出檔無憑證 |
-| AC-11 | 8.1.6 | claude-sub 的 CLI 設定了本閘道 MCP | 經 MCP 呼叫 route `review` | 子行程內的再次呼叫被拒，錯誤碼 `recursion_blocked` |
+| AC-11 | 8.1.6 | 群組 `coding` 已建立，持有有效 token | `/mcp` 請求帶 `X-Spillway-Depth: 1`，或以 `SPILLWAY_DEPTH=1` 執行 `mcp-stdio` 呼叫 `ask` | 被拒，錯誤碼 `recursion_blocked`（HTTP 403；`mcp-stdio` 回 JSON-RPC 錯誤 `data.code`，結束碼 3） |
 | AC-12 | 2.1.4 | 已有 claude-cli 成員 | 再新增一個 claude-cli 成員 | 建立失敗，HTTP 409，錯誤碼 `provider_single`，並顯示原因 |
 
 ### 12.1 Context 記錄與預估
@@ -763,3 +900,9 @@ Web UI 共 7 個畫面，左側固定導覽；各畫面 layout 見 [UI layout �
 | AC-19 | 7.1.2、7.6 | 內建模組皆可用 | 新增一個符合 7.6.1 的測試模組資料夾（宣告新 `provider`），不修改任何既有檔案，重新啟動 | `GET /api/adapters` 列出該模組；以該 `provider` 建立的成員可被路由呼叫；合約測試對它通過 |
 | AC-20 | 7.6.4、10.2 | 內建模組皆可用 | 於 UI-2 依序選類型 `cli`、供應商 `claude-cli`、任一模型 | 供應商選單只列 `cli` 模組；模型選單與 `claude_cli` 的 `models.yaml` 一致；能力欄位帶入該模型的值 |
 | AC-21 | 7.6.7 | 有一個 `__init__.py` 無法 import 的模組 | 啟動系統並開啟 UI-2 | 系統正常啟動；該模組於供應商選單停用並顯示原因；其成員候選篩選原因為 `adapter_unavailable` |
+
+### 12.3 MCP 介面目錄（UI-8）
+
+| 編號 | 對應 | 前置條件 | 操作 | 預期結果 |
+| --- | --- | --- | --- | --- |
+| AC-22 | 10（UI-8） | M4 Web UI 已啟動 | 開啟 UI-8 | 顯示四大類（連線、工具、通知、錯誤碼）與可折疊索引；內容與 `mcp_catalog(app)` 一致；不含 `/api/*` 與 `/v1` |
