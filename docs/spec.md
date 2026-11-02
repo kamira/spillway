@@ -473,7 +473,7 @@ LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1�
 
 7.4.2 回應文字取暫存檔內容；token 取 JSONL 事件中的 usage 欄位。
 
-7.4.3 子行程必須設定 `SPILLWAY_DEPTH=1`，並固定以 `--ignore-user-config`（不讀 `$CODEX_HOME/config.toml`，登入仍用 `CODEX_HOME`）與 `-c mcp_servers={}` 停用全部 MCP（含本閘道）：`-c mcp_servers={}` 由模組附加於 `params.extra_args` 之後、prompt 前的 `--` 之前，為最後一個 `-c`；兩者 `params.extra_args` 皆不可移除或覆寫。`-c mcp_servers={}` 會與設定檔合併而非取代，因此必須同時不讀 config.toml。`params.extra_args` 含 `--`、位置引數、以 `-c`/`--config`（含 `-c=`、`-cKEY=`）設定 `mcp_servers` 或 `profile`，或含 `-p`/`--profile`（含 `-pNAME`、`-p=NAME`）時該次結果為 `error`。子行程環境必須移除 `OPENAI_API_KEY`、`CODEX_API_KEY`、`OPENAI_BASE_URL`，以及 7.3.2 所述的成員 `env:` 憑證變數。
+7.4.3 子行程必須設定 `SPILLWAY_DEPTH=1`，並固定以 `--ignore-user-config`（不讀 `$CODEX_HOME/config.toml`，登入仍用 `CODEX_HOME`）與 `-c mcp_servers={}` 停用全部 MCP（含本閘道）：`-c mcp_servers={}` 由模組附加於 `params.extra_args` 之後、prompt 前的 `--` 之前，為最後一個 `-c`；兩者 `params.extra_args` 皆不可移除或覆寫。`-c mcp_servers={}` 會與設定檔合併而非取代，因此必須同時不讀 config.toml。`params.extra_args` 含 `--`、位置引數、以 `-c`/`--config`（含 `-c=`、`-cKEY=`）設定 `mcp_servers`、`profile` 或 `features`，或含 `--enable`、`-p`/`--profile`（含 `-pNAME`、`-p=NAME`）時該次結果為 `error`。子行程環境必須移除 `OPENAI_API_KEY`、`CODEX_API_KEY`、`OPENAI_BASE_URL`，以及 7.3.2 所述的成員 `env:` 憑證變數。
 
 ### 7.5 Messages 轉為 CLI prompt
 

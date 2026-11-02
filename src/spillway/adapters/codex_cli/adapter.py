@@ -51,7 +51,8 @@ def _error(message: str) -> CallResult:
                       status="error", error=message)
 
 
-_BLOCKED_CONFIG_KEYS = ("mcp_servers", "profile")   # 會加回 MCP 或選用 profile 設定檔的 `-c` 鍵
+# 會加回 MCP、選用 profile 設定檔或開啟功能(如提供 codex_apps MCP 的功能;擁有者冒煙 2026-11-02)的 `-c` 鍵
+_BLOCKED_CONFIG_KEYS = ("mcp_servers", "profile", "features")
 
 
 def _config_key(value: str) -> str:
@@ -67,8 +68,8 @@ def _blocked_config(value: str) -> bool:
 def _extra_args_problem(extra: Any) -> str | None:
     """`extra_args` 不合法時回原因:非字串清單、含 `--`、含裸位置引數(不以 `-` 開頭,且前一個元素
     不是不帶 `=` 的選項;位置引數會被 codex 當成 prompt 或子命令如 `resume`)、以 `-c`/`--config`
-    設定 `mcp_servers`(會與 `mcp_servers={}` 合併而加回 MCP)或 `profile`,或 `-p`/`--profile`(含 `-pNAME`、
-    `-p=NAME`;疊加 profile 設定檔)。`-c` 的鍵去掉空白與引號後以整段比對(`mcp_servers_timeout` 不擋)。"""
+    設定 `mcp_servers`(會與 `mcp_servers={}` 合併而加回 MCP)、`profile` 或 `features`,`--enable`(開啟功能,
+    可能加回 codex_apps 等 MCP),或 `-p`/`--profile`(含 `-pNAME`、`-p=NAME`;疊加 profile 設定檔)。`-c` 的鍵去掉空白與引號後以整段比對(`mcp_servers_timeout` 不擋)。"""
     if not isinstance(extra, Sequence) or isinstance(extra, str) \
             or not all(isinstance(a, str) for a in extra):
         return "params.extra_args 必須是字串清單"
@@ -77,6 +78,8 @@ def _extra_args_problem(extra: Any) -> str | None:
             return "params.extra_args 不可含 `--`"
         if a in ("-p", "--profile") or a.startswith(("-p", "--profile=")):
             return "params.extra_args 不可含 `-p`/`--profile`"
+        if a == "--enable" or a.startswith("--enable="):
+            return "params.extra_args 不可含 `--enable`"
         if a.startswith("--config="):
             value = a[len("--config="):]
         elif a.startswith("-c") and a != "-c":
@@ -86,7 +89,7 @@ def _extra_args_problem(extra: Any) -> str | None:
         else:
             value = None
         if value is not None and _blocked_config(value):
-            return "params.extra_args 不可以 -c 設定 mcp_servers 或 profile"
+            return "params.extra_args 不可以 -c 設定 mcp_servers、profile 或 features"
         if not a.startswith("-"):
             prev = extra[i - 1] if i > 0 else ""
             if not (prev.startswith("-") and "=" not in prev):
