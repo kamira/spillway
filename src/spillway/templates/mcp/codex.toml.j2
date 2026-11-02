@@ -1,0 +1,4 @@
+[mcp_servers.{{ name|toml_key }}]
+url = {{ url|toml_str }}
+bearer_token_env_var = "SPILLWAY_TOKEN"
+tool_timeout_sec = 600

@@ -1,23 +1,20 @@
 """`/api/dashboard`(CHG-20261101-02 決策 9)。"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timezone
 from typing import Any
 
 from fastapi import Request
 
 from spillway.api.deps import request_conn
 from spillway.clock import to_iso
-from spillway.domain import Budget
-from spillway.quota import QuotaService
-from spillway.store import repo
+from spillway.quota import member_quota_rows
 
-from .common import _clock, _is_cooling_only, _iso, router
+from .common import _clock, router
 
 
 # ================================================================ /api/dashboard
-
-_DEFAULT_PERIOD = Budget(type="none", limit_amount=None, window="monthly", reset_anchor=1)
+# 推導本體在 `spillway.quota.member_quota_rows`(CHG-20261102-01 決策 12;MCP `quota_status` 共用)
 
 
 @router.get("/dashboard")
@@ -48,63 +45,5 @@ async def dashboard(request: Request) -> dict[str, Any]:
     clock = _clock(request)
     now = clock.now().astimezone(timezone.utc)
     with request_conn(request) as conn:
-        quota = QuotaService(conn, clock)
-        rows = repo.dashboard_members(conn)
-
-        periods: dict[str, tuple[str | None, str | None]] = {}
-        bounds: dict[tuple[str | None, str | None], tuple[datetime | None, datetime | None]] = {}
-        for r in rows:
-            if r["has_budget"] and not _is_cooling_only(r["b_type"], r["window"], r["limit_amount"]):
-                b = Budget(type=r["b_type"], limit_amount=r["limit_amount"], window=r["window"],
-                           reset_anchor=r["reset_anchor"])
-            else:
-                b = _DEFAULT_PERIOD
-            if b.window == "none":
-                key: tuple[str | None, str | None] = (None, None)
-                bounds[key] = (None, None)
-            else:
-                start = quota.period_start(b, now)
-                end = quota.next_reset(b, now)
-                key = (_iso(start), _iso(end))
-                bounds[key] = (start, end)
-            periods[r["id"]] = key
-
-        # 每種相異期間一次 GROUP BY 加總
-        spent = {key: repo.spend_by_deployment(conn, start, end)
-                 for key, (start, end) in bounds.items()}
-        recent = repo.recent_activity(conn, since_24h=now - timedelta(hours=24),
-                                      since_7d=now - timedelta(days=7))
-
-    out = []
-    for r in rows:
-        key = periods[r["id"]]
-        spend = spent[key].get(r["id"], 0.0)
-        # U10 (a):只記冷卻的列與「沒有 budgets 列」同口徑(日曆月、budget_type 與 window 為 null)
-        budgeted = bool(r["has_budget"]) and not _is_cooling_only(r["b_type"], r["window"], r["limit_amount"])
-        unlimited = (not budgeted) or r["b_type"] == "none" or r["limit_amount"] is None
-        if unlimited:
-            remaining, ratio = None, 1.0
-        else:
-            limit = float(r["limit_amount"])
-            remaining = limit - spend
-            ratio = 0.0 if limit <= 0 else min(1.0, max(0.0, remaining / limit))
-        until = r["cooling_until"]
-        cooling_until = until if until is not None and until > to_iso(now) else None
-        cooling_reason = r["cooling_reason"] if cooling_until is not None else None
-        n24, spend7 = recent.get(r["id"], (0, 0.0))
-        days_left = None
-        if remaining is not None and spend7 > 0:
-            days_left = max(remaining, 0.0) / (spend7 / 7)
-        out.append({
-            "id": r["id"], "model_name": r["model_name"], "kind": r["kind"],
-            "provider": r["provider"], "enabled": bool(r["enabled"]),
-            "budget_type": r["b_type"] if budgeted else None,
-            "limit_amount": r["limit_amount"] if budgeted else None,
-            "window": r["window"] if budgeted else None,
-            "period_start": key[0], "next_reset": key[1], "period_spend": spend,
-            "remaining": remaining, "unlimited": unlimited, "ratio": ratio,
-            "cooling": cooling_until is not None, "cooling_until": cooling_until,
-            "cooling_reason": cooling_reason,
-            "requests_24h": n24, "est_days_left": days_left,
-        })
-    return {"generated_at": to_iso(now), "deployments": out}
+        rows = member_quota_rows(conn, clock, now)
+    return {"generated_at": to_iso(now), "deployments": rows}

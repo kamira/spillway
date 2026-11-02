@@ -269,6 +269,14 @@ async def test_ok_maps_output_file_and_last_usage(home):
     assert not c["out_file"].exists()
 
 
+async def test_negative_token_fields_become_none(home):
+    """決策 20:與 claude_cli 一致,負數 token 欄位視為 None。"""
+    out = CliOutput(exit_code=0, stderr="",
+                    stdout='{"type":"turn.completed","usage":{"input_tokens":-3,"output_tokens":-1}}\n')
+    result, _ = await spy_call(home, runner=SpyRunner(out))
+    assert result.ok and (result.tokens_in, result.tokens_out) == (None, None)
+
+
 @pytest.mark.parametrize("output", [
     CliOutput(exit_code=1, stdout="", stderr="ERROR: boom"),
     CliOutput(exit_code=None, stdout="", stderr="", timed_out=True, killed_reason="timeout"),
@@ -424,7 +432,7 @@ async def test_second_codex_member_409_provider_single(home):
     body = {"model_name": "codex", "kind": "cli", "provider": "codex-cli", "model": "gpt-5.5"}
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8787") as c:
             r1 = await c.post("/api/deployments", json={"id": "codex-a", **body})
             assert r1.status_code == 201, r1.text
             r2 = await c.post("/api/deployments", json={"id": "codex-b", **body})

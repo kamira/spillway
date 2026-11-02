@@ -1,4 +1,7 @@
-"""`/api/groups`(CHG-20261101-02 決策 9)。"""
+"""`/api/groups`(CHG-20261101-02 決策 9)。
+
+群組的建立、更新、刪除在交易 commit **之後**呼叫 `common.tools_changed(request)`(MCP
+`notifications/tools/list_changed`;CHG-20261102-01 決策 13)。"""
 from __future__ import annotations
 
 import sqlite3
@@ -10,11 +13,16 @@ from spillway.api import ApiError, redact_echo
 from spillway.api.deps import request_conn
 from spillway.domain import Deployment
 from spillway.routing import members_of
+from spillway.routing.target import normalize_selector
+from spillway.settings import MCP_ALL_GROUP
 from spillway.store import repo
 from spillway.store.db import transaction
 
-from .common import _not_found, router
+from .common import _invalid, _not_found, router, tools_changed
 from .models import GroupIn, GroupUpdate
+
+# CHG-20261102-01 決策 22:保留給 `/mcp/all`、`mcp_catalog(app, "all")`(單一定義在 settings)
+RESERVED_GROUP_NAME = MCP_ALL_GROUP
 
 
 def _member_brief(d: Deployment) -> dict[str, Any]:
@@ -23,7 +31,7 @@ def _member_brief(d: Deployment) -> dict[str, Any]:
 
 
 def _group_out(g: repo.Group, deps: list[Deployment]) -> dict[str, Any]:
-    sel = {k: list(g.selector.get(k) or []) for k in ("all", "any", "none")}
+    sel = normalize_selector(g.selector)
     return {"name": g.name, "selector": sel,
             "members": [_member_brief(d) for d in members_of({"tags": sel}, deps)]}
 
@@ -45,12 +53,16 @@ async def list_groups(request: Request) -> dict[str, Any]:
 
 @router.post("/groups", status_code=201)
 async def create_group(request: Request, body: GroupIn) -> dict[str, Any]:
-    """建立群組;重複 name → 409 `conflict`。"""
+    """建立群組;重複 name → 409 `conflict`;name 為保留字 `all` → 422 `validation_error`
+    (CHG-20261102-01 決策 22:`/mcp/all` 暴露全部 route)。群組沒有改名端點(`PUT` 只取代選擇器)。"""
+    if body.name == RESERVED_GROUP_NAME:
+        raise _invalid("body.name", f"{RESERVED_GROUP_NAME} 為保留的群組名稱(/mcp/all)")
     with request_conn(request) as conn:
         with transaction(conn):
             if repo.get_group(conn, body.name) is not None:
                 raise ApiError(409, "conflict", redact_echo(f"群組已存在:{body.name}"))
             repo.save_group(conn, repo.Group(body.name, body.selector.model_dump()))
+        tools_changed(request)
         return _group_out(_load_group(conn, body.name), repo.list_deployments(conn))
 
 
@@ -69,6 +81,7 @@ async def update_group(request: Request, name: str, body: GroupUpdate) -> dict[s
         with transaction(conn):
             _load_group(conn, name)
             repo.save_group(conn, repo.Group(name, body.selector.model_dump()))
+        tools_changed(request)
         return _group_out(_load_group(conn, name), repo.list_deployments(conn))
 
 
@@ -82,4 +95,5 @@ async def delete_group(request: Request, name: str) -> Response:
             if refs:
                 raise ApiError(409, "conflict", redact_echo(f"群組 {name} 仍被 route 參照:{', '.join(refs)}"))
             repo.delete_group(conn, name)
+    tools_changed(request)
     return Response(status_code=204)

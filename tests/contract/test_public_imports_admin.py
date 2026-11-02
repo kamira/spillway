@@ -41,6 +41,8 @@ EXPECTED_OPENAPI: dict[str, dict[str, tuple[str, ...]]] = {
                            "put": ("200", "422")},
     "/api/routes/{name}/dry-run": {"post": ("200", "422")},
     "/api/routes/{name}/order": {"delete": ("204", "422"), "put": ("200", "422")},
+    # CHG-20261102-01 T5(決策 16;允許清單 ④)
+    "/api/mcp/config": {"get": ("200", "404", "422")},
     "/api/settings/context": {"get": ("200",), "put": ("200", "422")},
     # CHG-20261101-03 T7(決策 14;允許清單「rotate 路徑」)
     "/api/settings/token/rotate": {"post": ("200",)},

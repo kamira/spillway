@@ -1,6 +1,7 @@
 """Route 目標比對(spec 1.2 選擇器、2.3 `routes.target`/`groups.selector`;CHG-20261030-02 T11)。
 
 `members_of(target, deployments, groups=())` 回傳 `deployments` 中符合 `target` 的成員,保留輸入順序。
+`normalize_selector(selector)` 把選擇器補齊成三個鍵的清單。
 
 target 格式:
 - `{"group": name}`:以 `groups` 中同名群組的選擇器比對;群組不存在時沒有任何成員
@@ -30,6 +31,15 @@ def _selector_map(groups: GroupsArg) -> dict[str, Mapping[str, Any]]:
     if isinstance(groups, Mapping):
         return dict(groups)
     return {g.name: g.selector for g in groups}
+
+
+SELECTOR_KEYS = ("all", "any", "none")
+
+
+def normalize_selector(selector: Mapping[str, Any]) -> dict[str, list[str]]:
+    """選擇器 → `{all: [...], any: [...], none: [...]}`(缺鍵或 null 視為空清單;其他鍵捨去)。
+    `GET /api/groups*` 的輸出與 MCP `quota_status` 的群組範圍共用(CHG-20261102-01 終審 I5)。"""
+    return {k: list(selector.get(k) or []) for k in SELECTOR_KEYS}
 
 
 def matches(selector: Mapping[str, Any], tags: Iterable[str]) -> bool:

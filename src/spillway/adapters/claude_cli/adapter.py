@@ -30,7 +30,6 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 from spillway.adapters.base import (
@@ -42,9 +41,12 @@ from spillway.adapters.base import (
     Deployment,
     SignalsError,
     classify,
+    cli_cwd,
     cli_timeout,
     effort_to_upstream,
+    head,
     messages_to_prompt,
+    nonneg_int,
     resolve_signals,
 )
 
@@ -63,7 +65,6 @@ ENV_REMOVE = (
 )
 ENV_SET = {"SPILLWAY_DEPTH": "1"}           # spec 7.3.3
 MCP_OFF = ("--strict-mcp-config",)          # 決策 10:固定附加,不載入任何 MCP
-WORK_SUBDIR = ("work", "claude")
 EFFORT_PLACEHOLDER = "{effort}"
 MESSAGE_LIMIT = 2000   # 錯誤訊息保留的字元上限
 _INPUT_TOKEN_FIELDS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
@@ -88,10 +89,6 @@ def _str_list(v: Any, name: str) -> list[str]:
     return list(v)
 
 
-def _nonneg_int(v: Any) -> int | None:
-    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
-
-
 def _cost(v: Any) -> float | None:
     if isinstance(v, int | float) and not isinstance(v, bool):
         f = float(v)
@@ -100,14 +97,9 @@ def _cost(v: Any) -> float | None:
     return None
 
 
-def _clip(text: str) -> str:
-    text = text.strip()
-    return text if len(text) <= MESSAGE_LIMIT else text[:MESSAGE_LIMIT] + "…"
-
-
 def tokens_in_of(usage: Mapping[str, Any]) -> int | None:
     """input + cache_creation + cache_read(各項只計非負整數);三者皆缺為 None(施工審議 T4 補記)。"""
-    values = [n for n in (_nonneg_int(usage.get(k)) for k in _INPUT_TOKEN_FIELDS) if n is not None]
+    values = [n for n in (nonneg_int(usage.get(k)) for k in _INPUT_TOKEN_FIELDS) if n is not None]
     return sum(values) if values else None
 
 
@@ -156,17 +148,6 @@ class ClaudeCliAdapter:
     def _params(self, dep: Deployment) -> dict[str, Any]:
         return {**self.manifest.default_params, **(dep.params or {})}
 
-    def _cwd(self, params: Mapping[str, Any]) -> Path:
-        cwd = params.get("cwd")
-        if cwd:
-            return Path(str(cwd)).expanduser()
-        data_dir = self.context.data_dir
-        if data_dir is None:
-            raise ValueError("未設定 params.cwd,且閘道沒有注入資料目錄(data_dir),無法決定工作目錄")
-        work = Path(data_dir).joinpath(*WORK_SUBDIR)
-        work.mkdir(parents=True, exist_ok=True)
-        return work
-
     async def call(self, dep: Deployment, req: ChatRequest, effort: str | None) -> CallResult:
         if dep.kind not in self.manifest.kinds:
             return _error(f"此模組不支援 kind {dep.kind!r}")
@@ -186,7 +167,7 @@ class ClaudeCliAdapter:
             prompt = messages_to_prompt(req.messages)
             if not prompt:
                 raise ValueError("沒有可送出的文字訊息")
-            cwd = self._cwd(params)
+            cwd = cli_cwd(params, self.context, EXECUTABLE)
         except (ValueError, OSError) as exc:
             return _error(str(exc))
 
@@ -213,7 +194,7 @@ class ClaudeCliAdapter:
         except _NoResult as exc:
             return _error(f"{EXECUTABLE} {exc}(結束碼 {out.exit_code})")
         if body is None:
-            detail = _clip(out.stderr or "")
+            detail = head(out.stderr or "", MESSAGE_LIMIT)
             return _error(f"{EXECUTABLE} 輸出不是 JSON(結束碼 {out.exit_code})"
                           + (f":{detail}" if detail else ""))
         result = body.get("result")
@@ -225,14 +206,14 @@ class ClaudeCliAdapter:
                 message = out.stderr or ""
             raw = {"is_error": is_error, "message": message, "exit_code": out.exit_code,
                    "stderr": out.stderr}
-            text = _clip(message) or f"{EXECUTABLE} 回報錯誤(結束碼 {out.exit_code})"
+            text = head(message, MESSAGE_LIMIT) or f"{EXECUTABLE} 回報錯誤(結束碼 {out.exit_code})"
             return CallResult(ok=False, text="", tokens_in=None, tokens_out=None, cost_usd=None,
                               status=classify(raw, signals), error=text)
         if not isinstance(result, str):
             return _error(f"{EXECUTABLE} 回應缺少 result 文字")
         usage = body.get("usage") if isinstance(body.get("usage"), Mapping) else {}
         return CallResult(ok=True, text=result, tokens_in=tokens_in_of(usage),
-                          tokens_out=_nonneg_int(usage.get("output_tokens")),
+                          tokens_out=nonneg_int(usage.get("output_tokens")),
                           cost_usd=_cost(body.get("total_cost_usd")),
                           status="ok", error=None, finish_reason="stop")
 

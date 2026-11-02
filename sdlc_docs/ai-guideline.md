@@ -3,18 +3,18 @@
 - 專案:spillway
 - 分支(Branch):main
 - 帳本落點(Ledger root):`sdlc_docs/` ← `docs/` 已存放專案自己的企劃書、規格書與 UI 設計稿,帳本不寫入該目錄
-- 版本:v1.5
-- 日期:2026-11-01(UTC+0)
-- 狀態:已確認(2026-10-29,使用者);v1.5 記錄使用者於 2026-11-01 決定的 M3 拆分(CHG-20261101-03 決策 1)
+- 版本:v1.6
+- 日期:2026-11-02(UTC+0)
+- 狀態:已確認(2026-10-29,使用者);v1.5 記錄使用者於 2026-11-01 決定的 M3 拆分(CHG-20261101-03 決策 1);v1.6 記錄使用者於 2026-11-02 提出的 UI-8(FR-26)與 M3b 範圍(CHG-20261102-01)
 - Skill:ai-sdlc v1.67
 
 ## 0. 需求來源與優先序
 
 | 來源 | 內容 | 角色 |
 |------|------|------|
-| `docs/spec.md`(2026-10-29) | 資料模型、路由、額度、effort、adapter、MCP、HTTP API、UI 清單、NFR-1–7、AC-1–18 | **規範來源**:條文編號(如 4.2.5)為需求的正式依據 |
+| `docs/spec.md`(2026-10-29;修訂至 2026-11-02) | 資料模型、路由、額度、effort、adapter、MCP、HTTP API、UI 清單(8 個畫面)、NFR-1–7、AC-1–22 | **規範來源**:條文編號(如 4.2.5)為需求的正式依據 |
 | `docs/proposal.md`(2026-10-29) | 背景、目標 G1–G7、範圍、選型、合規邊界、里程碑、風險 | 目的與範圍;與規格書衝突時以規格書為準(企劃書第三節自述) |
-| `docs/ui/*.dc.html` | 7 個畫面的 layout | UI-1–UI-7 的版面依據;畫面數值為示意 |
+| `docs/ui/*.dc.html` | UI-1–UI-7 的 layout(共 8 個畫面;UI-8 沒有 layout 稿,版面於 M4 CHG 決定) | UI-1–UI-7 的版面依據;畫面數值為示意 |
 
 本 Guideline 不複寫規格條文,只做索引、範圍界定、補足規格書未定的決策。規格書條文若要修改,走 modification-guide(CHG),並同步本文件升版。
 
@@ -22,7 +22,7 @@
 
 單人本機使用的 LLM 路由閘道。訂閱 CLI、雲端 API key、local 模型分散計費,沒有單一入口決定「這次用哪個模型」,導致訂閱附贈額度用不完時仍在付 API 費用。Spillway 對外只暴露 route 名稱,依使用者排定的 slot 順序(預設「訂閱 → API → local」)選有額度的成員,並顯示各成員剩餘額度。
 
-成功定義 = 企劃書目標 G1–G7 全數由規格書第 12 節的驗收項(AC-1–18)通過證明。
+成功定義 = 企劃書目標 G1–G7 全數由規格書第 12 節的驗收項(AC-1–22)通過證明。
 
 ## 2. 範圍
 
@@ -32,8 +32,8 @@
 |--------|------|------|
 | M1 規格定案 | 企劃書、規格書、UI layout | 規格審閱通過(**已完成**,文件已在 `docs/`) |
 | M2 路由核心 | SQLite schema 與帳本、路由器與額度計算、LiteLLM adapter(api、local)、OpenAI 相容 HTTP API、管理 API | 路由測試全過(G3、G4) |
-| M3 CLI 與 MCP | 拆為兩筆 CHG(使用者決定 2026-11-01):**M3a**(CHG-20261101-03)claude-cli、codex-cli adapter 與子行程執行器 CliRunner、CLI 併發上限、schema v2(冷卻獨立成 `cooldowns` 表)與 v1→v2 migration、存取 token 與 `spillway init`、graceful shutdown;**M3b** MCP server(Streamable HTTP + stdio 橋接 `mcp-stdio`)、MCP 設定產生器 | 4 種工具可連線(G1、G6);閘門於 M3b 結束時驗收 |
-| M4 Web UI | 7 個畫面、設定匯入匯出、首次設定精靈 | 空 DB 首呼 ≤ 10 分(G2、G5、G7) |
+| M3 CLI 與 MCP | 拆為兩筆 CHG(使用者決定 2026-11-01):**M3a**(CHG-20261101-03)claude-cli、codex-cli adapter 與子行程執行器 CliRunner、CLI 併發上限、schema v2(冷卻獨立成 `cooldowns` 表)與 v1→v2 migration、存取 token 與 `spillway init`、graceful shutdown;**M3b**(CHG-20261102-01)MCP server(Streamable HTTP + stdio 橋接 `mcp-stdio`)、MCP 設定輸出、全端點 Host/Origin 檢查——**範圍已完成**(自動化驗收通過,待擁有者以 4 種工具真實冒煙) | 4 種工具可連線(G1、G6);閘門於 M3b 結束時驗收 |
+| M4 Web UI | 8 個畫面(UI-1–UI-8)、設定匯入匯出、首次設定精靈 | 空 DB 首呼 ≤ 10 分(G2、G5、G7) |
 
 ### 不納入(明確排除)
 - 多使用者、權限角色、帳號共享、對外開放的服務(spec 1.1.1)。
@@ -80,6 +80,7 @@
 | FR-23 | 每個 adapter 模組可設定可用模型清單(`models.yaml`,local 可另查上游);能力預設跟著模型走 | 7.6.4;design D12 | M2 | P0 |
 | FR-24 | 後台以連動選單選取 kind → provider → model,effort 選單只列模型支援的等級;資料來自 `GET /api/adapters`;保留「其他(手動輸入)」 | 9.2.2、10.2;design D13 | M2(端點)、M4(畫面) | P0 |
 | FR-25 | 訂閱制 CLI 與 API 為不同模組;模組宣告 `cardinality`(single/multiple),建立成員與匯入時強制;內建模組 claude_cli、codex_cli(single)、anthropic_api、openai_api、litellm(multiple) | 2.1.4、7.6.5、7.6.9、9.2.3;design D14、D15 | M2(api 與 litellm)、M3(CLI) | P0 |
+| FR-26 | Web UI「MCP 介面目錄」畫面 UI-8(標籤名稱**待使用者決定**,候選:「API」「API 參考」「API 文件」「介面目錄」「開發者」):**只列 MCP 介面**(連線、工具、通知、錯誤碼四大類,可折疊索引),不列前後端之間的 `/api/*` 與 `/v1`;內容於執行期由 `spillway.api.mcp.mcp_catalog(app, group)` 產生、與程式一致;M3b 只提供資料來源,畫面於 M4 實作。FR-20 維持 UI-1–UI-7,UI-8 只由本條描述 | 10(UI-8)、AC-22;design D37 | M4 | P1 |
 
 ## 5. 非功能需求
 
@@ -91,7 +92,7 @@
 | 安全 | 預設只綁 127.0.0.1;資料庫、匯出檔、日誌無金鑰明文;`usage_ledger` 不存內容,payload 過期 1 小時內刪除 | NFR-3、NFR-4、NFR-5 |
 | 並行 | CLI 成員同時執行數上限預設 1,超過不排隊 | NFR-6 |
 | 相容性 | Python 3.11+;macOS、Linux、Windows | NFR-7(驗收只在 macOS,見第 6 節 Q2) |
-| 可維護性 | 新增供應商只加 adapter 檔;新增 MCP 工具只加模板檔;CLI 參數、上游訊號規則放在成員設定 | 7.1.2、8.2.3、5.3.1、6.3.2 |
+| 可維護性 | 新增供應商只加 adapter 檔;新增 MCP 設定輸出的工具只加模板檔與 `TOOL_FORMATS` 一行;CLI 參數、上游訊號規則放在成員設定 | 7.1.2、8.2.3、5.3.1、6.3.2 |
 
 ## 6. 限制與假設
 
@@ -110,8 +111,8 @@
 以規格書第 12 節為準,依里程碑分組:
 
 - [ ] M2 閘門:AC-3、AC-4、AC-5、AC-7、AC-13、AC-14、AC-15、AC-18、AC-19 通過;NFR-1、NFR-2、NFR-3、NFR-5 量測達標。4.2.5、4.2.6 的邏輯先以 api 成員驗證。
-- [ ] M3 閘門:AC-1、AC-2、AC-9、AC-11、AC-12、AC-16、AC-17 通過(前置條件皆用到 claude-sub);NFR-6 量測達標。閘門於 M3b 結束時驗收;M3a 先以假執行檔驗證 AC-1、AC-2、AC-12、AC-16 與 AC-17 的 CLI 版、NFR-6,並由擁有者以真實 claude、codex 各冒煙一次(記入 ACC-20261101-02);AC-9、AC-11 屬 M3b。
-- [ ] M4 閘門:AC-6、AC-8、AC-10、AC-20、AC-21 通過;NFR-4 對資料庫、匯出檔、日誌三者搜尋命中數為 0。
+- [x] M3 閘門(ACC-20261102-01,2026-11-02 通過;M3a 冒煙見 ACC-20261101-02):AC-1、AC-2、AC-9、AC-11、AC-12、AC-16、AC-17 通過(AC-1、AC-2、AC-12、AC-16、AC-17 的前置條件用到 claude-sub;AC-11 依 CHG-20261102-01 決策 1 改為直接驗證遞迴防護:`/mcp` 帶 `X-Spillway-Depth: 1` 或 `SPILLWAY_DEPTH=1` 的 `mcp-stdio` 被拒);NFR-6 量測達標。閘門於 M3b 結束時驗收;M3a 先以假執行檔驗證 AC-1、AC-2、AC-12、AC-16 與 AC-17 的 CLI 版、NFR-6,並由擁有者以真實 claude、codex 各冒煙一次(記入 ACC-20261101-02);AC-9、AC-11 屬 M3b。M3b(CHG-20261102-01)範圍已完成、自動化驗收通過;本閘門待擁有者以 4 種工具真實冒煙(AC-9;Gemini CLI 依 UD-1(CHG-20261102-01):其 HTTP headers 路徑失敗時改用 stdio variant,headers 或 stdio 任一成功即算 AC-9 通過,並於 ACC 記錄採用路徑與 headers 結果)並記入 ACC-20261102-01 後才打勾。
+- [ ] M4 閘門:AC-6、AC-8、AC-10、AC-20、AC-21、AC-22 通過;NFR-4 對資料庫、匯出檔、日誌三者搜尋命中數為 0。
 - [ ] 全部:每個閘門在 macOS 通過,並附擁有者的真實冒煙結果(Q1);Linux、Windows 標「未涵蓋」(Q2)。
 
 ## 7.1 變更歷程
@@ -124,6 +125,7 @@
 | v1.3 | 2026-10-29 | CHG-20261029-01:FR-11、FR-23–25 已寫入規格書,改引條文編號;AC-19 列入 M2、AC-20–21 列入 M4 |
 | v1.4 | 2026-10-29 | CHG-20261029-02:已推上公開 repo kamira/spillway;CI 仍未建立 |
 | v1.5 | 2026-11-01 | CHG-20261101-03(使用者決定 2026-11-01,決策 1):M3 拆為 M3a(CLI 成員、schema v2、存取 token 與 init、graceful shutdown)與 M3b(MCP server、`mcp-stdio`、設定輸出);M3 閘門仍於 M3b 結束時驗收 |
+| v1.6 | 2026-11-02 | CHG-20261102-01:新增 FR-26(UI-8,使用者 2026-11-02 提出;只限 MCP 介面、名稱待定),FR-20 維持 UI-1–7;畫面數改為 8、AC 範圍改為 AC-1–22、M4 閘門加 AC-22;M3 列標 M3b 範圍完成(閘門待擁有者冒煙後打勾),AC-11 括註依新文字改寫 |
 
 ## 8. AI 開發約定
 

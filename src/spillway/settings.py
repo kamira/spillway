@@ -1,7 +1,8 @@
 """資料目錄、埠號、綁定位址與存取 token(design D8、D9;CHG-20261030-02 決策 4、21;
 CHG-20261101-03 決策 14、17)。
 
-- 資料目錄、埠號、綁定位址只有常數與環境變數;settings 表的 `bind_host`、`port` 鍵仍不讀(D16 不變)。
+- 資料目錄、埠號、綁定位址只有常數與環境變數(另有 MCP 端點 `mcp_url`、保留群組名 `MCP_ALL_GROUP`、
+  SIGINT 結束碼 `EXIT_SIGINT` 的單一定義,CHG-20261102-01 終審);settings 表的 `bind_host`、`port` 鍵仍不讀(D16 不變)。
 - settings 表只讀寫 `access_token_sha256`(`ACCESS_TOKEN_KEY`):存取 token 由
   `secrets.token_urlsafe(32)` 產生,資料庫只存 SHA-256 十六進位;明文只回給呼叫端一次
   (`spillway init`、serve 首次啟動的 stderr 一行、`POST /api/settings/token/rotate`)。
@@ -16,6 +17,7 @@ import os
 import secrets
 import sqlite3
 from pathlib import Path
+from urllib.parse import quote
 
 import platformdirs
 
@@ -27,6 +29,11 @@ DEFAULT_PORT = 8787
 DEFAULT_HOST = "127.0.0.1"
 # 只接受字面 127.0.0.1:M3 仍只允許 127.0.0.1(CHG-20261101-03 決策 2、17;D16 不放寬)
 ALLOWED_HOSTS = frozenset({"127.0.0.1"})
+
+# CHG-20261102-01 決策 22:保留的群組名稱(`/mcp/all` 暴露全部 route;管理 API 拒絕建立同名群組)
+MCP_ALL_GROUP = "all"
+# CHG-20261102-01 決策 15、19:serve 與 mcp-stdio 被 Ctrl-C(SIGINT)結束時的結束碼
+EXIT_SIGINT = 130
 
 ACCESS_TOKEN_KEY = "access_token_sha256"
 ACCESS_TOKEN_BYTES = 32   # secrets.token_urlsafe(32) → 43 個字元
@@ -45,6 +52,12 @@ def db_path() -> Path:
 
 def is_allowed_host(host: str) -> bool:
     return host in ALLOWED_HOSTS
+
+
+def mcp_url(port: int, group: str) -> str:
+    """本機 MCP 端點 `http://127.0.0.1:<port>/mcp/<group>`(群組名以 `quote(g, safe="")` 編碼;
+    catalog、`/api/mcp/config` 與 mcp-stdio 共用)。"""
+    return f"http://{DEFAULT_HOST}:{port}/mcp/{quote(group, safe='')}"
 
 
 # ---------------------------------------------------------------- 存取 token(決策 14)

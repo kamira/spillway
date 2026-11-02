@@ -15,7 +15,9 @@ from spillway.routing import Router
 pytestmark = pytest.mark.anyio
 
 HAND_COPIED = frozenset({"registry", "router", "conn_factory", "clock"})
-CREATE_APP_EXTRA = frozenset({"rng", "db_path", "retention", "cli_runner", "shutting_down"})
+CREATE_APP_EXTRA = frozenset({"rng", "db_path", "retention", "cli_runner", "shutting_down",
+                              "port", "drain_expired", "drain_tasks", "shutdown_hooks",
+                              "mcp_server", "mcp_manager", "mcp_events"})
 
 
 def _state_names(app) -> set[str]:

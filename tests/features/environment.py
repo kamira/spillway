@@ -75,13 +75,31 @@ def before_scenario(context, scenario):
     context.fake.reset()
     context.gw = Gateway(home, context.fake)
     context.fake_cli = FakeCli(home, context.fake_cli_bin)
+    # CHG-20261102-01 T8:步驟登記的收尾(子行程 serve、live_gateway、MCP session),在關閉 gw 與刪除暫存目錄
+    # 之前以登記的相反順序執行(behave 的 context.add_cleanup 在 after_scenario 之後才跑)
+    context.scenario_teardown = []
+
+
+def _run_scenario_teardown(context):
+    errors = []
+    for fn in reversed(getattr(context, "scenario_teardown", None) or []):
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001 — 全部執行後再回報第一個
+            errors.append(exc)
+    context.scenario_teardown = []
+    if errors:
+        raise errors[0]
 
 
 def after_scenario(context, scenario):
     gw = getattr(context, "gw", None)
     try:
-        if gw is not None:
-            gw.close()
+        try:
+            _run_scenario_teardown(context)
+        finally:
+            if gw is not None:
+                gw.close()
         assert_only_fakes()
     finally:
         context.fake.reset()

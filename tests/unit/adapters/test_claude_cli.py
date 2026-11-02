@@ -346,7 +346,7 @@ async def test_admin_lists_module_and_rejects_second_member(fake_cli, tmp_path, 
     app = create_app(clock=clock, rng=SeqRng([0.0]), db_path=tmp_path / "t4.db")
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8787") as c:
             r = await c.post("/api/deployments", json=_cli_member("claude-sub"))
             assert r.status_code == 201, r.text
             r = await c.get("/api/adapters")

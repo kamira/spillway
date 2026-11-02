@@ -315,6 +315,13 @@ def _new_request_not_served(s: Serve) -> None:
         assert "shutting_down" in r.text
 
 
+def _assert_shutting_down_json(resp: httpx.Response) -> None:
+    assert resp.status_code == 503, resp.text
+    assert resp.headers["content-type"].startswith("application/json"), resp.headers
+    body = resp.json()
+    assert body["error"]["code"] == "shutting_down", body
+
+
 def _assert_shutdown_outcome(s: Serve, rec: dict[str, Any], box: dict[str, Any]) -> None:
     assert not _group_alive(rec["pid"]), "假 claude 或其孫行程仍在"
     assert not _pid_alive(rec["pid"])
@@ -323,8 +330,8 @@ def _assert_shutdown_outcome(s: Serve, rec: dict[str, Any], box: dict[str, Any])
     assert len(rows) == 1, rows
     assert rows[0].status == "error" and rows[0].error == "shutdown", rows[0]
     box["thread"].join(10)
-    if "resp" in box:   # 進行中的請求被取消後不會得到成功回應
-        assert box["resp"].status_code != 200
+    if "resp" in box:   # 進行中的請求在停機期滿時得到 503 JSON shutting_down(決策 18;不是 500 純文字)
+        _assert_shutting_down_json(box["resp"])
 
 
 @skip_without_pgrep
@@ -333,10 +340,12 @@ def test_sigterm_waits_graceful_then_kills_cli_group_and_records_shutdown(serve)
     box = s.start_task_request()
     rec = _wait_fake_started(s)
 
+    signalled_at = time.monotonic()
     s.proc.send_signal(signal.SIGTERM)
     _new_request_not_served(s)
-    elapsed = s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
-    assert elapsed >= GRACEFUL - 0.5, f"沒有等待進行中請求({elapsed:.1f}s)"
+    s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
+    elapsed = time.monotonic() - signalled_at
+    assert elapsed >= cli.drain_expire_delay(GRACEFUL) - 0.5, f"沒有等待進行中請求({elapsed:.1f}s)"
     assert s.proc.returncode == -signal.SIGTERM, s.err
     _assert_shutdown_outcome(s, rec, box)
 
@@ -347,13 +356,15 @@ def test_sigint_to_process_group_does_not_hit_cli_child_directly(serve):
     box = s.start_task_request()
     rec = _wait_fake_started(s)
 
+    signalled_at = time.monotonic()
     os.killpg(s.proc.pid, signal.SIGINT)                     # 模擬終端 Ctrl-C(整個前景 group)
     time.sleep(0.5)
     assert _pid_alive(rec["pid"]), "假 claude 自成 session,不應被終端的 SIGINT 直接打到"
     _new_request_not_served(s)
-    elapsed = s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
-    assert elapsed >= GRACEFUL - 1.0, f"沒有等待進行中請求({elapsed:.1f}s)"
-    assert s.proc.returncode == -signal.SIGINT, s.err
+    s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
+    elapsed = time.monotonic() - signalled_at
+    assert elapsed >= cli.drain_expire_delay(GRACEFUL) - 0.5, f"沒有等待進行中請求({elapsed:.1f}s)"
+    assert s.proc.returncode == 130, s.err
     _assert_shutdown_outcome(s, rec, box)
 
 
@@ -398,3 +409,241 @@ def test_sigterm_then_sigint_force_exit_is_prompt_and_leaves_no_cli_process(slow
     s.wait_exit(SLOW_GRACEFUL + SLACK)
     assert s.proc.returncode == -signal.SIGTERM, s.err
     _assert_forced_outcome(s, rec, box, time.monotonic() - start)
+
+
+# ---- CHG-20261102-01 T7:停機期滿 503、drain helper、Ctrl-C(決策 14 ①②、18、19) ----------------
+#
+# L1(行程內):第一個訊號觸發 `shutdown_hooks.fire` 並以 `call_later(max(grace*0.5, grace-1.5))` 排定
+# `drain_expired`;force_exit 的 `_cancel_inflight` 也取消 `drain_tasks`;`_run_server` 停用 sse-starlette
+# 的 auto-drain;`main` 把 `_run_server` 外層的 KeyboardInterrupt 轉成 130。
+# L1(子行程,寬限 2 秒):SIGTERM 後進行中請求在寬限內得到 503 JSON `shutting_down`(假 claude 忽略
+# SIGTERM 時亦然,重複 5 次);對 process group 送 SIGINT → stderr 無 Traceback、結束碼 130。
+
+def test_drain_expire_delay():
+    assert cli.drain_expire_delay(2.0) == 1.0
+    assert cli.drain_expire_delay(1.0) == 0.5
+    assert cli.drain_expire_delay(30.0) == 28.5
+
+
+def test_run_server_disables_sse_auto_drain(monkeypatch):
+    from sse_starlette.sse import AppStatus
+
+    monkeypatch.setattr(AppStatus, "enable_automatic_graceful_drain", True)
+    monkeypatch.setattr(AppStatus, "should_exit", False)
+    _capture_server(monkeypatch)
+    with pytest.raises(_Captured):
+        cli._run_server("127.0.0.1", 8787)
+    assert AppStatus.enable_automatic_graceful_drain is False
+    assert AppStatus.should_exit is False                    # 不可設定(行程全域、不會重置)
+
+
+def test_main_turns_keyboard_interrupt_into_130(monkeypatch, capsys):
+    def interrupted(*a, **k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "_run_server", interrupted)
+    assert cli.main(["serve", "--port", "8787"]) == 130
+    assert "Traceback" not in capsys.readouterr().err
+
+
+@pytest.mark.anyio
+async def test_first_signal_fires_hooks_and_schedules_drain_expired(monkeypatch):
+    import asyncio
+
+    seen = _capture_server(monkeypatch)
+    with pytest.raises(_Captured):
+        cli._run_server("127.0.0.1", 8787)
+    server = seen["server"]
+    app = server.config.app
+    server._loop = asyncio.get_running_loop()
+    server.config.timeout_graceful_shutdown = 0.4             # → drain_expired 於 0.2 秒後
+    fired: list[str] = []
+    app.state.shutdown_hooks.append(lambda: fired.append("hook"))
+
+    start = time.monotonic()
+    server.handle_exit(signal.SIGTERM, None)
+    assert fired == []                                       # 不在訊號處理器內直接呼叫
+    await asyncio.sleep(0.05)
+    assert fired == ["hook"]
+    assert not app.state.drain_expired.is_set()
+    await asyncio.wait_for(app.state.drain_expired.wait(), 2)
+    assert time.monotonic() - start == pytest.approx(0.2, abs=0.25)
+
+    server.handle_exit(signal.SIGTERM, None)                 # 之後的訊號不重複觸發
+    await asyncio.sleep(0.05)
+    assert fired == ["hook"]
+
+
+@pytest.mark.anyio
+async def test_default_empty_hooks_first_signal_only_sets_flag(monkeypatch):
+    import asyncio
+
+    seen = _capture_server(monkeypatch)
+    with pytest.raises(_Captured):
+        cli._run_server("127.0.0.1", 8787)
+    server = seen["server"]
+    app = server.config.app
+    server._loop = asyncio.get_running_loop()
+    assert list(app.state.shutdown_hooks) == []
+    server.handle_exit(signal.SIGTERM, None)
+    await asyncio.sleep(0.05)
+    assert app.state.shutting_down is True and server.should_exit and not server.force_exit
+    assert app.state.shutdown_hooks.fired is True
+
+
+@pytest.mark.anyio
+async def test_force_exit_cancels_drain_tasks(monkeypatch):
+    import asyncio
+
+    seen = _capture_server(monkeypatch)
+    with pytest.raises(_Captured):
+        cli._run_server("127.0.0.1", 8787)
+    server = seen["server"]
+    app = server.config.app
+    server._loop = asyncio.get_running_loop()
+    tool_task = asyncio.ensure_future(asyncio.sleep(60))    # 例如 MCP 工具 task(不在 server_state.tasks)
+    app.state.drain_tasks.add(tool_task)
+    server.handle_exit(signal.SIGINT, None)
+    await asyncio.sleep(0.05)
+    assert not tool_task.done()
+    server.handle_exit(signal.SIGINT, None)                  # force_exit
+    await asyncio.wait({tool_task}, timeout=1)
+    assert tool_task.cancelled()
+
+
+def _start_timed_request(s: Serve) -> dict[str, Any]:
+    box: dict[str, Any] = {}
+
+    def go() -> None:
+        try:
+            box["resp"] = httpx.post(f"{s.url}/v1/chat/completions", json=TASK_BODY, timeout=60)
+        except httpx.HTTPError as exc:
+            box["exc"] = exc
+        box["at"] = time.monotonic()
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    box["thread"] = t
+    return box
+
+
+def _make_fake_claude_ignore_sigterm(s: Serve) -> None:
+    """把假 `claude` 包一層 `trap '' TERM`:SIG_IGN 跨 exec 繼承,假 CLI 收到 SIGTERM 不會結束。"""
+    from tests.fakes.cli_upstream.harness import FAKE_MARKER, FAKE_SCRIPT
+    import shlex
+
+    target = s.fake.bin_dir / "claude"
+    target.write_text(
+        "#!/bin/sh\n"
+        f"{FAKE_MARKER}\n"
+        "trap '' TERM\n"
+        f"exec {shlex.quote(sys.executable)} -I {shlex.quote(str(FAKE_SCRIPT))} claude \"$@\"\n",
+        encoding="utf-8",
+    )
+    target.chmod(0o755)
+
+
+def _assert_503_within_grace(s: Serve, box: dict[str, Any], signalled_at: float) -> None:
+    box["thread"].join(GRACEFUL + TERM_GRACE + SLACK)
+    assert "resp" in box, box.get("exc")
+    _assert_shutting_down_json(box["resp"])
+    assert box["at"] - signalled_at < GRACEFUL, f"503 晚於寬限({box['at'] - signalled_at:.2f}s)"
+
+
+@skip_without_pgrep
+def test_sigterm_inflight_request_gets_503_json_and_ledger_shutdown(serve):
+    s = serve
+    box = _start_timed_request(s)
+    rec = _wait_fake_started(s)
+
+    signalled_at = time.monotonic()
+    s.proc.send_signal(signal.SIGTERM)
+    _assert_503_within_grace(s, box, signalled_at)
+    s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
+    assert s.proc.returncode == -signal.SIGTERM, s.err
+    _assert_shutdown_outcome(s, rec, box)
+
+
+@skip_without_pgrep
+@pytest.mark.parametrize("run", range(5))
+def test_sigterm_ignoring_fake_claude_still_gets_503_within_grace(tmp_path, run):
+    home = tmp_path / "home"
+    gen = _open_serve(home, GRACEFUL)
+    s = next(gen)
+    try:
+        _make_fake_claude_ignore_sigterm(s)
+        box = _start_timed_request(s)
+        rec = _wait_fake_started(s)
+
+        signalled_at = time.monotonic()
+        s.proc.send_signal(signal.SIGTERM)
+        _assert_503_within_grace(s, box, signalled_at)
+        s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
+        assert s.proc.returncode == -signal.SIGTERM, s.err
+        _assert_shutdown_outcome(s, rec, box)
+    finally:
+        gen.close()
+
+
+@skip_without_pgrep
+def test_ctrl_c_to_process_group_exits_130_without_traceback(serve):
+    s = serve
+    box = _start_timed_request(s)
+    rec = _wait_fake_started(s)
+
+    signalled_at = time.monotonic()
+    os.killpg(s.proc.pid, signal.SIGINT)                     # 模擬終端 Ctrl-C
+    _assert_503_within_grace(s, box, signalled_at)
+    s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
+    assert s.proc.returncode == 130, s.err
+    assert "Traceback" not in s.err, s.err
+    assert "KeyboardInterrupt" not in s.err, s.err
+    _assert_shutdown_outcome(s, rec, box)
+
+
+@pytest.mark.anyio
+@skip_without_pgrep
+async def test_pre_lifespan_wait_covers_lingering_drain_tasks(monkeypatch):
+    """`run_until_drain` 回 Drained 後仍在收尾的子 task(不在 server_state.tasks)在 lifespan 結束前被等到:
+    CliRunner 走完 SIGTERM→寬限→SIGKILL,group 不殘留,之後才跑 lifespan shutdown。"""
+    import asyncio
+    from types import SimpleNamespace
+
+    from spillway.adapters.base import CliRunner
+
+    seen = _capture_server(monkeypatch)
+    with pytest.raises(_Captured):
+        cli._run_server("127.0.0.1", 8787)
+    server = seen["server"]
+    app = server.config.app
+    runner = CliRunner(term_grace=0.5)
+    pids: list[int] = []
+    orig_exec = asyncio.create_subprocess_exec
+
+    async def spy_exec(*a, **k):
+        proc = await orig_exec(*a, **k)
+        pids.append(proc.pid)
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spy_exec)
+    child = asyncio.ensure_future(
+        runner.run(["/bin/sh", "-c", "trap '' TERM; sleep 30 & wait"], cwd=None, timeout=None))
+    app.state.drain_tasks.add(child)
+    child.add_done_callback(app.state.drain_tasks.discard)
+    for _ in range(100):
+        if pids:
+            break
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.1)
+    child.cancel()                                           # 第一次 cancel:shielded 收尾(SIGTERM 被忽略)
+    order: list[str] = []
+
+    async def lifespan_shutdown() -> None:
+        order.append("lifespan" + ("" if child.done() else " before child done"))
+
+    server.lifespan = SimpleNamespace(shutdown=lifespan_shutdown)
+    server.servers = []
+    await asyncio.wait_for(server.shutdown(), cli.CANCELLED_DRAIN_TIMEOUT + 5)
+    assert order == ["lifespan"]
+    assert child.done()
+    assert not _group_alive(pids[0]), "收尾後 group 仍在"

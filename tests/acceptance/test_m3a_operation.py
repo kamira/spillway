@@ -489,7 +489,7 @@ def test_m3a_acceptance_operation(tmp_path):
                           "returncode": serve.returncode, "leftover_fake_pids": leftovers,
                           "last_codex_ledger": shutdown_rows,
                           "in_flight_status": box["resp"].status_code if "resp" in box else "connection closed"}
-        assert elapsed >= GRACEFUL - 1.0, elapsed           # 先等進行中請求
+        assert elapsed >= cli.drain_expire_delay(GRACEFUL) - 0.5, elapsed   # 先等進行中請求
         assert leftovers == []
         assert shutdown_rows == [("error", "shutdown")]
         assert len(fake.records("codex")) == n_codex + 1     # 停機期間沒有再啟動假 codex

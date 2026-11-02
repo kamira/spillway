@@ -151,3 +151,62 @@ def test_serve_binds_only_loopback_and_serves(tmp_path, fake_api):
             p.kill()
             p.communicate()
     assert p.returncode is not None
+
+
+def _wait_port(p: subprocess.Popen, port: int, timeout: float = 60) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if p.poll() is not None:
+            _, err = p.communicate()
+            pytest.fail(f"serve 提前結束 rc={p.returncode}\n{err}")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                return
+        time.sleep(0.2)
+    pytest.fail("serve 沒有在時限內開始監聽")
+
+
+def test_serve_does_not_log_prompt_from_invalid_mcp_request(tmp_path):
+    """CHG-20261102-01 終審修正 A:`arguments` 為字串的 `tools/call` → SDK 以 root logger 記錄驗證失敗
+    (含 request 片段);serve 的 stderr 不可出現 prompt,仍回 JSON-RPC -32602。"""
+    from spillway import settings
+
+    marker = "serve-root-log-leak-prompt-91ab"
+    home = tmp_path / "home"
+    home.mkdir()
+    conn = connect(home / "spillway.db")
+    try:
+        token = settings.rotate_access_token(conn)
+    finally:
+        conn.close()
+    port = _free_port()
+    p = _serve(home, "--port", str(port))
+    try:
+        _wait_port(p, port)
+        base = f"http://127.0.0.1:{port}/mcp/all"
+        h = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json",
+             "Authorization": f"Bearer {token}"}
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "spillway-test", "version": "0"}}}
+        with httpx.Client(timeout=30, trust_env=False) as c:
+            r = c.post(base, json=init, headers=h)
+            assert r.status_code == 200, r.text
+            h["Mcp-Session-Id"] = r.headers["mcp-session-id"]
+            h["Mcp-Protocol-Version"] = "2025-06-18"
+            r = c.post(base, json={"jsonrpc": "2.0", "method": "notifications/initialized"}, headers=h)
+            assert r.status_code == 202, r.text
+            r = c.post(base, headers=h, json={"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                              "params": {"name": "ask", "arguments": f"prompt={marker}"}})
+            assert r.status_code == 200, r.text
+            assert '"code":-32602' in r.text.replace(" ", "")
+            assert marker not in r.text
+    finally:
+        p.terminate()
+        try:
+            _, err = p.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            _, err = p.communicate()
+    assert marker not in err, err
+    assert "Failed to validate request" not in err and "input_value" not in err

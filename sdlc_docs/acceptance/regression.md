@@ -14,9 +14,9 @@
 
 | # | 指令 | 通過標準 | 涵蓋條件 | 來源 ACC | 範圍標籤 |
 |---|------|----------|----------|----------|----------|
-| R1 | `python -m pytest -q` | exit 0;0 failed(ACC-20261031-01 時為 1089 passed;ACC-20261101-01 時為 1340 passed;ACC-20261101-02 時為 1739 passed) | 單元、合約、整合、fakes 與 acceptance 全部;含 AC-19 合約測試、管理 API 錯誤碼(FR-13、FR-25)、`stream: true` 400、retention 每小時排程、AC-7、NFR-1、NFR-2、NFR-3、NFR-5 | ACC-20261031-01 | 全部 |
-| R2 | `python -m behave tests/features` | exit 0;全部情境全過、0 skipped(ACC-20261031-01 時 5 features、18 scenarios、155 steps;ACC-20261101-01 時 6 features、22 scenarios、183 steps;ACC-20261101-02 時 7 features、31 scenarios、279 steps) | AC-3、AC-4、AC-5、AC-13、AC-14、AC-15、AC-18、AC-19、4.2.5(api 版)、4.2.6(api 版) | ACC-20261031-01 | routing、quota、estimate、ledger、redact、adapters、api |
-| R3 | `python -m pytest tests/acceptance -q -rs` | 全數 passed(ACC-20261031-01 時 9、ACC-20261101-01 時 10、ACC-20261101-02 時 12)且**必須 0 skipped**(缺 lsof 時 NFR-3 與操作驗收會被跳過;驗收平台 macOS 有 lsof,出現 skipped 即視為未通過) | AC-7、NFR-1(dry-run P95 < 20 ms)、NFR-2(dashboard P95 < 200 ms)、NFR-3(只聽 127.0.0.1)、NFR-5(payload 過期刪除)、Acceptance operation、NFR-4 預掃描(不計入 M2 閘門) | ACC-20261031-01 | api、cli、routing、ledger、store |
+| R1 | `python -m pytest -q` | exit 0;0 failed(ACC-20261031-01 時為 1089 passed;ACC-20261101-01 時為 1340 passed;ACC-20261101-02 時為 1739 passed;ACC-20261102-01 時為 2194 passed) | 單元、合約、整合、fakes 與 acceptance 全部;含 AC-19 合約測試、管理 API 錯誤碼(FR-13、FR-25)、`stream: true` 400、retention 每小時排程、AC-7、NFR-1、NFR-2、NFR-3、NFR-5 | ACC-20261031-01 | 全部 |
+| R2 | `python -m behave tests/features` | exit 0;全部情境全過、0 skipped(ACC-20261031-01 時 5 features、18 scenarios、155 steps;ACC-20261101-01 時 6 features、22 scenarios、183 steps;ACC-20261101-02 時 7 features、31 scenarios、279 steps;ACC-20261102-01 時 8 features、40 scenarios、395 steps) | AC-3、AC-4、AC-5、AC-13、AC-14、AC-15、AC-18、AC-19、4.2.5(api 版)、4.2.6(api 版) | ACC-20261031-01 | routing、quota、estimate、ledger、redact、adapters、api |
+| R3 | `python -m pytest tests/acceptance -q -rs` | 全數 passed(ACC-20261031-01 時 9、ACC-20261101-01 時 10、ACC-20261101-02 時 12、ACC-20261102-01 時 17)且**必須 0 skipped**(缺 lsof 時 NFR-3 與操作驗收會被跳過;驗收平台 macOS 有 lsof,出現 skipped 即視為未通過) | AC-7、NFR-1(dry-run P95 < 20 ms)、NFR-2(dashboard P95 < 200 ms)、NFR-3(只聽 127.0.0.1)、NFR-5(payload 過期刪除)、Acceptance operation、NFR-4 預掃描(不計入 M2 閘門) | ACC-20261031-01 | api、cli、routing、ledger、store |
 
 R1 與 R2 合起來就是 CHG-20261030-02 的本機閘(`python -m pytest -q && python -m behave tests/features`)。
 
@@ -53,6 +53,16 @@ R1 與 R2 合起來就是 CHG-20261030-02 的本機閘(`python -m pytest -q && p
 | R33 | graceful shutdown(子行程 serve):SIGTERM 等滿寬限後殺 CLI group 並記 shutdown;雙 SIGINT 與 SIGTERM→SIGINT 快速結束且無殘留。**須前景執行**(shell `&` 背景化會讓 SIGINT 被忽略而失敗) | `tests/integration/test_graceful_shutdown.py` | ACC-20261101-02 | cli、安全 |
 | R34 | M3a Acceptance operation 自動部分;`artifacts/m3a/http-log.jsonl` 只含四鍵、`sk-` 命中 0 | `tests/acceptance/test_m3a_operation.py` | ACC-20261101-02 | api、routing、cli、安全 |
 | R35 | m3a 行為情境:AC-1、AC-2、AC-12、AC-16/AC-17 CLI 版、NFR-6、codex 狀態、子行程環境與隔離旗標、chat route 不選 CLI | `tests/features/m3a_cli.feature` | ACC-20261101-02 | routing、quota、adapters |
+| R36 | M3b Acceptance operation 自動部分(認證與工具、list_changed、stdio、停機四函式);artifacts/m3b/http-log.jsonl 只四鍵、含 /mcp 列、全目錄 token 0 命中。**須前景執行** | `tests/acceptance/test_m3b_operation.py` | ACC-20261102-01 | api(mcp)、cli、安全 |
+| R37 | /mcp 驗證順序與錯誤碼(depth 先於 token、任意長度 depth 403、未產生 token 401、停機 503、群組存在性、session 綁群組、token 不入日誌);SDK root logger 紀錄不外洩 prompt | `tests/integration/mcp/test_mcp_auth.py`、`tests/integration/mcp/test_mcp_log_leak.py` | ACC-20261102-01 | api(mcp)、安全 |
+| R38 | 全端點 Host/Origin(純 ASGI 最外層、拒絕 403 不 raise、websocket 1008、GET 不變式涵蓋全部路由與 Mount、Origin 比對綁定埠) | `tests/integration/test_host_origin.py` | ACC-20261102-01 | api、安全 |
+| R39 | MCP 工具 ask/list_routes(與 Router 同一 OrderPlanner.plan)/quota_status(與 dashboard 同源)、mcp_catalog 與 tools/list 逐欄相同 | `tests/integration/mcp/test_mcp_tools.py`、`tests/integration/mcp/test_mcp_catalog.py`、`tests/unit/test_quota_rows.py` | ACC-20261102-01 | api(mcp)、routing、quota |
+| R40 | tools/list_changed(commit 後通知全部 session)與 MCP 停機(只關 GET 串流、D31 四步驟順序、drain 期滿 ask → shutting_down)、SDK 私有屬性絆線 | `tests/integration/mcp/test_mcp_list_changed.py`、`tests/integration/mcp/test_mcp_shutdown.py`、`tests/integration/mcp/test_sdk_compat.py`、`tests/unit/api/test_drain.py` | ACC-20261102-01 | api(mcp)、安全 |
+| R41 | spillway mcp-stdio:結束碼 0/1/2/3/130、錯誤帶 data.code、stdout 只 JSON-RPC、不經代理、stderr 無 token/prompt/traceback、HTTP 端結束即退出、stdin EOF 等待 | `tests/integration/test_mcp_stdio.py` | ACC-20261102-01 | cli、安全 |
+| R42 | GET /api/mcp/config:5 種工具 variants 可解析、以 SPILLWAY_TOKEN 參照、無明文、stdio 絕對 command + --port、惡意群組名不注入、404/422 | `tests/integration/admin/test_admin_mcp_config.py`、`tests/contract/test_public_imports_admin.py` | ACC-20261102-01 | api(admin)、安全 |
+| R43 | 停機期滿 503 JSON shutting_down(/v1)、Drained 子 task 於 lifespan 前被等待、Ctrl-C 結束碼 130 無 traceback。**須前景執行** | `tests/integration/test_graceful_shutdown.py` | ACC-20261102-01 | cli、安全 |
+| R44 | adapters.base.cli_common(工作目錄、截斷、整數解析三處合一;adapter 層 cwd 失敗回 error) | `tests/unit/adapters_base/test_cli_common.py`、`tests/unit/adapters_base/test_cli_cwd_adapters.py` | ACC-20261102-01 | adapters |
+| R45 | m3b 行為情境 9 個(群組端點、ask、list_routes、token、遞迴、list_changed、Host/Origin、設定輸出、停機) | `tests/features/m3b_mcp.feature` | ACC-20261102-01 | api(mcp)、routing、安全 |
 
 ## Interaction spec(M2)
 

@@ -1,4 +1,8 @@
-"""`/api/routes`(含手動排序 order;CHG-20261101-02 決策 9)。"""
+"""`/api/routes`(含手動排序 order;CHG-20261101-02 決策 9)。
+
+route 的建立、更新、刪除與 order 的儲存/還原在交易 commit **之後**呼叫 `common.tools_changed(request)`
+(`app.state.mcp_events.changed()`:對 MCP session 送 `notifications/tools/list_changed`;
+CHG-20261102-01 決策 13)。它是同步、立即返回的,不拖住管理 API。"""
 from __future__ import annotations
 
 import sqlite3
@@ -13,7 +17,7 @@ from spillway.routing import members_of
 from spillway.store import repo
 from spillway.store.db import transaction
 
-from .common import _invalid, _not_found, router
+from .common import _invalid, _not_found, router, tools_changed
 from .models import OrderIn, RouteIn
 
 
@@ -63,6 +67,7 @@ async def create_route(request: Request, body: RouteIn) -> dict[str, Any]:
                 raise ApiError(409, "conflict", redact_echo(f"route 已存在:{body.name}"))
             _check_group_exists(conn, body.target)
             repo.save_route(conn, body.to_route(body.name))
+        tools_changed(request)
         return _route_out(conn, _load_route(conn, body.name))
 
 
@@ -83,6 +88,7 @@ async def update_route(request: Request, name: str, body: RouteIn) -> dict[str, 
             _load_route(conn, name)
             _check_group_exists(conn, body.target)
             repo.save_route(conn, body.to_route(name))
+        tools_changed(request)
         return _route_out(conn, _load_route(conn, name))
 
 
@@ -90,8 +96,9 @@ async def update_route(request: Request, name: str, body: RouteIn) -> dict[str, 
 async def delete_route(request: Request, name: str) -> Response:
     """刪除 route 與其 route_targets。回 204。"""
     with request_conn(request) as conn:
-        if not repo.delete_route(conn, name):
+        if not repo.delete_route(conn, name):   # repo 自己的交易已 commit
             raise _not_found(f"route {name}")
+    tools_changed(request)
     return Response(status_code=204)
 
 
@@ -115,6 +122,7 @@ async def put_route_order(request: Request, name: str, body: OrderIn) -> dict[st
                                  effort=e.effort, weight=e.weight)
                 for i, slot in enumerate(body.slots) for j, e in enumerate(slot)
             ])
+        tools_changed(request)
         return _route_out(conn, route)
 
 
@@ -125,4 +133,5 @@ async def delete_route_order(request: Request, name: str) -> Response:
         with transaction(conn):
             _load_route(conn, name)
             repo.replace_route_targets(conn, name, [])
+    tools_changed(request)
     return Response(status_code=204)

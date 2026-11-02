@@ -27,6 +27,12 @@ from spillway.redact import REDACTOR
 _REDACTOR = REDACTOR
 
 
+def tools_changed(request: Request) -> None:
+    """route、群組、order 的交易 commit **之後**呼叫:`app.state.mcp_events.changed()` 對 MCP session 送
+    `notifications/tools/list_changed`(CHG-20261102-01 決策 13);同步、立即返回,不拖住管理 API。"""
+    request.app.state.mcp_events.changed()
+
+
 # ================================================================ 錯誤處理(共用 spillway.api 的工具)
 
 
@@ -79,8 +85,3 @@ def _iso(dt: datetime | None) -> str | None:
 def _estimate_out(est: Estimate | None) -> dict[str, Any] | None:
     return None if est is None else dataclasses.asdict(est)
 
-
-def _is_cooling_only(b_type: str | None, window: str | None, limit_amount: Any) -> bool:
-    """U10 (a):`type=none`、`window=none`、`limit_amount` NULL 的列(schema v1 為記錄冷卻而建的暫行列,
-    v2 migration 保留;CHG-20261101-03 決策 4、6),儀表板口徑比照「沒有 budgets 列」(決策 48)。"""
-    return b_type == "none" and window == "none" and limit_amount is None

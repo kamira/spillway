@@ -7,9 +7,10 @@
 `LiteLLMApiAdapter`(各內建模組的 `LiteLLMAdapter` 繼承它)、子行程執行器 `CliRunner` 與 `CliOutput`
 (CHG-20261101-03 決策 8;CLI 模組經 `AdapterContext.cli_runner` 使用)、CLI 模組共用的
 messages → prompt 轉換 `messages_to_prompt`、`content_text`(spec 7.5.1)與 `params.timeout` 驗證
-`cli_timeout`。
+`cli_timeout`;CLI 模組共用輔助 `cli_cwd`、`head`、`tail`、`nonneg_int`、`CLI_WORK_SUBDIRS`(決策 20)。
 """
 from spillway.adapters.base.api_adapter import LiteLLMApiAdapter
+from spillway.adapters.base.cli_common import CLI_WORK_SUBDIRS, cli_cwd, head, nonneg_int, tail
 from spillway.adapters.base.cli_prompt import content_text, messages_to_prompt
 from spillway.adapters.base.cli_runner import (
     DEFAULT_DRAIN_TIMEOUT,
@@ -91,6 +92,8 @@ __all__ = [
     "DEFAULT_TERM_GRACE", "KILLED_REASONS",
     # Messages 轉 CLI prompt(spec 7.5.1;CHG-20261101-03 T4 審議)
     "content_text", "messages_to_prompt",
+    # CLI 模組共用輔助(CHG-20261102-01 決策 20)
+    "CLI_WORK_SUBDIRS", "cli_cwd", "head", "nonneg_int", "tail",
     # registry / contract
     "AdapterConflictError", "AdapterRegistry", "AdapterUnavailableError", "ModelsListing",
     "ModuleInfo", "available_models", "contract_problems", "layering_violations",

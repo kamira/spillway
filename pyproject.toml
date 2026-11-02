@@ -16,6 +16,12 @@ dependencies = [
   "platformdirs>=4",
   "keyring>=24",
   "httpx>=0.27",
+  # CHG-20261102-01 決策 6:官方 MCP SDK;jinja2 原為間接相依,改為明列
+  "mcp>=1.30,<2",
+  "jinja2>=3",
+  # 決策 14 ①:`AppStatus.disable_automatic_graceful_drain()` 自 3.5.0(issue #211 修正)起
+  # 才同時關掉 watcher 對 uvicorn `should_exit` 的後備偵測;較舊版本停用後仍會 auto-drain
+  "sse-starlette>=3.5.0",
 ]
 
 [project.optional-dependencies]
@@ -28,7 +34,7 @@ spillway = "spillway.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-spillway = ["**/*.sql", "**/*.yaml", "**/*.md"]
+spillway = ["**/*.sql", "**/*.yaml", "**/*.md", "**/*.j2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

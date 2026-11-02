@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    {{ name|tojson }}: {
+      "url": {{ url|tojson }},
+      "headers": {
+        "Authorization": "Bearer ${env:SPILLWAY_TOKEN}"
+      }
+    }
+  }
+}

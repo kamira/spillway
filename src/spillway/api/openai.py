@@ -13,6 +13,9 @@
   再列被篩成員「成員:原因」(決策 31);嘗試的錯誤內容已由 Router 遮罩,這裡只用成員 id 與狀態,
   不放錯誤原文。
 - 其他例外(例如帳本寫入失敗,決策 35)→ 500 `internal_error`;日誌只記例外型別。
+- `Router.route` 經 `api.drain.run_until_drain`(CHG-20261102-01 決策 18):停機期滿(`drain_expired`)時
+  取消進行中的呼叫(CliRunner 殺 group、帳本 `error="shutdown"`)並回 503 `shutting_down`(spec 9.1.2
+  JSON),不再是 uvicorn 取消後的 500 純文字。
 - 成功 → OpenAI `chat.completion` body(`model` 為請求的 model,`created` 取注入的 Clock)與 header:
   `X-Spillway-Served-By`(成員 id)、`X-Spillway-Slot`(slot 編號;`local/` 直呼為 `direct`,決策 18)、
   `X-Spillway-Est-Cost`(呼叫前預估的 `cost_usd_p90`,固定 8 位小數;**無預估時為空字串**——header
@@ -33,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from spillway.api import ApiError, filter_chat_params, redact_echo
 from spillway.api.deps import request_conn
+from spillway.api.drain import Drained, run_until_drain
 from spillway.domain import CallResult, ChatRequest
 from spillway.effort import InvalidEffort, normalize_effort
 from spillway.redact import REDACTOR
@@ -134,7 +138,7 @@ async def chat_completions(body: ChatCompletionBody, request: Request) -> JSONRe
     req = body.to_request(effort)
     state = request.app.state
     try:
-        outcome = await state.router.route(req)
+        outcome = await run_until_drain(request.app, state.router.route(req))
     except RouteNotFound:
         raise ApiError(404, "route_not_found", f"找不到 route 或成員:{redact_echo(req.model)}") from None
     except InvalidEffort:   # Router 的防線(決策 40);正規化後不應發生
@@ -143,6 +147,8 @@ async def chat_completions(body: ChatCompletionBody, request: Request) -> JSONRe
         _log.error("chat/completions 內部錯誤:%s", type(exc).__name__)
         raise ApiError(500, "internal_error", f"內部錯誤({type(exc).__name__})") from None
 
+    if isinstance(outcome, Drained):   # 決策 18:停機期滿,進行中的呼叫已取消
+        raise ApiError(503, "shutting_down", "閘道停機中,進行中的請求已在停機期滿前取消;請稍後重試")
     if outcome.result is None:
         raise ApiError(503, "no_candidate", format_no_candidate(outcome))
 
