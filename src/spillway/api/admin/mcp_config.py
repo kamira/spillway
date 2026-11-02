@@ -3,8 +3,8 @@
 `?group=<g>&tool=<t>`:`tool` ∈ `TOOL_FORMATS` 的鍵(`claude-code`、`codex`、`cursor`、`gemini`、`stdio`),
 其他 → 422 `validation_error`;`group` 不存在且不是 `all` → 404 `not_found`。
 
-回應 `{group, tool, variants: [{label, scope, format, path, filename, content}], env, notes, format, path,
-content}`:頂層 `format`/`path`/`content` 等於 `variants[0]`(相容)。`scope` 為 `user`|`project`,
+回應 `{group, tool, variants: [{label, scope, format, path, filename, content}], env, notes}`
+(CHG-20261102-02 決策 16:已移除頂層 `format`/`path`/`content`,請讀 `variants[0]`)。`scope` 為 `user`|`project`,
 `format` 為 `command`|`json`|`toml`;命令類 variant 的 `path`、`filename` 為 null。`env` 固定
 `["SPILLWAY_TOKEN"]`;token 一律以環境變數參照,輸出內容不含任何 token(決策 3)。
 
@@ -183,7 +183,5 @@ async def mcp_config(request: Request, group: str, tool: str) -> dict[str, Any]:
                 raise _not_found(f"群組 {group}")
     ctx = build_context(group, int(request.app.state.port))
     variants = render_config(tool, ctx)
-    first = variants[0]
     return {"group": group, "tool": tool, "variants": variants, "env": list(ENV_VARS),
-            "notes": _notes(tool, ctx),
-            "format": first["format"], "path": first["path"], "content": first["content"]}
+            "notes": _notes(tool, ctx)}

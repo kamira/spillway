@@ -19,7 +19,7 @@ from spillway.store import repo
 from spillway.store.db import transaction
 
 from .common import _invalid, _not_found, router, tools_changed
-from .models import GroupIn, GroupUpdate
+from .models import GroupIn, GroupUpdate, group_name_problem
 
 # CHG-20261102-01 決策 22:保留給 `/mcp/all`、`mcp_catalog(app, "all")`(單一定義在 settings)
 RESERVED_GROUP_NAME = MCP_ALL_GROUP
@@ -55,8 +55,9 @@ async def list_groups(request: Request) -> dict[str, Any]:
 async def create_group(request: Request, body: GroupIn) -> dict[str, Any]:
     """建立群組;重複 name → 409 `conflict`;name 為保留字 `all` → 422 `validation_error`
     (CHG-20261102-01 決策 22:`/mcp/all` 暴露全部 route)。群組沒有改名端點(`PUT` 只取代選擇器)。"""
-    if body.name == RESERVED_GROUP_NAME:
-        raise _invalid("body.name", f"{RESERVED_GROUP_NAME} 為保留的群組名稱(/mcp/all)")
+    problem = group_name_problem(body.name)
+    if problem is not None:
+        raise _invalid("body.name", problem)
     with request_conn(request) as conn:
         with transaction(conn):
             if repo.get_group(conn, body.name) is not None:

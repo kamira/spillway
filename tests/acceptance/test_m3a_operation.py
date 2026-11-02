@@ -40,6 +40,7 @@ import pytest
 from spillway import cli
 from spillway.store import db as store_db
 from tests.acceptance import procs
+from tests.helpers import redact_tokens
 from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install, safe_subprocess_env
 
 pytestmark = pytest.mark.skipif(not procs.HAS_LSOF, reason="需要 lsof(macOS 驗收平台)")
@@ -276,7 +277,7 @@ def test_m3a_acceptance_operation(tmp_path):
     # ---- init(子行程):migration + 備份 + token(stdout 只印 token)
     r = subprocess.run([sys.executable, "-m", "spillway", "init"], env=env, cwd=str(REPO_ROOT),
                        capture_output=True, text=True, timeout=120)
-    assert r.returncode == 0, r.stderr
+    assert r.returncode == 0, redact_tokens(r.stderr, [r.stdout.strip()])
     token = r.stdout.strip()
     assert token and r.stdout.count(token) == 1 and len(r.stdout.splitlines()) == 1
     assert token not in r.stderr
