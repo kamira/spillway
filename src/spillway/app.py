@@ -36,6 +36,8 @@ lifespan 啟動依序:
 - `retention`:`RetentionScheduler`(`runs` 成功次數、`task`、`run_once()`)
 - `port`:serve 綁定埠(CHG-20261102-01 T1)
 - `cli_runner`:`CliRunner`(T2);`shutting_down`:停機旗標,預設 False(CHG-20261101-03 決策 16)
+- `drain_expired`(`asyncio.Event`)、`drain_tasks`(set)、`shutdown_hooks`(`api.drain.ShutdownHooks`,
+  預設為空):CHG-20261102-01 決策 14 ②、18;由 `spillway serve` 的訊號處理設定/觸發
 `registry`、`router`、`retention` 在 lifespan 啟動後才存在。
 
 秘密:本檔不記錄請求內容;日誌只記例外型別。存取 token 明文只出現在 `_ensure_token` 的 stderr 一行。
@@ -65,6 +67,7 @@ from spillway.api import install_error_handlers
 from spillway.api import admin
 from spillway.api import openai as openai_api
 from spillway.api.host_origin import HostOriginMiddleware
+from spillway.api.drain import ShutdownHooks
 from spillway.clock import Clock, Rng, SystemClock, SystemRng
 from spillway.ledger import RetentionJob
 from spillway.routing import Router
@@ -222,6 +225,10 @@ def create_app(
     # CHG-20261101-03 T2(決策 8):必須在 lifespan 之前存在;lifespan 注入 AdapterContext.cli_runner
     app.state.cli_runner = CliRunner()
     app.state.shutting_down = False   # T6(決策 16):T8 的訊號處理設為 True;Router 不再開始新嘗試
+    # CHG-20261102-01 T7(決策 14 ②、18):停機期滿事件、drain 登記表、停機掛鉤(預設為空)
+    app.state.drain_expired = asyncio.Event()
+    app.state.drain_tasks = set()
+    app.state.shutdown_hooks = ShutdownHooks()
     app.state.db_path = path
     app.state.port = port   # CHG-20261102-01 T1(決策 4):Origin 比對用的 serve 綁定埠
     app.state.conn_factory = conn_factory

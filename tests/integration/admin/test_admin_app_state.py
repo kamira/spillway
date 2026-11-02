@@ -16,7 +16,7 @@ pytestmark = pytest.mark.anyio
 
 HAND_COPIED = frozenset({"registry", "router", "conn_factory", "clock"})
 CREATE_APP_EXTRA = frozenset({"rng", "db_path", "retention", "cli_runner", "shutting_down",
-                              "port"})
+                              "port", "drain_expired", "drain_tasks", "shutdown_hooks"})
 
 
 def _state_names(app) -> set[str]:

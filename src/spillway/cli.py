@@ -14,15 +14,24 @@ serve:
   退出碼:用法錯誤或 host 不允許回 2;啟動失敗(例如 7.6.6 模組衝突)回非 0——uvicorn 以
   `sys.exit(3)` 結束時沿用 3,未啟動而無退出碼時回 1(`EXIT_STARTUP_FAILED`)。
   Ctrl-C / SIGTERM:uvicorn 先完成正常關閉(lifespan shutdown、停止 RetentionJob 排程),再依 Unix
-  慣例把收到的訊號重新送給自己,行程以該訊號結束(shell 看到 130 / 143,`subprocess` 看到 −2 / −15),
-  不回 0;這讓上層的行程管理器分得出「被要求停止」與「自己結束」。本模組不改寫此行為。
+  慣例把收到的訊號重新送給自己,不回 0;這讓上層的行程管理器分得出「被要求停止」與「自己結束」。
+  SIGTERM:行程以該訊號結束(shell 看到 143,`subprocess` 看到 −15)。Ctrl-C(SIGINT,CHG-20261102-01
+  決策 19):重送的 SIGINT 在 `main` 呼叫 `_run_server` 的外層以 `KeyboardInterrupt` 捕捉,不印 traceback,
+  **結束碼 130**(`EXIT_SIGINT`;shell 與 `subprocess` 都看到 130)。
 - graceful shutdown(CHG-20261101-03 T8;決策 16、圖 4):第一個 SIGTERM/SIGINT 設
   `app.state.shutting_down = True`(Router 不再開始新嘗試,回 503 `shutting_down`),uvicorn 停止接新連線並
   等待進行中請求至多 `graceful_timeout` 秒(預設 30,傳給 `timeout_graceful_shutdown`),期滿取消請求
   task(CliRunner 在取消路徑殺 process group、帳本記 `error="shutdown"`);lifespan 結束時
   `terminate_all(grace=5)` 為後備。停機中再收到 SIGINT 為 uvicorn 的 `force_exit`(略過 lifespan):立即
   取消進行中請求(CliRunner SIGKILL 子行程 group),並在 uvicorn 重送訊號之前於 `capture_signals` 內同步
-  `kill_all_sync()`;`_run_server` 的 `finally` 與 `atexit` 也呼叫它(force_exit 時帳本列可能不及寫入)。環境變數 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`
+  `kill_all_sync()`;`_run_server` 的 `finally` 與 `atexit` 也呼叫它(force_exit 時帳本列可能不及寫入)。
+- 停機期滿與 MCP(CHG-20261102-01 決策 14、18):`_run_server` 在 `server.run()` 之前呼叫
+  `sse_starlette` 的 `AppStatus.disable_automatic_graceful_drain()`(不設 `AppStatus.should_exit`)。第一個
+  訊號時以 `call_soon_threadsafe` 觸發 `app.state.shutdown_hooks.fire`,並排定
+  `call_later(max(grace*0.5, grace-1.5), app.state.drain_expired.set)`:經 `api.drain.run_until_drain` 的
+  進行中請求在 uvicorn 期滿取消之前被取消(CliRunner 殺 group、帳本 `error="shutdown"`)並回 503
+  `shutting_down`。force_exit 的 `_cancel_inflight` 也取消 `app.state.drain_tasks`。
+  環境變數 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`
   **僅供測試**縮短等待上限,正式使用不要設定。
 - uvicorn access log 保留(只有方法、路徑、狀態碼,不含 body)。
 
@@ -68,6 +77,7 @@ __all__ = ["main"]
 
 EXIT_USAGE = 2
 EXIT_STARTUP_FAILED = 1
+EXIT_SIGINT = 130   # CHG-20261102-01 決策 19:serve 被 Ctrl-C(SIGINT)結束
 WORK_SUBDIRS = CLI_WORK_SUBDIRS   # 決策 10、11、20(CHG-20261102-01):CLI 模組未設定 cwd 時的工作目錄
 GRACEFUL_TIMEOUT = 30.0   # 決策 16 ②:停機時等待進行中請求的上限(秒)
 TEST_GRACEFUL_TIMEOUT_ENV = "SPILLWAY_TEST_GRACEFUL_TIMEOUT"   # 僅供測試,見 _test_graceful_timeout
@@ -156,16 +166,30 @@ def _graceful_server(config: uvicorn.Config, app: FastAPI) -> uvicorn.Server:
 
         def handle_exit(self, sig: int, frame: FrameType | None) -> None:
             app.state.shutting_down = True
-            was_forced = self.force_exit
+            was_exiting, was_forced = self.should_exit, self.force_exit
             super().handle_exit(sig, frame)
-            if self.force_exit and not was_forced and self._loop is not None:
-                try:   # 訊號處理器內不直接取消;排到事件迴圈上(也會喚醒 selector)
+            if self._loop is None:
+                return
+            try:   # 訊號處理器內不直接動事件迴圈;一律排到迴圈上(也會喚醒 selector)
+                if not was_exiting:   # 第一個訊號(CHG-20261102-01 決策 14 ②、18)
+                    self._loop.call_soon_threadsafe(app.state.shutdown_hooks.fire)
+                    self._loop.call_soon_threadsafe(self._schedule_drain_expired)
+                if self.force_exit and not was_forced:
                     self._loop.call_soon_threadsafe(self._cancel_inflight)
-                except RuntimeError:   # 迴圈已關閉:capture_signals/finally/atexit 仍會殺子行程
-                    pass
+            except RuntimeError:   # 迴圈已關閉:capture_signals/finally/atexit 仍會殺子行程
+                pass
+
+        def _schedule_drain_expired(self) -> None:
+            # 決策 18:在 uvicorn 期滿取消之前設定 drain_expired,讓 run_until_drain 先取消子 task、回 503
+            grace = self.config.timeout_graceful_shutdown
+            if grace is None or self._loop is None:
+                return
+            self._loop.call_later(drain_expire_delay(grace), app.state.drain_expired.set)
 
         def _cancel_inflight(self) -> None:
             for task in list(self.server_state.tasks):
+                task.cancel(msg="force exit")
+            for task in list(app.state.drain_tasks):   # MCP 工具等不在 server_state.tasks 的 task
                 task.cancel(msg="force exit")
 
         @contextlib.contextmanager
@@ -196,6 +220,11 @@ def _graceful_server(config: uvicorn.Config, app: FastAPI) -> uvicorn.Server:
     return _GracefulServer(config)
 
 
+def drain_expire_delay(grace: float) -> float:
+    """第一個訊號後多久設定 `app.state.drain_expired`(決策 18):`max(grace*0.5, grace-1.5)` 秒。"""
+    return max(grace * 0.5, grace - 1.5)
+
+
 def _test_graceful_timeout() -> float | None:
     """**僅供測試**:環境變數 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`(秒)覆寫 serve 的停機等待上限,讓子行程
     測試不必等 30 秒。正式使用不要設定;值不合法(非數字或 ≤ 0)時忽略。"""
@@ -224,6 +253,13 @@ def _run_server(host: str, port: int, graceful_timeout: float = GRACEFUL_TIMEOUT
     config = uvicorn.Config(app, host=host, port=port, lifespan="on", log_level="info",
                             access_log=True, timeout_graceful_shutdown=graceful_timeout)
     server = _graceful_server(config, app)
+    # 決策 14 ①:只關 GET 串流由 shutdown_hooks 負責;sse-starlette 的 auto-drain 會關掉所有 SSE(含 POST 回應)
+    try:
+        from sse_starlette.sse import AppStatus
+    except ImportError:   # 沒有 sse-starlette 就沒有 SSE 串流可關
+        pass
+    else:
+        AppStatus.disable_automatic_graceful_drain()
     try:
         server.run()
     except SystemExit as exc:   # uvicorn 部分版本在啟動失敗時直接 sys.exit
@@ -277,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
         allowed = ", ".join(sorted(settings.ALLOWED_HOSTS))
         _err(f"拒絕綁定 {args.host!r}:M3 仍只允許 {allowed}")
         return EXIT_USAGE
-    if (graceful := _test_graceful_timeout()) is not None:
-        return _run_server(args.host, args.port, graceful_timeout=graceful)
-    return _run_server(args.host, args.port)
+    try:   # 決策 19:Ctrl-C 時 uvicorn 重發 SIGINT → KeyboardInterrupt;不印 traceback,結束碼 130
+        if (graceful := _test_graceful_timeout()) is not None:
+            return _run_server(args.host, args.port, graceful_timeout=graceful)
+        return _run_server(args.host, args.port)
+    except KeyboardInterrupt:
+        return EXIT_SIGINT
