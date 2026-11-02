@@ -240,6 +240,7 @@ KNOWN_GETS: dict[str, dict[str, str]] = {
     "/api/ledger/{ledger_id}/payload": {"ledger_id": "1"},
     "/api/ledger/export.csv": {},                                  # CHG-20261102-02 T5
     "/api/settings": {},                                           # CHG-20261102-02 T5
+    "/api/config/export": {},                                      # CHG-20261102-02 T3
     "/api/settings/context": {},
     "/api/dashboard": {},
     "/api/adapters": {},

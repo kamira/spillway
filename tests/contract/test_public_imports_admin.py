@@ -16,7 +16,7 @@ import pytest
 
 SUBMODULES = (
     "common", "models", "secrets", "deployments", "groups", "routes", "planning",
-    "ledger", "settings", "dashboard", "adapters",
+    "ledger", "settings", "dashboard", "adapters", "config_io",
 )
 MAX_LINES = 400
 LOGGER_NAME = "spillway.api.admin"
@@ -38,6 +38,7 @@ EXPECTED_OPENAPI: dict[str, dict[str, tuple[str, ...]]] = {
     "/api/ledger/{ledger_id}/payload": {"get": ("200", "422")},
     "/api/ledger/export.csv": {"get": ("200", "422")},            # CHG-20261102-02 T5
     "/api/settings": {"get": ("200",)},                            # CHG-20261102-02 T5
+    "/api/config/export": {"get": ("200", "422")},                 # CHG-20261102-02 T3
     "/api/routes": {"get": ("200",), "post": ("201", "422")},
     "/api/routes/{name}": {"delete": ("204", "422"), "get": ("200", "422"),
                            "put": ("200", "422")},
