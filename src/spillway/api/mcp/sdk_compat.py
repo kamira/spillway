@@ -8,7 +8,9 @@
   `mcp.server.streamable_http.GET_STREAM_KEY`。manager 不存在(lifespan 外)、session 不存在時回 False。
   測試與 behave 步驟用它輪詢「開啟通知串流」(等待以真實時間 `asyncio.wait_for` 計時)。
   只讀、不改變任何狀態;在伺服器的事件迴圈之外呼叫也只是讀 dict(`live_gateway` 另提供在迴圈內呼叫的方式)。
-- T3 在此追加 transport 列舉(停機時對每個 transport 呼叫 `close_standalone_sse_stream()`)。
+- `iter_transports(app) -> list[StreamableHTTPServerTransport]`(T3):目前 session manager 的全部
+  transport(讀 `app.state.mcp_manager._server_instances.values()` 的快照);manager 不存在時為空清單。
+  停機掛鉤以它對每個 transport 呼叫公開的 `close_standalone_sse_stream()`(決策 14 ③)。
 """
 from __future__ import annotations
 
@@ -16,7 +18,14 @@ from typing import Any
 
 from mcp.server.streamable_http import GET_STREAM_KEY
 
-__all__ = ["get_stream_open"]
+__all__ = ["get_stream_open", "iter_transports"]
+
+
+def iter_transports(app: Any) -> list[Any]:
+    manager = getattr(app.state, "mcp_manager", None)
+    if manager is None:
+        return []
+    return list(manager._server_instances.values())   # SDK 私有(mcp 1.30)
 
 
 def get_stream_open(app: Any, session_id: str) -> bool:

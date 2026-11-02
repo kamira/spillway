@@ -1,4 +1,7 @@
-"""`/api/groups`(CHG-20261101-02 決策 9)。"""
+"""`/api/groups`(CHG-20261101-02 決策 9)。
+
+群組的建立、更新、刪除在交易 commit **之後**呼叫 `tools_changed(request)`(MCP
+`notifications/tools/list_changed`;CHG-20261102-01 決策 13)。"""
 from __future__ import annotations
 
 import sqlite3
@@ -18,6 +21,13 @@ from .models import GroupIn, GroupUpdate
 
 # CHG-20261102-01 決策 22:保留給 `/mcp/all`、`mcp_catalog(app, "all")`
 RESERVED_GROUP_NAME = "all"
+
+
+def tools_changed(request: Request) -> None:
+    """交易 commit 之後通知 MCP session 工具清單已變更(CHG-20261102-01 決策 13)。"""
+    events = getattr(request.app.state, "mcp_events", None)
+    if events is not None:
+        events.changed()
 
 
 def _member_brief(d: Deployment) -> dict[str, Any]:
@@ -57,6 +67,7 @@ async def create_group(request: Request, body: GroupIn) -> dict[str, Any]:
             if repo.get_group(conn, body.name) is not None:
                 raise ApiError(409, "conflict", redact_echo(f"群組已存在:{body.name}"))
             repo.save_group(conn, repo.Group(body.name, body.selector.model_dump()))
+        tools_changed(request)
         return _group_out(_load_group(conn, body.name), repo.list_deployments(conn))
 
 
@@ -75,6 +86,7 @@ async def update_group(request: Request, name: str, body: GroupUpdate) -> dict[s
         with transaction(conn):
             _load_group(conn, name)
             repo.save_group(conn, repo.Group(name, body.selector.model_dump()))
+        tools_changed(request)
         return _group_out(_load_group(conn, name), repo.list_deployments(conn))
 
 
@@ -88,4 +100,5 @@ async def delete_group(request: Request, name: str) -> Response:
             if refs:
                 raise ApiError(409, "conflict", redact_echo(f"群組 {name} 仍被 route 參照:{', '.join(refs)}"))
             repo.delete_group(conn, name)
+    tools_changed(request)
     return Response(status_code=204)

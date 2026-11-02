@@ -17,8 +17,9 @@ route(spec 8.1.4)。群組在 session 期間被刪:`tools/list` 回空清單、`
   `{text, served_by, slot, cost_usd, tokens_in, tokens_out}`。預估值不經 MCP 露出。
 - 錯誤一律回 `CallToolResult(isError=True, content=[TextContent(json)], structuredContent={"error":
   {code, message}, "attempts": [...]?})`:`route_not_found`、`no_candidate`(帶 `attempts`,每項
-  `{deployment, status, slot}`)、`validation_error`;`shutting_down` 由 T3 經 `api.drain.run_until_drain`
-  接上(決策 18)。非預期例外 → `internal_error`(訊息只含例外型別)。工具錯誤碼的單一清單在
+  `{deployment, status, slot}`)、`validation_error`、`shutting_down`(`Router.route` 經
+  `api.drain.run_until_drain`;停機期滿回 `Drained` 時,進行中的呼叫已取消——CliRunner 殺 group、帳本
+  `error="shutdown"`;決策 18,T3)。非預期例外 → `internal_error`(訊息只含例外型別)。工具錯誤碼的單一清單在
   `catalog.TOOL_ERRORS`。
 
 `list_routes`(決策 12):`{"routes": [{name, mode, ordered, slots: [{slot, members: [{id, effort, weight}]}]}]}`;
@@ -44,6 +45,7 @@ from typing import Any
 
 from mcp import types
 
+from spillway.api.drain import Drained, run_until_drain
 from spillway.domain import EFFORTS, ChatRequest
 from spillway.quota import member_quota_rows
 from spillway.redact import REDACTOR
@@ -330,12 +332,14 @@ async def _ask(app: Any, group: str, args: dict[str, Any]) -> types.CallToolResu
     req = ChatRequest(model=f"route:{route}", messages=[{"role": "user", "content": prompt}],
                       reasoning_effort=effort)
     try:
-        outcome = await app.state.router.route(req)
+        outcome = await run_until_drain(app, app.state.router.route(req))
     except RouteNotFound:   # 驗證後才被刪除
         return error_result("route_not_found", f"找不到 route:{REDACTOR.redact(route)[0]}")
     except InvalidEffort:   # Router 的防線;上面已驗證
         return error_result("validation_error", f"effort: 只可為 {', '.join(EFFORTS)}")
 
+    if isinstance(outcome, Drained):   # 決策 18:停機期滿,進行中的呼叫已取消
+        return error_result("shutting_down", "閘道停機中,進行中的呼叫已在停機期滿前取消;請稍後重試")
     if outcome.result is None:
         attempts = [{"deployment": a.deployment, "status": a.status, "slot": a.slot}
                     for a in outcome.attempts]

@@ -7,8 +7,16 @@
 - 本請求群組:`current_group()` = `request_context.request.scope["spillway.group"]`(由 `auth.McpEndpoint`
   設定)。
 - `create_initialization_options()` 預設 `NotificationOptions(tools_changed=True)`,initialize 宣告
-  `tools.listChanged=true`(決策 13、AM-2)。`notifications/tools/list_changed` 的實際送出由 T3 的
-  `api/mcp/events.py` 取代 `app.state.mcp_events` 後提供;T2 先放 `NoopMcpEvents`。
+  `tools.listChanged=true`(決策 13、AM-2)。`notifications/tools/list_changed` 由 `api/mcp/events.py`
+  的 `McpEvents`(`app.state.mcp_events`)送出:`tools/list` 與 `tools/call` handler 內以公開的
+  `request_context.session` 登記 session(T3;AM-9)。`NoopMcpEvents` 保留為沒有 `register` 的空實作。
+
+停機掛鉤(T3;決策 14 ③、AM-6):lifespan 啟動 session manager 後以 `install_shutdown_hook(app)` 在
+`app.state.shutdown_hooks` 登記 `close_standalone_streams(app)`(lifespan 結束時移除;lifespan 之外清單
+維持 T7 的預設空清單)——對目前每個 transport(`sdk_compat.iter_transports`)呼叫公開的
+`close_standalone_sse_stream()`,只關 GET 通知串流:**不 terminate session、不取消進行中的 POST**
+(`tools/call` 照常享有寬限期,經 `api.drain.run_until_drain` 走決策 18)。之後的 `/mcp` 請求(含 GET
+重連)由 `auth.McpEndpoint` 的 ④ 回 503 `shutting_down`。
 
 `McpRuntime`:session manager 的生命週期(AM-4)。lifespan 每次進入時 `await McpRuntime.start(app)`:
 新建 `StreamableHTTPSessionManager(app=server, json_response=False, stateless=False,
@@ -25,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from mcp import types
@@ -32,11 +41,12 @@ from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
+from . import sdk_compat
 from . import tools as mcp_tools
 from .auth import GROUP_SCOPE_KEY
 
 __all__ = ["SpillwayServer", "McpRuntime", "NoopMcpEvents", "SERVER_NAME", "MAX_SESSIONS",
-           "STOP_TIMEOUT"]
+           "STOP_TIMEOUT", "close_standalone_streams", "install_shutdown_hook"]
 
 _log = logging.getLogger(__name__)
 
@@ -71,6 +81,7 @@ class SpillwayServer(Server):
 
         @self.list_tools()
         async def _list_tools() -> list[types.Tool]:
+            self._register_session()
             conn = app.state.conn_factory()
             try:
                 return mcp_tools.tool_definitions(conn, self.current_group())
@@ -79,7 +90,14 @@ class SpillwayServer(Server):
 
         @self.call_tool(validate_input=False)
         async def _call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+            self._register_session()
             return await mcp_tools.call_tool(app, self.current_group(), name, arguments)
+
+    def _register_session(self) -> None:
+        """把本請求的 session 登記到 `app.state.mcp_events`(決策 13;AM-9)。"""
+        register = getattr(getattr(self.spillway_app.state, "mcp_events", None), "register", None)
+        if register is not None:
+            register(self.request_context.session)
 
     def current_group(self) -> str:
         """本請求的群組(`auth.McpEndpoint` 設在 scope)。不在 HTTP 請求內呼叫時丟 LookupError。"""
@@ -97,6 +115,35 @@ class SpillwayServer(Server):
             notification_options or NotificationOptions(tools_changed=True),
             experimental_capabilities,
         )
+
+
+def close_standalone_streams(app: Any) -> int:
+    """停機掛鉤本體(決策 14 ③):對每個 transport 呼叫 `close_standalone_sse_stream()`;回傳處理數。
+    單一 transport 失敗只記例外類型。"""
+    closed = 0
+    for transport in sdk_compat.iter_transports(app):
+        try:
+            transport.close_standalone_sse_stream()
+            closed += 1
+        except Exception as exc:  # noqa: BLE001 — 單一 session 失敗不影響其他 session 與停機
+            _log.error("關閉 MCP GET 通知串流失敗:%s", type(exc).__name__)
+    return closed
+
+
+def install_shutdown_hook(app: Any) -> Callable[[], None]:
+    """在 `app.state.shutdown_hooks`(T7)登記只關 GET 通知串流的掛鉤(決策 14 ③);回傳移除它的函式。"""
+    hooks = app.state.shutdown_hooks
+
+    def hook() -> None:
+        close_standalone_streams(app)   # 呼叫時才解析模組名稱(測試的對照組可替換)
+
+    hooks.append(hook)
+
+    def remove() -> None:
+        if hook in hooks:
+            hooks.remove(hook)
+
+    return remove
 
 
 class McpRuntime:
