@@ -1,6 +1,7 @@
 """命令列入口(CHG-20261030-02 T13;決策 3、4、21;design D16;CHG-20261101-03 T7 決策 5、14、15、17)。
 
-`spillway serve [--host 127.0.0.1] [--port 8787]`、`spillway init [--rotate]`;`mcp-stdio` 於 M3b 加入。
+`spillway serve [--host 127.0.0.1] [--port 8787]`、`spillway init [--rotate]`、
+`spillway mcp-stdio --group <g> [--port 8787]`(CHG-20261102-01 T4;見 `spillway.api.mcp.bridge`)。
 
 serve:
 - `--host` 只接受 `settings.ALLOWED_HOSTS`(字面 `127.0.0.1`;M3 仍只允許 127.0.0.1);其他值印錯誤到
@@ -106,6 +107,11 @@ def _parser() -> argparse.ArgumentParser:
                        help=f"埠號(預設 {settings.DEFAULT_PORT})")
     init = sub.add_parser("init", help="建立資料目錄、升級資料庫並產生存取 token")
     init.add_argument("--rotate", action="store_true", help="重新產生存取 token(舊 token 失效)")
+    # mcp-stdio(CHG-20261102-01 T4;決策 15):stdio ↔ http://127.0.0.1:<port>/mcp/<group>;不提供 --host/--url
+    stdio = sub.add_parser("mcp-stdio", help="以 stdio 轉送 MCP 到本機閘道(token 取自環境變數 SPILLWAY_TOKEN)")
+    stdio.add_argument("--group", required=True, help="MCP 群組名(all 表示全部 route)")
+    stdio.add_argument("--port", type=_port, default=settings.DEFAULT_PORT,
+                       help=f"閘道埠號(預設 {settings.DEFAULT_PORT};主機固定 127.0.0.1)")
     return p
 
 
@@ -305,6 +311,9 @@ def main(argv: list[str] | None = None) -> int:
         return exc.code if isinstance(exc.code, int) else EXIT_USAGE
     if args.command == "init":
         return _init(args.rotate)
+    if args.command == "mcp-stdio":   # 結束碼 0/1/2/3/130 見 api/mcp/bridge.py;不開資料庫、不取鎖
+        from spillway.api.mcp.bridge import run as run_mcp_stdio
+        return run_mcp_stdio(args.group, args.port)
     if args.command != "serve":
         parser.print_help(sys.stderr)
         return EXIT_USAGE
