@@ -34,7 +34,7 @@ spillway = "spillway.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-spillway = ["**/*.sql", "**/*.yaml", "**/*.md"]
+spillway = ["**/*.sql", "**/*.yaml", "**/*.md", "**/*.j2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

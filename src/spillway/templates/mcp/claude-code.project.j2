@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    {{ name|tojson }}: {
+      "type": "http",
+      "url": {{ url|tojson }},
+      "headers": {
+        "Authorization": "Bearer ${SPILLWAY_TOKEN}"
+      }
+    }
+  }
+}

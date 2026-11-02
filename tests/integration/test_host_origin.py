@@ -241,6 +241,7 @@ KNOWN_GETS: dict[str, dict[str, str]] = {
     "/api/settings/context": {},
     "/api/dashboard": {},
     "/api/adapters": {},
+    "/api/mcp/config": {},
 }
 KNOWN_MOUNTS: dict[str, str] = {"/mcp": "/mcp/all"}   # mount 路徑 → 以 GET 呼叫的 URL
 
