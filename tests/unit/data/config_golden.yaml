@@ -1,0 +1,124 @@
+version: 1
+settings:
+  record_context_default: false
+  context_retention_days: 30
+  context_max_bytes: 1048576
+deployments:
+  - id: api-a
+    model_name: gpt-4o-mini
+    kind: api
+    provider: openai
+    model: gpt-4o-mini
+    params:
+      api_base: http://127.0.0.1:9/v1
+      timeout: 30
+    credential_ref: env:SPILLWAY_TEST_KEY
+    capabilities:
+      ctx: 128000
+      efforts:
+        - low
+        - medium
+        - high
+      tools: true
+      vision: false
+    enabled: false
+    tags:
+      - coding
+      - review
+    budget:
+      type: usd
+      limit_amount: 30.0
+      window: monthly
+      reset_anchor: 1
+  - id: api-b
+    model_name: gpt-4.1-mini
+    kind: api
+    provider: openai
+    model: gpt-4.1-mini
+    credential_ref: keyring:spillway:api-b
+    tags:
+      - cheap
+      - coding
+    budget:
+      type: credit_pool
+      limit_amount: 100.0
+      window: weekly
+  - id: bare
+    model_name: bare
+    kind: local
+    provider: hosted_vllm
+    model: local-model
+  - id: claude-sub
+    model_name: sonnet
+    kind: cli
+    provider: claude-cli
+    model: claude-sonnet-4-5
+    params:
+      cwd: /tmp/work
+      extra_args:
+        - --verbose
+      nested:
+        empty: {}
+    tags:
+      - coding
+    budget:
+      type: none
+      window: none
+  - id: qwen-local
+    model_name: qwen-coder
+    kind: local
+    provider: ollama
+    model: qwen3-coder:30b
+    params:
+      api_base: http://127.0.0.1:11434
+    capabilities:
+      ctx: 32768
+      efforts: []
+    tags:
+      - coding
+      - private-ok
+groups:
+  coding:
+    all:
+      - coding
+  mixed:
+    all:
+      - coding
+    any:
+      - review
+      - cheap
+    none:
+      - private-ok
+  中文群組: {}
+routes:
+  quick:
+    target:
+      tags:
+        all:
+          - coding
+        none:
+          - review
+  review:
+    target:
+      group: coding
+    mode: task
+    tags:
+      - daily
+      - alpha
+      - daily
+    record_context: true
+    budget_precheck: true
+    targets:
+      - - deployment: claude-sub
+          effort: high
+      - - deployment: api-a
+          effort: medium
+        - deployment: api-b
+          effort: none
+          weight: high
+      - - deployment: qwen-local
+          weight: low
+  silent:
+    target:
+      tags: {}
+    record_context: false

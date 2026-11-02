@@ -760,3 +760,43 @@ def get_context_settings(conn: sqlite3.Connection) -> ContextSettings:
         retention_days=int(get_setting(conn, "context_retention_days")),
         max_bytes=int(get_setting(conn, "context_max_bytes")),
     )
+
+
+# ---------------------------------------------------------------- config 匯出讀取(CHG-20261102-02 T3)
+# `spillway.configio.dump` 用:整份設定在同一個讀交易(快照)內讀出;本段只讀不寫。
+# 本段的 import 放在段內,以免與同波次其他 task 在檔頭的 import 衝突。
+
+from collections.abc import Iterator as _Iterator  # noqa: E402
+from contextlib import contextmanager as _contextmanager  # noqa: E402
+
+
+@_contextmanager
+def read_snapshot(conn: sqlite3.Connection) -> _Iterator[sqlite3.Connection]:
+    """單一讀交易:已在交易內(含 `transaction(conn)` 的寫鎖)時沿用、不另開;否則 `BEGIN`(DEFERRED,
+    不取寫鎖)… 結束時 `COMMIT`(例外時 `ROLLBACK`)。WAL 模式下區塊內的多條 SELECT 看到同一份快照。"""
+    if conn.in_transaction:
+        yield conn
+        return
+    conn.execute("BEGIN")
+    try:
+        yield conn
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    if conn.in_transaction:
+        conn.execute("COMMIT")
+
+
+def list_all_route_targets(conn: sqlite3.Connection) -> dict[str, list[RouteTarget]]:
+    """全部 route 的 route_targets,單一查詢;`{route_name: [RouteTarget…]}`,各 route 內依
+    `(slot, position, deployment_id)` 排序(同 `list_route_targets`);沒有手動排序的 route 不出現。"""
+    out: dict[str, list[RouteTarget]] = {}
+    for r in conn.execute(
+        "SELECT * FROM route_targets ORDER BY route_name, slot, position, deployment_id"
+    ):
+        out.setdefault(r["route_name"], []).append(RouteTarget(
+            deployment_id=r["deployment_id"], slot=r["slot"], position=r["position"],
+            effort=r["effort"], weight=r["weight"],
+        ))
+    return out

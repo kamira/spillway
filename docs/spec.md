@@ -203,20 +203,24 @@ CREATE TABLE settings (
 
 ### 3.2 範例
 
+範例是合法的匯入檔；匯出時省略預設值（例如 `record_context_default: true`、`context_retention_days: 7`、`enabled: true`），鍵順序與排序依 3.1 的匯出規則。
+
 ```yaml
 version: 1
 settings:
   record_context_default: true    # 預設開啟
   context_retention_days: 7       # 預設 7 天
+  context_max_bytes: 262144       # 預設 262144（256 KiB）
 deployments:
   - id: claude-sub
     model_name: sonnet
     kind: cli
     provider: claude-cli
     model: claude-sonnet-5-5
+    params: {extra_args: [--verbose]}
     tags: [coding, review]
     capabilities: {ctx: 200000, tools: true, efforts: [low, medium, high, max]}
-    budget: {type: credit_pool, limit: 100, window: monthly, reset_anchor: 1}
+    budget: {type: credit_pool, limit_amount: 100, window: monthly, reset_anchor: 1}
   - id: anthropic-api
     model_name: sonnet
     kind: api
@@ -224,15 +228,16 @@ deployments:
     model: claude-sonnet-5-5
     credential_ref: env:ANTHROPIC_API_KEY
     tags: [coding, review]
-    budget: {type: usd, limit: 30, window: monthly}
+    budget: {type: usd, limit_amount: 30, window: monthly}
   - id: deepseek-api
     model_name: deepseek
     kind: api
     provider: deepseek
     model: deepseek-chat
     credential_ref: keyring:spillway:deepseek
+    enabled: false                  # 省略 = true
     tags: [coding, cheap]
-    budget: {type: usd, limit: 10, window: monthly}
+    budget: {type: usd, limit_amount: 10, window: monthly}
   - id: qwen-local
     model_name: qwen-coder
     kind: local
