@@ -22,7 +22,7 @@ spillway/
 │   ├── __init__.py
 │   ├── __main__.py / cli.py     # spillway serve(M2;M3a 加 _preflight 與 graceful shutdown;M3b 停用 sse-starlette auto-drain、shutdown_hooks、drain_expired、Ctrl-C 結束碼 130)、init [--rotate](M3a)、mcp-stdio --group <g> [--port](M3b)
 │   ├── app.py                   # FastAPI 組裝 create_app(issue_token=False, port=8787)、最外層 HostOriginMiddleware、/mcp 掛載、lifespan(背景清理工作、CliRunner 注入、token、MCP session manager 持有 task、D31 關閉順序、terminate_all 後備)
-│   ├── settings.py              # 資料目錄、埠號、綁定常數;存取 token 產生與雜湊讀寫(M3a,經 store.repo)
+│   ├── settings.py              # 資料目錄、埠號、綁定常數;存取 token 產生與雜湊讀寫(M3a,經 store.repo);MCP_ALL_GROUP、EXIT_SIGINT、mcp_url(M3b 終審)
 │   ├── clock.py                 # Clock、Rng
 │   ├── domain.py                # 跨層值物件 Deployment、Budget、ChatRequest、CallResult(adapters.base 轉匯出);共用常數 KINDS、CLOUD_KINDS、CALL_STATUSES、LEDGER_STATUSES、COOLING_STATUSES、STATUS_SKIPPED_PRECHECK
 │   ├── store/
@@ -34,7 +34,7 @@ spillway/
 │   ├── redact.py                # Redactor、共用實例 REDACTOR
 │   ├── routing/
 │   │   ├── __init__.py          # 公開匯出(Router、OrderPlanner、members_of、RouteOutcome 等)
-│   │   ├── target.py            # route 目標(group / tags)→ 成員集合(members_of)
+│   │   ├── target.py            # route 目標(group / tags)→ 成員集合(members_of);normalize_selector(M3b 終審)
 │   │   ├── resolver.py
 │   │   ├── filter.py            # CandidateFilter、HealthCache(invalidate)
 │   │   ├── planner.py
@@ -82,6 +82,7 @@ spillway/
 │   │       ├── events.py        # McpEvents(list_changed)
 │   │       ├── catalog.py       # mcp_catalog(UI-8 資料來源)、HTTP_ERRORS、TOOL_ERRORS、SDK_TRANSPORT_ERRORS
 │   │       ├── sdk_compat.py    # SDK 私有屬性的唯一存取點(get_stream_open、iter_transports)
+│   │       ├── sdk_logging.py   # 丟棄 SDK 經 root logger 寫出的紀錄(避免 prompt 片段;M3b 終審)
 │   │       └── bridge.py        # spillway mcp-stdio 的 stdio ↔ Streamable HTTP 轉送與錯誤對應層
 │   └── templates/
 │       └── mcp/                 # 設定輸出模板(M3b;`<tool>.<kind>.j2`,由 TOOL_FORMATS 對應,可由多個 variant 共用;package data)
@@ -119,7 +120,7 @@ spillway/
     │   └── store/               # test_db_conn.py、test_migration_nonempty.py、test_migration_v1_v2.py、test_repo.py、test_repo_cooldowns.py、test_repo_queries.py、test_schema.py(無 __init__.py)
     ├── integration/             # __init__.py、conftest.py、test_app_admin_mount.py、test_errors_openai.py、test_graceful_shutdown.py、test_host_origin.py(M3b)、test_init_token.py、test_keyring_credential.py、test_mcp_stdio.py(M3b)、test_openai_api.py、test_request_conn.py、test_retention_schedule.py、test_review_final_u10.py、test_review_w6_openai.py、test_router_cli_concurrency.py、test_serve.py
     │   ├── admin/               # 管理 API 整合測試:__init__.py、conftest.py(make_app 呼叫 create_app())、helpers.py、test_admin_adapters.py、test_admin_app_state.py、test_admin_dashboard.py、test_admin_delete_cascade.py、test_admin_deployments.py、test_admin_groups.py、test_admin_health_invalidate.py、test_admin_ledger.py、test_admin_mcp_config.py(M3b)、test_admin_route_class.py、test_admin_routes.py、test_admin_secret_keys.py、test_admin_settings.py、test_admin_token_rotate.py、test_errors_admin.py、test_review_w6_admin.py
-    │   └── mcp/                 # MCP 整合測試(M3b):__init__.py、conftest.py(live_gateway fixture;註明 ASGITransport 只用於 HTTP 層與 POST 類工具呼叫)、test_live_gateway.py、test_mcp_auth.py、test_mcp_catalog.py、test_mcp_groups.py、test_mcp_list_changed.py、test_mcp_quota_queries.py、test_mcp_shutdown.py、test_mcp_tools.py、test_sdk_compat.py(絆線)
+    │   └── mcp/                 # MCP 整合測試(M3b):__init__.py、conftest.py(live_gateway fixture;註明 ASGITransport 只用於 HTTP 層與 POST 類工具呼叫)、test_live_gateway.py、test_mcp_auth.py、test_mcp_catalog.py、test_mcp_groups.py、test_mcp_list_changed.py、test_mcp_log_leak.py、test_mcp_quota_queries.py、test_mcp_shutdown.py、test_mcp_tools.py、test_sdk_compat.py(絆線)
     ├── features/                # behave:__init__.py、environment.py(含真實 claude/codex 護欄)、m2_adapters.feature、m2_context.feature、m2_estimate.feature、m2_quota.feature、m2_routing.feature、m2c_cleanup.feature、m3a_cli.feature、m3b_mcp.feature(M3b)
     │   ├── steps/               # adapters_steps.py、cleanup_ac4_steps.py、cleanup_admin_steps.py、cleanup_health_steps.py、common_steps.py、context_steps.py、estimate_steps.py、m3a_steps.py、m3b_steps.py(M3b)、quota_steps.py、routing_steps.py
     │   └── support/             # __init__.py、gateway.py(行程內驅動 app,與 open_spillway 同方式)、mcp_proc.py(M3b:MCP 用戶端與子行程 serve、mcp-stdio 的共用驅動,m3b 步驟與 test_m3b_operation.py 共用)
