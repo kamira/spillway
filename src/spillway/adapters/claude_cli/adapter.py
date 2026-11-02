@@ -41,6 +41,7 @@ from spillway.adapters.base import (
     Deployment,
     SignalsError,
     classify,
+    cli_cwd,
     cli_timeout,
     effort_to_upstream,
     head,
@@ -48,7 +49,6 @@ from spillway.adapters.base import (
     nonneg_int,
     resolve_signals,
 )
-from spillway.adapters.base.cli_common import cli_cwd
 
 __all__ = ["CLAUDE_DEFAULT_SIGNALS", "ClaudeCliAdapter", "ENV_REMOVE", "ENV_SET", "EXECUTABLE",
            "MCP_OFF", "build_argv", "messages_to_prompt", "parse_output", "tokens_in_of"]

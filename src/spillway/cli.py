@@ -68,7 +68,7 @@ __all__ = ["main"]
 
 EXIT_USAGE = 2
 EXIT_STARTUP_FAILED = 1
-WORK_SUBDIRS = CLI_WORK_SUBDIRS   # 決策 10、11:CLI 模組未設定 cwd 時的工作目錄
+WORK_SUBDIRS = CLI_WORK_SUBDIRS   # 決策 10、11、20(CHG-20261102-01):CLI 模組未設定 cwd 時的工作目錄
 GRACEFUL_TIMEOUT = 30.0   # 決策 16 ②:停機時等待進行中請求的上限(秒)
 TEST_GRACEFUL_TIMEOUT_ENV = "SPILLWAY_TEST_GRACEFUL_TIMEOUT"   # 僅供測試,見 _test_graceful_timeout
 # 期滿取消後等被取消的請求走完 CliRunner 取消路徑的上限:SIGTERM 寬限 + 讀管線上限 + 1 秒

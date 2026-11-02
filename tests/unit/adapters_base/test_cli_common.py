@@ -49,3 +49,15 @@ def test_nonneg_int(v, expected):
 
 def test_work_subdirs():
     assert CLI_WORK_SUBDIRS == ("claude", "codex")
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_head_tail_nonpositive_limit(limit):
+    assert head("abc", limit) == "" and tail("abc", limit) == ""
+
+
+def test_adapter_constants_consistent_with_common():
+    from spillway.adapters.claude_cli import adapter as claude
+    from spillway.adapters.codex_cli import adapter as codex
+    assert claude.EXECUTABLE in CLI_WORK_SUBDIRS and codex.EXECUTABLE in CLI_WORK_SUBDIRS
+    assert claude.MESSAGE_LIMIT == 2000 and codex._ERROR_TAIL == 1000

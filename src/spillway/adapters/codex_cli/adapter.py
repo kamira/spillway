@@ -30,6 +30,7 @@ from spillway.adapters.base import (
     Deployment,
     SignalsError,
     classify,
+    cli_cwd,
     cli_timeout,
     effort_to_upstream,
     messages_to_prompt,
@@ -37,7 +38,6 @@ from spillway.adapters.base import (
     resolve_signals,
     tail,
 )
-from spillway.adapters.base.cli_common import cli_cwd
 
 __all__ = ["CodexCliAdapter", "ENV_REMOVE", "ENV_SET", "IGNORE_USER_CONFIG", "MCP_OFF", "messages_to_prompt"]
 
@@ -220,7 +220,9 @@ class CodexCliAdapter:
         if out.killed_reason == "shutdown":
             return _error(f"{EXECUTABLE} 子行程因閘道停機被終止(shutdown)")
         if out.timed_out:
-            return _error(f"{EXECUTABLE} 逾時(超過 {timeout:g} 秒)" if timeout is not None else f"{EXECUTABLE} 逾時")
+            if timeout is None:
+                return _error(f"{EXECUTABLE} 逾時")
+            return _error(f"{EXECUTABLE} 逾時(超過 {timeout:g} 秒)")
         events = _events(out.stdout)
         if out.exit_code != 0:
             jsonl_msg = _jsonl_failure(events)

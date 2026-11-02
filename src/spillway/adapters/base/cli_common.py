@@ -6,7 +6,7 @@
 - `CLI_WORK_SUBDIRS`:內建 CLI 模組的工作子目錄名;`cli.py` 的 `WORK_SUBDIRS` 由此取得。
   取捨(決策 20):這裡寫死具體模組名,與 Registry(D11)方向相反;本筆照做,不改為 manifest。
 
-只用標準庫。
+只用標準庫(另依 AdapterContext 型別)。
 """
 from __future__ import annotations
 
@@ -42,12 +42,16 @@ def cli_cwd(params: Mapping[str, Any], context: AdapterContext, subdir: str) -> 
 def head(text: str, limit: int) -> str:
     """去頭尾空白後取前 `limit` 字元;超出時尾端加 `…`。"""
     text = text.strip()
+    if limit <= 0:
+        return ""
     return text if len(text) <= limit else text[:limit] + "…"
 
 
 def tail(text: str, limit: int) -> str:
     """去頭尾空白後取最後 `limit` 字元;超出時開頭加 `…`。"""
     text = text.strip()
+    if limit <= 0:
+        return ""
     return text if len(text) <= limit else "…" + text[-limit:]
 
 
