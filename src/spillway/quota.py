@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import calendar
 import math
+import sqlite3
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
-from spillway.clock import Clock
+from spillway.clock import Clock, to_iso
 from spillway.domain import COOLING_STATUSES, Budget, Deployment
 from spillway.store import repo
 from spillway.store.db import ConnSource, use_conn
@@ -172,3 +174,92 @@ class QuotaService:
         """手動清除冷卻(5.3.3):刪除 cooldowns 列。"""
         with use_conn(self._conn_src) as conn:
             repo.clear_cooldown(conn, dep.id)
+
+
+# ================================================================ 成員額度推導(CHG-20261102-01 決策 12)
+# 原寫在 `api/admin/dashboard.py`;抽到這裡讓 `/api/dashboard` 與 MCP `quota_status` 共用同一口徑
+# (決策審議修訂 AM-12)。SQL 仍只在 `store.repo`。
+
+_DEFAULT_PERIOD = Budget(type="none", limit_amount=None, window="monthly", reset_anchor=1)
+
+
+def is_cooling_only(b_type: str | None, window: str | None, limit_amount: object) -> bool:
+    """U10 (a):`type=none`、`window=none`、`limit_amount` NULL 的列(schema v1 為記錄冷卻而建的暫行列,
+    v2 migration 保留;CHG-20261101-03 決策 4、6),儀表板口徑比照「沒有 budgets 列」(決策 48)。"""
+    return b_type == "none" and window == "none" and limit_amount is None
+
+
+def _iso_or_none(dt: datetime | None) -> str | None:
+    return None if dt is None else to_iso(dt)
+
+
+def member_quota_rows(conn: sqlite3.Connection, clock: Clock, now: datetime) -> list[dict[str, Any]]:
+    """各現存成員(依 id;孤兒帳本列不計)的額度列——`/api/dashboard` 的 `deployments` 即此清單:
+    `id`、`model_name`、`kind`、`provider`、`enabled`、`budget_type`、`limit_amount`、`window`、
+    `period_start`、`next_reset`、`period_spend`、`remaining`、`unlimited`、`ratio`、`cooling`、
+    `cooling_until`、`cooling_reason`、`requests_24h`、`est_days_left`(口徑見
+    `api.admin.dashboard.dashboard` 的說明)。
+
+    `now` 需帶時區(內部換成 UTC)。查詢數與成員數無關(NFR-2):`repo.dashboard_members` 一次、每種相異
+    期間一次 `repo.spend_by_deployment`、`repo.recent_activity` 一次;不用 `QuotaService` 的逐成員加總
+    (只借用其期間計算,不查詢)。"""
+    now = now.astimezone(timezone.utc)
+    quota = QuotaService(conn, clock)
+    rows = repo.dashboard_members(conn)
+
+    periods: dict[str, tuple[str | None, str | None]] = {}
+    bounds: dict[tuple[str | None, str | None], tuple[datetime | None, datetime | None]] = {}
+    for r in rows:
+        if r["has_budget"] and not is_cooling_only(r["b_type"], r["window"], r["limit_amount"]):
+            b = Budget(type=r["b_type"], limit_amount=r["limit_amount"], window=r["window"],
+                       reset_anchor=r["reset_anchor"])
+        else:
+            b = _DEFAULT_PERIOD
+        if b.window == "none":
+            key: tuple[str | None, str | None] = (None, None)
+            bounds[key] = (None, None)
+        else:
+            start = quota.period_start(b, now)
+            end = quota.next_reset(b, now)
+            key = (_iso_or_none(start), _iso_or_none(end))
+            bounds[key] = (start, end)
+        periods[r["id"]] = key
+
+    # 每種相異期間一次 GROUP BY 加總
+    spent = {key: repo.spend_by_deployment(conn, start, end) for key, (start, end) in bounds.items()}
+    recent = repo.recent_activity(conn, since_24h=now - timedelta(hours=24),
+                                  since_7d=now - timedelta(days=7))
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        key = periods[r["id"]]
+        spend = spent[key].get(r["id"], 0.0)
+        # U10 (a):只記冷卻的列與「沒有 budgets 列」同口徑(日曆月、budget_type 與 window 為 null)
+        budgeted = bool(r["has_budget"]) and not is_cooling_only(r["b_type"], r["window"], r["limit_amount"])
+        unlimited = (not budgeted) or r["b_type"] == "none" or r["limit_amount"] is None
+        if unlimited:
+            remaining, ratio = None, 1.0
+        else:
+            limit = float(r["limit_amount"])
+            remaining = limit - spend
+            ratio = 0.0 if limit <= 0 else min(1.0, max(0.0, remaining / limit))
+        until = r["cooling_until"]
+        cooling_until = until if until is not None and until > to_iso(now) else None
+        cooling_reason = r["cooling_reason"] if cooling_until is not None else None
+        n24, spend7 = recent.get(r["id"], (0, 0.0))
+        days_left = None
+        if remaining is not None and spend7 > 0:
+            days_left = max(remaining, 0.0) / (spend7 / 7)
+        out.append({
+            "id": r["id"], "model_name": r["model_name"], "kind": r["kind"],
+            "provider": r["provider"], "enabled": bool(r["enabled"]),
+            "budget_type": r["b_type"] if budgeted else None,
+            "limit_amount": r["limit_amount"] if budgeted else None,
+            "window": r["window"] if budgeted else None,
+            "period_start": key[0], "next_reset": key[1], "period_spend": spend,
+            "remaining": remaining, "unlimited": unlimited, "ratio": ratio,
+            "cooling": cooling_until is not None, "cooling_until": cooling_until,
+            "cooling_reason": cooling_reason,
+            "requests_24h": n24, "est_days_left": days_left,
+        })
+    return out

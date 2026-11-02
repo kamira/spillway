@@ -257,12 +257,8 @@ def _run_server(host: str, port: int, graceful_timeout: float = GRACEFUL_TIMEOUT
                             access_log=True, timeout_graceful_shutdown=graceful_timeout)
     server = _graceful_server(config, app)
     # 決策 14 ①:只關 GET 串流由 shutdown_hooks 負責;sse-starlette 的 auto-drain 會關掉所有 SSE(含 POST 回應)
-    try:
-        from sse_starlette.sse import AppStatus
-    except ImportError:   # 沒有 sse-starlette 就沒有 SSE 串流可關
-        pass
-    else:
-        AppStatus.disable_automatic_graceful_drain()
+    from sse_starlette.sse import AppStatus   # pyproject 明列 sse-starlette>=3.5.0(CHG-20261102-01 T2)
+    AppStatus.disable_automatic_graceful_drain()
     try:
         server.run()
     except SystemExit as exc:   # uvicorn 部分版本在啟動失敗時直接 sys.exit

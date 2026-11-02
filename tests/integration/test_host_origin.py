@@ -242,7 +242,7 @@ KNOWN_GETS: dict[str, dict[str, str]] = {
     "/api/dashboard": {},
     "/api/adapters": {},
 }
-KNOWN_MOUNTS: dict[str, str] = {}   # mount 路徑 → 以 GET 呼叫的 URL
+KNOWN_MOUNTS: dict[str, str] = {"/mcp": "/mcp/all"}   # mount 路徑 → 以 GET 呼叫的 URL
 
 
 def _walk_routes(routes, prefix: str = "") -> tuple[set[str], set[str]]:

@@ -13,8 +13,11 @@ from spillway.routing import members_of
 from spillway.store import repo
 from spillway.store.db import transaction
 
-from .common import _not_found, router
+from .common import _invalid, _not_found, router
 from .models import GroupIn, GroupUpdate
+
+# CHG-20261102-01 決策 22:保留給 `/mcp/all`、`mcp_catalog(app, "all")`
+RESERVED_GROUP_NAME = "all"
 
 
 def _member_brief(d: Deployment) -> dict[str, Any]:
@@ -45,7 +48,10 @@ async def list_groups(request: Request) -> dict[str, Any]:
 
 @router.post("/groups", status_code=201)
 async def create_group(request: Request, body: GroupIn) -> dict[str, Any]:
-    """建立群組;重複 name → 409 `conflict`。"""
+    """建立群組;重複 name → 409 `conflict`;name 為保留字 `all` → 422 `validation_error`
+    (CHG-20261102-01 決策 22:`/mcp/all` 暴露全部 route)。群組沒有改名端點(`PUT` 只取代選擇器)。"""
+    if body.name == RESERVED_GROUP_NAME:
+        raise _invalid("body.name", f"{RESERVED_GROUP_NAME} 為保留的群組名稱(/mcp/all)")
     with request_conn(request) as conn:
         with transaction(conn):
             if repo.get_group(conn, body.name) is not None:

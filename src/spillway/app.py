@@ -38,7 +38,12 @@ lifespan 啟動依序:
 - `cli_runner`:`CliRunner`(T2);`shutting_down`:停機旗標,預設 False(CHG-20261101-03 決策 16)
 - `drain_expired`(`asyncio.Event`)、`drain_tasks`(set)、`shutdown_hooks`(`api.drain.ShutdownHooks`,
   預設為空):CHG-20261102-01 決策 14 ②、18;由 `spillway serve` 的訊號處理設定/觸發
+- `mcp_server`(`api.mcp.SpillwayServer`)、`mcp_manager`(SDK `StreamableHTTPSessionManager`;只在
+  lifespan 內存在,每次進 lifespan 新建,外面為 None)、`mcp_events`(`changed()`;T2 為 no-op,T3 取代):
+  CHG-20261102-01 決策 9、13。`/mcp/<group>` 由 `api.mcp.McpEndpoint` 掛載。
 `registry`、`router`、`retention` 在 lifespan 啟動後才存在。
+lifespan 在 RetentionJob 排程之後以 `api.mcp.McpRuntime.start(app)` 啟動 MCP session manager 的專用持有
+task;關閉時第 1 步先停它(`/mcp` 之後回 503),再停排程、`terminate_all`。
 
 秘密:本檔不記錄請求內容;日誌只記例外型別。存取 token 明文只出現在 `_ensure_token` 的 stderr 一行。
 """
@@ -67,6 +72,7 @@ from spillway.api import install_error_handlers
 from spillway.api import admin
 from spillway.api import openai as openai_api
 from spillway.api.host_origin import HostOriginMiddleware
+from spillway.api.mcp import McpEndpoint, McpRuntime, NoopMcpEvents, SpillwayServer
 from spillway.api.drain import ShutdownHooks
 from spillway.clock import Clock, Rng, SystemClock, SystemRng
 from spillway.ledger import RetentionJob
@@ -211,9 +217,17 @@ def create_app(
                                        poll_seconds=retention_poll_seconds)
         app.state.retention = retention
         retention.start()
+        # CHG-20261102-01 T2(決策 9、AM-4):每次 lifespan 新建 MCP session manager 與專用持有 task
+        try:
+            mcp_runtime = await McpRuntime.start(app)
+        except BaseException:
+            await retention.stop()
+            raise
         try:
             yield
         finally:
+            # 關閉順序第 1 步(D31):停 manager 持有 task(之後 `/mcp` 回 503;取消剩餘 session)
+            await mcp_runtime.stop()
             await retention.stop()
             # CHG-20261101-03 T8(決策 16 ③):停機後備,SIGTERM→5 秒→SIGKILL
             await runner.terminate_all(grace=DEFAULT_TERM_GRACE)
@@ -229,6 +243,11 @@ def create_app(
     app.state.drain_expired = asyncio.Event()
     app.state.drain_tasks = set()
     app.state.shutdown_hooks = ShutdownHooks()
+    # CHG-20261102-01 T2(決策 9、13):MCP server 實例;manager 只在 lifespan 內存在(外面為 None → 503);
+    # `mcp_events` 先放 no-op,T3 取代
+    app.state.mcp_server = SpillwayServer(app)
+    app.state.mcp_manager = None
+    app.state.mcp_events = NoopMcpEvents()
     app.state.db_path = path
     app.state.port = port   # CHG-20261102-01 T1(決策 4):Origin 比對用的 serve 綁定埠
     app.state.conn_factory = conn_factory
@@ -238,6 +257,8 @@ def create_app(
     # ---- T15(CHG-20261030-02)只在此處追加下一行掛載管理端點,其餘不動 ----
     app.include_router(admin.router)
     # ---- T15 追加處結束 ----
+    # CHG-20261102-01 T2(決策 9、10):`/mcp/<group>`(depth → Bearer → 停機 → 群組 → SDK session manager)
+    app.mount("/mcp", McpEndpoint(app))
     # CHG-20261102-01 T1(決策 4、AM-11):Host/Origin 檢查。add_middleware 後加者在外層,
     # 所以這一行必須是 create_app 的最後一個 add_middleware,讓它先於所有路由與 `/mcp` 執行。
     app.add_middleware(HostOriginMiddleware, port=port)

@@ -21,6 +21,7 @@ from spillway.api import (
 )
 from spillway.clock import to_iso
 from spillway.estimate import Estimate
+from spillway.quota import is_cooling_only
 from spillway.redact import REDACTOR
 
 
@@ -80,7 +81,5 @@ def _estimate_out(est: Estimate | None) -> dict[str, Any] | None:
     return None if est is None else dataclasses.asdict(est)
 
 
-def _is_cooling_only(b_type: str | None, window: str | None, limit_amount: Any) -> bool:
-    """U10 (a):`type=none`、`window=none`、`limit_amount` NULL 的列(schema v1 為記錄冷卻而建的暫行列,
-    v2 migration 保留;CHG-20261101-03 決策 4、6),儀表板口徑比照「沒有 budgets 列」(決策 48)。"""
-    return b_type == "none" and window == "none" and limit_amount is None
+# U10 (a) 的判斷已移到 `spillway.quota.is_cooling_only`(CHG-20261102-01 決策 12、AM-12);保留舊名別名
+_is_cooling_only = is_cooling_only
