@@ -84,7 +84,7 @@ spillway/
 │   │       ├── sdk_compat.py    # SDK 私有屬性的唯一存取點(get_stream_open、iter_transports)
 │   │       └── bridge.py        # spillway mcp-stdio 的 stdio ↔ Streamable HTTP 轉送與錯誤對應層
 │   └── templates/
-│       └── mcp/                 # 設定輸出模板(M3b;每個 variant 一個檔,與 TOOL_FORMATS 對應;package data)
+│       └── mcp/                 # 設定輸出模板(M3b;`<tool>.<kind>.j2`,由 TOOL_FORMATS 對應,可由多個 variant 共用;package data)
 │           ├── claude-code.project.j2   # .mcp.json(type: http)
 │           ├── claude-code.command.j2   # claude mcp add 命令
 │           ├── claude-code.stdio.j2     # stdio:.mcp.json(type: stdio)
@@ -146,7 +146,7 @@ $SPILLWAY_HOME/                  # 未設時為 platformdirs.user_data_dir("spil
 |------|------|--------------|
 | `src/spillway/api/` | HTTP 介面;`admin/` 為管理 API 套件(含 MCP 設定輸出 `mcp_config.py`);`host_origin.py` 全端點 Host/Origin;`drain.py` 停機期滿 helper | `api.openai`、`api.admin`、`api.deps`、`api.host_origin`、`api.drain` |
 | `src/spillway/api/mcp/` | MCP server、stdio 橋接(`bridge.py`)、UI-8 資料來源(`catalog.py`)、SDK 私有屬性存取(`sdk_compat.py`) | `api.mcp`、`api.mcp.bridge` |
-| `src/spillway/templates/mcp/` | MCP 設定輸出模板(每個 variant 一個 `<tool>.<variant>.j2`) | `api.admin.mcp_config` |
+| `src/spillway/templates/mcp/` | MCP 設定輸出模板(`<tool>.<kind>.j2`,由 `TOOL_FORMATS` 對應,可跨 variant 共用) | `api.admin.mcp_config` |
 | `src/spillway/templates/web`、`static/`(M4) | Web UI | `web` |
 | `src/spillway/routing/` | 路由管線 | `routing` |
 | `src/spillway/adapters/base/` | adapter 共用契約、自動發現、訊號歸類與 effort 轉換、CLI 子行程執行器與共用輔助(`cli_runner.py`、`cli_prompt.py`、`cli_common.py`) | `adapters.base` |
@@ -164,6 +164,6 @@ $SPILLWAY_HOME/                  # 未設時為 platformdirs.user_data_dir("spil
 - 套件採 `src/` layout;模組名小寫底線。
 - 新增一種 AI:只新增 `adapters/<module>/` 子套件(含 `MANIFEST`、`create()`、`models.yaml`、`README.md`)與 `tests/fakes/<module>/`,不修改任何既有檔案;須通過 `tests/contract/`(design D11)。模組名小寫底線,`provider` 值用連字號(例:模組 `gemini_cli` 處理 provider `gemini-cli`)。
 - 新增或下架某個 AI 的模型:只改該模組的 `models.yaml`(design D12)。
-- 新增 MCP 設定輸出的工具:只加 `templates/mcp/<tool>.<variant>.j2` 與 `api/admin/mcp_config.py` 的 `TOOL_FORMATS` 一行(spec 8.2.3、design D36)。
+- 新增 MCP 設定輸出的工具:只加 `templates/mcp/<tool>.<kind>.j2`(可共用既有模板)與 `api/admin/mcp_config.py` 的 `TOOL_FORMATS` 一行(spec 8.2.3、design D36)。
 - 驗收測試檔名 `test_ac<編號>_<簡述>.py`(例:`test_ac07_dry_run_p95.py`),NFR 量測檔名 `test_nfr<n>_<簡述>.py`,讓 ACC 可直接指到。以行為情境驗證的 AC(M2:AC-3、4、5、13、14、15、18、19)放在 `tests/features/m2_*.feature`,情境標題帶 AC 編號。
 - 不在 repo 存任何憑證、資料庫檔或 payload;資料目錄在 repo 外(design D8)。測試一律以 `tmp_path` 為 `SPILLWAY_HOME`,不可讀寫擁有者的資料目錄。

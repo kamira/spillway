@@ -111,7 +111,7 @@
 以規格書第 12 節為準,依里程碑分組:
 
 - [ ] M2 閘門:AC-3、AC-4、AC-5、AC-7、AC-13、AC-14、AC-15、AC-18、AC-19 通過;NFR-1、NFR-2、NFR-3、NFR-5 量測達標。4.2.5、4.2.6 的邏輯先以 api 成員驗證。
-- [ ] M3 閘門:AC-1、AC-2、AC-9、AC-11、AC-12、AC-16、AC-17 通過(AC-1、AC-2、AC-12、AC-16、AC-17 的前置條件用到 claude-sub;AC-11 依 CHG-20261102-01 決策 1 改為直接驗證遞迴防護:`/mcp` 帶 `X-Spillway-Depth: 1` 或 `SPILLWAY_DEPTH=1` 的 `mcp-stdio` 被拒);NFR-6 量測達標。閘門於 M3b 結束時驗收;M3a 先以假執行檔驗證 AC-1、AC-2、AC-12、AC-16 與 AC-17 的 CLI 版、NFR-6,並由擁有者以真實 claude、codex 各冒煙一次(記入 ACC-20261101-02);AC-9、AC-11 屬 M3b。M3b(CHG-20261102-01)範圍已完成、自動化驗收通過;本閘門待擁有者以 4 種工具真實冒煙(AC-9;Gemini CLI 依 UD-1 可採 stdio variant)並記入 ACC-20261102-01 後才打勾。
+- [ ] M3 閘門:AC-1、AC-2、AC-9、AC-11、AC-12、AC-16、AC-17 通過(AC-1、AC-2、AC-12、AC-16、AC-17 的前置條件用到 claude-sub;AC-11 依 CHG-20261102-01 決策 1 改為直接驗證遞迴防護:`/mcp` 帶 `X-Spillway-Depth: 1` 或 `SPILLWAY_DEPTH=1` 的 `mcp-stdio` 被拒);NFR-6 量測達標。閘門於 M3b 結束時驗收;M3a 先以假執行檔驗證 AC-1、AC-2、AC-12、AC-16 與 AC-17 的 CLI 版、NFR-6,並由擁有者以真實 claude、codex 各冒煙一次(記入 ACC-20261101-02);AC-9、AC-11 屬 M3b。M3b(CHG-20261102-01)範圍已完成、自動化驗收通過;本閘門待擁有者以 4 種工具真實冒煙(AC-9;Gemini CLI 依 UD-1(CHG-20261102-01):其 HTTP headers 路徑失敗時改用 stdio variant,headers 或 stdio 任一成功即算 AC-9 通過,並於 ACC 記錄採用路徑與 headers 結果)並記入 ACC-20261102-01 後才打勾。
 - [ ] M4 閘門:AC-6、AC-8、AC-10、AC-20、AC-21、AC-22 通過;NFR-4 對資料庫、匯出檔、日誌三者搜尋命中數為 0。
 - [ ] 全部:每個閘門在 macOS 通過,並附擁有者的真實冒煙結果(Q1);Linux、Windows 標「未涵蓋」(Q2)。
 

@@ -557,14 +557,14 @@ LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1�
 | Tool | 輸入 | 輸出（`structuredContent`） |
 | --- | --- | --- |
 | `ask` | `route`（enum，該群組的 route；群組無 route 時為不設 enum 的字串，說明列「目前無 route」）、`prompt`（非空字串）、`effort`（選填，enum 五級）；不接受其他鍵 | `{text, served_by, slot, cost_usd, tokens_in, tokens_out}`；`content` 為一段回應文字。不露出預估值 |
-| `list_routes` | 無 | `{"routes": [{name, mode, ordered, slots: [{slot, members: [{id, effort, weight}]}]}]}`；`ordered` 為 `manual`（有手動排序，只列已儲存的 slot，與 `GET /api/routes/{name}` 同源）或 `default`（依 4.3.2 產生；chat route 不列 cli 成員） |
+| `list_routes` | 無 | `{"routes": [{name, mode, ordered, slots: [{slot, members: [{id, effort, weight}]}]}]}`；`ordered` 為 `manual`（有已儲存的手動排序）或 `default`；兩者皆與 Router 實際使用的順序相同（`OrderPlanner.plan`）：已儲存的 slot 在前，未列入的 route 成員依預設順序（4.3.2）接為後面的層級，已不屬 route 目標的成員略過，chat route 不列 cli 成員 |
 | `quota_status` | 無 | `{"members": [{id, kind, provider, budget_type, remaining, window, cooling_until, cooling_reason}]}`；範圍為群組選擇器涵蓋的成員（與 `GET /api/groups/{name}` 的成員預覽同源；`all` 為全部成員），依 id 排序；推導與 `/api/dashboard` 相同 |
 
 8.1.8 `ask` 以 route 名稱解析（不會退回同名成員的隱含 route），帳本與 `/v1` 同一路徑寫入。三個工具的 outputSchema 皆為 `type: object`、`required: []`，成功與錯誤結果都相容。
 
 8.1.9 工具錯誤結果：一律為 `CallToolResult`，`isError = true`，`content` 為一段 JSON 文字，`structuredContent` 為 `{"error": {"code": "<錯誤碼>", "message": "<說明>"}, "attempts": [...]}`（不是 JSON-RPC error）。錯誤碼：`route_not_found`（route 不存在，或 session 綁定的群組已被刪除）、`no_candidate`（帶 `attempts`，每項 `{deployment, status, slot}`）、`validation_error`（route 不是本群組可見的 route、prompt 為空、effort 不在五級內或多餘參數）、`shutting_down`（停機期滿，進行中的 `ask` 已取消）、`internal_error`（非預期錯誤，訊息只含例外型別）。
 
-8.1.10 已知差異：`list_routes` 的 `manual` 只列已儲存的 slot；Router 實際路由另把未列入的成員依預設順序接在後面、略過已不屬 route 目標的成員（4.3），兩者可能不同。
+8.1.10 `list_routes` 一律與 Router 使用同一個規劃器（`OrderPlanner.plan`）；與 `GET /api/routes/{name}` 的 `order`（只含已儲存的 slot）不同，後者不含接在後面的未列入成員。
 
 ### 8.2 設定輸出
 
@@ -590,7 +590,7 @@ LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1�
 
 8.2.2 設定內容一律以環境變數 `SPILLWAY_TOKEN` 參照 token，不輸出明文（資料庫只存雜湊，閘道無法事後取得明文）。
 
-8.2.3 每種工具的每個 variant 以一個模板檔 `templates/mcp/<tool>.<variant>.j2` 維護，與程式內的 `TOOL_FORMATS` 對應；新增工具只新增模板檔與 `TOOL_FORMATS` 一行。模板變數為 `name`（`spillway-<group>`）、`url`、`group`、`port`（serve 綁定埠）、`command`、`args_prefix`；群組名依格式跳脫（JSON 字串、TOML 字串與鍵、shell 單引號、URL 路徑段編碼）。stdio 的 `command` 為此台機器上 `spillway` 的絕對路徑（找不到時為 Python 直譯器加 `-m spillway`），模板不含 `SPILLWAY_DEPTH`。
+8.2.3 模板檔為 `templates/mcp/<tool>.<kind>.j2`，由程式內的 `TOOL_FORMATS` 對應；同一模板可由多個 variant 共用（`cursor.http.j2` 同時供 Cursor 的 user 與 project 兩個 variant；`stdio` 工具沿用各工具既有的 `*.stdio.j2`）；新增工具只新增模板檔與 `TOOL_FORMATS` 一行。模板變數為 `name`（`spillway-<group>`）、`url`、`group`、`port`（serve 綁定埠）、`command`、`args_prefix`；群組名依格式跳脫（JSON 字串、TOML 字串與鍵、shell 單引號、URL 路徑段編碼）。stdio 的 `command` 為此台機器上 `spillway` 的絕對路徑（找不到時為 Python 直譯器加 `-m spillway`），模板不含 `SPILLWAY_DEPTH`。
 
 8.2.4 各工具的欄位名稱以實作當時該工具的官方文件為準。下表與範例為實作（CHG-20261102-01）的實際輸出。
 

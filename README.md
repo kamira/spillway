@@ -96,10 +96,12 @@ stdin／stdout 為換行分隔的 JSON-RPC，轉送到 `http://127.0.0.1:<port>/
 | 結束碼 | 情況 |
 | --- | --- |
 | 0 | stdin 結束，請求皆已回應 |
-| 1 | 閘道未啟動或其他連線錯誤 |
-| 2 | `SPILLWAY_TOKEN` 未設定、空白或含換行（未連線） |
+| 1 | 閘道未啟動或其他連線錯誤；stdin 結束後 5 秒內未收到回應也是 1 |
+| 2 | `SPILLWAY_TOKEN` 未設定、空白或含換行，或 `SPILLWAY_DEPTH` 含 CR／LF（未連線） |
 | 3 | 被閘道拒絕（401、403、404、503） |
 | 130 | Ctrl-C |
+
+注意：真實工具通常不會把 `SPILLWAY_DEPTH` 傳給它啟動的 stdio server，實際有效的遞迴防線是 CLI 成員的子行程不載入任何 MCP。MCP session 存在記憶體，`serve` 重啟後用戶端須重新 initialize。
 
 ## Host 與 Origin 檢查
 
