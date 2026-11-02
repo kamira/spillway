@@ -49,7 +49,7 @@ lifespan 在 RetentionJob 排程之後以 `api.mcp.McpRuntime.start(app)` 啟動
 task。關閉順序(D31;CHG-20261102-01 決策 14、AM-6):
 1. 停 manager 持有 task(set 停止事件並 await `mgr.run()` 結束:`/mcp` 之後回 503,取消剩餘 session 與
    工具 task——`run_until_drain` 把取消轉給子 task,Router 寫 `shutdown`、CliRunner 殺 group);
-2. 有上限地等待 `app.state.drain_tasks`(`DRAIN_TASKS_TIMEOUT`;逾時再取消一次並短暫等待);
+2. 有上限地等待 `app.state.drain_tasks`(`api.drain.CANCELLED_DRAIN_TIMEOUT`;逾時再取消一次並短暫等待);
 3. `retention.stop()`;
 4. `cli_runner.terminate_all`(SIGTERM→5 秒→SIGKILL 的後備)。
 
@@ -70,7 +70,6 @@ from fastapi import FastAPI
 
 from spillway import credentials, settings
 from spillway.adapters.base import (
-    DEFAULT_DRAIN_TIMEOUT,
     DEFAULT_TERM_GRACE,
     AdapterContext,
     AdapterRegistry,
@@ -84,7 +83,7 @@ from spillway.api.host_origin import HostOriginMiddleware
 from spillway.api.mcp import McpEndpoint, McpRuntime, SpillwayServer
 from spillway.api.mcp.events import McpEvents
 from spillway.api.mcp.server import install_shutdown_hook
-from spillway.api.drain import SECOND_CANCEL_WAIT, ShutdownHooks
+from spillway.api.drain import CANCELLED_DRAIN_TIMEOUT, SECOND_CANCEL_WAIT, ShutdownHooks
 from spillway.clock import Clock, Rng, SystemClock, SystemRng
 from spillway.ledger import RetentionJob
 from spillway.routing import Router
@@ -103,12 +102,8 @@ DEFAULT_RETENTION_POLL_SECONDS = 30.0         # 真實時間的檢查間隔;到�
 
 ConnFactory = Callable[[], sqlite3.Connection]
 
-# lifespan 關閉第 2 步:等待 drain 登記表的上限(秒)——被取消的子 task 走完 CliRunner 取消路徑
-# (SIGTERM 寬限 + 讀管線上限)再加 1 秒;與 cli.CANCELLED_DRAIN_TIMEOUT 同值
-DRAIN_TASKS_TIMEOUT = DEFAULT_TERM_GRACE + DEFAULT_DRAIN_TIMEOUT + 1.0
 
-
-async def wait_drain_tasks(app: FastAPI, timeout: float = DRAIN_TASKS_TIMEOUT) -> None:
+async def wait_drain_tasks(app: FastAPI, timeout: float = CANCELLED_DRAIN_TIMEOUT) -> None:
     """lifespan 關閉第 2 步(D31;決策 14、18):有上限地等待 `app.state.drain_tasks` 裡未結束的 task;
     逾時仍未結束者再取消一次(CliRunner 視重複取消為同步 SIGKILL)並等待至多 `SECOND_CANCEL_WAIT`。"""
     pending = {t for t in app.state.drain_tasks if not t.done()}

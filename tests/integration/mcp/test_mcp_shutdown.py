@@ -92,15 +92,19 @@ async def test_hook_closes_only_get_stream_and_keeps_session(live_gateway):
         for c in (c1, c2):
             await gw.wait_stream_open(c.session_id)
         transports = gw.call_in_loop(sdk_compat.iter_transports, gw.app)
+        assert transports, "manager 存在時 iter_transports 不可為空"
         assert {t.mcp_session_id for t in transports} >= {c1.session_id, c2.session_id}
 
         gw.call_in_loop(gw.app.state.shutdown_hooks.fire)
         for c in (c1, c2):
+            # 斷言第一個觀察到的關閉狀態:用戶端之後若重連 GET,串流可能再度開啟,不能事後重讀
+            closed = False
             for _ in range(100):
                 if not gw.stream_open(c.session_id):
+                    closed = True
                     break
                 await asyncio.sleep(0.02)
-            assert gw.stream_open(c.session_id) is False
+            assert closed, "停機掛鉤沒有關閉 GET 通知串流"
         # 不 terminate session:同一個 session 的 POST 照常
         tools = (await c1.session.list_tools()).tools
         assert [t.name for t in tools] == ["ask", "list_routes", "quota_status"]
@@ -147,6 +151,34 @@ async def test_wait_drain_tasks_is_bounded_and_cancels_leftovers():
     assert quick.done() and not quick.cancelled()
     assert stuck.cancelled()
     await wait_drain_tasks(app, timeout=0.3)   # type: ignore[arg-type]  # 都已結束 → 立即返回
+
+
+async def test_lifespan_shutdown_runs_in_d31_order(monkeypatch, fake_key_env, clock, mcp_db_path):
+    """D31 / AM-6 關閉順序:停 manager 持有 task → 等 drain 登記表 → retention.stop → terminate_all。"""
+    import spillway.app as app_module
+    from spillway.adapters.base import CliRunner
+    from spillway.api.mcp.server import McpRuntime
+    from spillway.app import RetentionScheduler, create_app
+
+    order: list[str] = []
+
+    def record(name: str, original: Any) -> Any:
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            order.append(name)
+            return await original(*args, **kwargs)
+        return wrapper
+
+    monkeypatch.setattr(McpRuntime, "stop", record("mcp_stop", McpRuntime.stop))
+    monkeypatch.setattr(app_module, "wait_drain_tasks", record("wait_drain_tasks", app_module.wait_drain_tasks))
+    monkeypatch.setattr(RetentionScheduler, "stop", record("retention_stop", RetentionScheduler.stop))
+    monkeypatch.setattr(CliRunner, "terminate_all", record("terminate_all", CliRunner.terminate_all))
+
+    app = create_app(clock=clock, db_path=mcp_db_path, retention_poll_seconds=3600)
+    async with app.router.lifespan_context(app):
+        assert order == []
+        assert len(app.state.shutdown_hooks) == 1
+    assert order == ["mcp_stop", "wait_drain_tasks", "retention_stop", "terminate_all"]
+    assert list(app.state.shutdown_hooks) == []              # lifespan 結束時移除掛鉤
 
 
 # ---- L2:子行程 serve ----------------------------------------------------------------------

@@ -9,7 +9,7 @@
 - `create_initialization_options()` 預設 `NotificationOptions(tools_changed=True)`,initialize 宣告
   `tools.listChanged=true`(決策 13、AM-2)。`notifications/tools/list_changed` 由 `api/mcp/events.py`
   的 `McpEvents`(`app.state.mcp_events`)送出:`tools/list` 與 `tools/call` handler 內以公開的
-  `request_context.session` 登記 session(T3;AM-9)。`NoopMcpEvents` 保留為沒有 `register` 的空實作。
+  `request_context.session` 登記 session(T3;AM-9)。
 
 停機掛鉤(T3;決策 14 ③、AM-6):lifespan 啟動 session manager 後以 `install_shutdown_hook(app)` 在
 `app.state.shutdown_hooks` 登記 `close_standalone_streams(app)`(lifespan 結束時移除;lifespan 之外清單
@@ -45,7 +45,7 @@ from . import sdk_compat
 from . import tools as mcp_tools
 from .auth import GROUP_SCOPE_KEY
 
-__all__ = ["SpillwayServer", "McpRuntime", "NoopMcpEvents", "SERVER_NAME", "MAX_SESSIONS",
+__all__ = ["SpillwayServer", "McpRuntime", "SERVER_NAME", "MAX_SESSIONS",
            "STOP_TIMEOUT", "close_standalone_streams", "install_shutdown_hook"]
 
 _log = logging.getLogger(__name__)
@@ -61,13 +61,6 @@ def _version() -> str:
         return version("spillway")
     except Exception:  # noqa: BLE001 — 未安裝(PYTHONPATH=src)時
         return "0"
-
-
-class NoopMcpEvents:
-    """`app.state.mcp_events` 的預設值(決策 13):`changed()` 什麼都不做;由 T3 的 `api/mcp/events.py` 取代。"""
-
-    def changed(self) -> None:
-        return None
 
 
 class SpillwayServer(Server):
@@ -95,9 +88,7 @@ class SpillwayServer(Server):
 
     def _register_session(self) -> None:
         """把本請求的 session 登記到 `app.state.mcp_events`(決策 13;AM-9)。"""
-        register = getattr(getattr(self.spillway_app.state, "mcp_events", None), "register", None)
-        if register is not None:
-            register(self.request_context.session)
+        self.spillway_app.state.mcp_events.register(self.request_context.session)
 
     def current_group(self) -> str:
         """本請求的群組(`auth.McpEndpoint` 設在 scope)。不在 HTTP 請求內呼叫時丟 LookupError。"""

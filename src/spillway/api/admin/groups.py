@@ -1,6 +1,6 @@
 """`/api/groups`(CHG-20261101-02 決策 9)。
 
-群組的建立、更新、刪除在交易 commit **之後**呼叫 `tools_changed(request)`(MCP
+群組的建立、更新、刪除在交易 commit **之後**呼叫 `common.tools_changed(request)`(MCP
 `notifications/tools/list_changed`;CHG-20261102-01 決策 13)。"""
 from __future__ import annotations
 
@@ -16,18 +16,11 @@ from spillway.routing import members_of
 from spillway.store import repo
 from spillway.store.db import transaction
 
-from .common import _invalid, _not_found, router
+from .common import _invalid, _not_found, router, tools_changed
 from .models import GroupIn, GroupUpdate
 
 # CHG-20261102-01 決策 22:保留給 `/mcp/all`、`mcp_catalog(app, "all")`
 RESERVED_GROUP_NAME = "all"
-
-
-def tools_changed(request: Request) -> None:
-    """交易 commit 之後通知 MCP session 工具清單已變更(CHG-20261102-01 決策 13)。"""
-    events = getattr(request.app.state, "mcp_events", None)
-    if events is not None:
-        events.changed()
 
 
 def _member_brief(d: Deployment) -> dict[str, Any]:

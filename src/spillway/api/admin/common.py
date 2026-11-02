@@ -27,6 +27,12 @@ from spillway.redact import REDACTOR
 _REDACTOR = REDACTOR
 
 
+def tools_changed(request: Request) -> None:
+    """route、群組、order 的交易 commit **之後**呼叫:`app.state.mcp_events.changed()` 對 MCP session 送
+    `notifications/tools/list_changed`(CHG-20261102-01 決策 13);同步、立即返回,不拖住管理 API。"""
+    request.app.state.mcp_events.changed()
+
+
 # ================================================================ 錯誤處理(共用 spillway.api 的工具)
 
 

@@ -7,7 +7,7 @@
   - `drain_expired` 先到 → `child.cancel()` → 等 `FIRST_CANCEL_WAIT`(0.2 秒)→ 未結束再 `child.cancel()`
     (CliRunner 把重複取消視為「同步 SIGKILL 整個 group」)→ 再等最多 `SECOND_CANCEL_WAIT`(0.5 秒)→
     不論子 task 是否收尾完畢都回 `Drained()`。未結束的子 task 留在登記表,由 `cli.py` 在 lifespan 結束前的
-    有限等待(`CANCELLED_DRAIN_TIMEOUT`)收尾;T3 的 lifespan 關閉順序第 2 步也會等它們。
+    有限等待(本模組的 `CANCELLED_DRAIN_TIMEOUT`,`cli.py` 與 `app.py` 共用)收尾;T3 的 lifespan 關閉順序第 2 步也會等它們。
 - 外層(呼叫端)被取消時:`finally` 取消子 task,把取消轉發下去;`CancelledError` 照常往上丟。
 
 呼叫端:`api/openai.py` 的 `/v1/chat/completions`(`Drained` → 503 `shutting_down`)與 MCP `ask`
@@ -30,7 +30,10 @@ import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any, TypeVar
 
-__all__ = ["Drained", "ShutdownHooks", "run_until_drain", "FIRST_CANCEL_WAIT", "SECOND_CANCEL_WAIT"]
+from spillway.adapters.base import DEFAULT_DRAIN_TIMEOUT, DEFAULT_TERM_GRACE
+
+__all__ = ["Drained", "ShutdownHooks", "run_until_drain", "FIRST_CANCEL_WAIT", "SECOND_CANCEL_WAIT",
+           "CANCELLED_DRAIN_TIMEOUT"]
 
 _log = logging.getLogger(__name__)
 
@@ -38,6 +41,9 @@ T = TypeVar("T")
 
 FIRST_CANCEL_WAIT = 0.2    # 第一次 cancel 後等子 task 走完取消路徑的時間(秒)
 SECOND_CANCEL_WAIT = 0.5   # 第二次 cancel(CliRunner 同步 SIGKILL)後的等待上限(秒)
+# 被取消的請求/子 task 走完 CliRunner 取消路徑的等待上限:SIGTERM 寬限 + 讀管線上限 + 1 秒
+# (`cli.py` 期滿取消後的等待與 `app.py` lifespan 關閉第 2 步共用)
+CANCELLED_DRAIN_TIMEOUT = DEFAULT_TERM_GRACE + DEFAULT_DRAIN_TIMEOUT + 1.0
 
 
 class Drained:

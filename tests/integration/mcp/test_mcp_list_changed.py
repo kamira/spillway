@@ -121,20 +121,25 @@ async def test_failed_admin_write_does_not_notify(seeded_gateway):
         assert inbox.count == 0
 
 
-async def test_closed_session_does_not_break_admin_api(seeded_gateway):
+async def test_closed_or_stuck_session_does_not_break_admin_api(seeded_gateway):
     gw = seeded_gateway
     async with gw.mcp_session("coding") as c:
         await c.session.list_tools()
         await gw.wait_stream_open(c.session_id)
-    # session 已關閉(SDK 用戶端 DELETE);登記可能仍在(WeakSet 尚未回收)
+    # session 已關閉(SDK 用戶端 DELETE);登記可能仍在(WeakSet 尚未回收)。另登記一個送通知會卡住的
+    # session(卡滿 NOTIFY_TIMEOUT = 2 秒):管理 API 不可等它
+    stuck = _Session("hang")
+    gw.call_in_loop(gw.app.state.mcp_events.register, stuck)
     elapsed = await _admin(gw, "POST", "/api/routes", {"name": "r3", "target": {"group": "coding"}}, 201)
-    assert elapsed < 2.0
     pending = gw.call_in_loop(lambda: list(gw.app.state.mcp_events.pending))
+    assert pending, "卡住的 session 應有一個進行中的通知 task"
+    assert elapsed < 1.0, f"管理 API 被通知拖住({elapsed:.2f}s)"
     for _ in range(int(WAIT / 0.05)):
-        if not pending or all(t.done() for t in pending):
+        if all(t.done() for t in pending):
             break
         await asyncio.sleep(0.05)
-    assert all(t.done() for t in pending)
+    assert all(t.done() for t in pending)                  # move_on_after(2) 結束卡住的通知
+    assert stuck.sent == 0
 
 
 # ---- McpEvents 單元(假 session) --------------------------------------------------------------

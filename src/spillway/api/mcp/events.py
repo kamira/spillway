@@ -1,6 +1,6 @@
 """`notifications/tools/list_changed`(CHG-20261102-01 T3;決策 13;AM-9)。
 
-`McpEvents`:`app.state.mcp_events` 的實作(取代 T2 的 `NoopMcpEvents`)。
+`McpEvents`:`app.state.mcp_events` 的實作(由 `create_app` 建立)。
 - `register(session)`:`SpillwayServer` 在 `tools/list` 與 `tools/call` handler 內以公開的
   `server.request_context.session` 登記;以 `weakref.WeakSet` 保存,session 結束後自動消失。
   沒列過工具也沒呼叫過工具的 session 沒有工具清單要更新,不登記。
