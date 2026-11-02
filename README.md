@@ -8,7 +8,7 @@
 
 ## 狀態
 
-M2 路由核心已完成(CHG-20261030-02、整理 CHG-20261101-02)。M3 分兩部分：M3a（CHG-20261101-03）加入訂閱 CLI 成員（claude-cli、codex-cli）、CLI 併發上限、schema v2、存取 token 與 `spillway init`、graceful shutdown；M3b（CHG-20261102-01）加入 MCP server、`mcp-stdio`、MCP 設定輸出與全端點 Host／Origin 檢查，自動化驗收已通過，M3 閘門待擁有者以 Claude Code、Codex、Cursor、Gemini CLI 實際連線確認。M4（Web UI）尚未開始。
+M2 路由核心已完成(CHG-20261030-02、整理 CHG-20261101-02)。M3 分兩部分：M3a（CHG-20261101-03）加入訂閱 CLI 成員（claude-cli、codex-cli）、CLI 併發上限、schema v2、存取 token 與 `spillway init`、graceful shutdown；M3b（CHG-20261102-01）加入 MCP server、`mcp-stdio`、MCP 設定輸出與全端點 Host／Origin 檢查，M3 閘門已通過（ACC-20261102-01）。M4 分兩部分：M4a（CHG-20261102-02，後端）加入設定匯入匯出（含 `dry_run` 預覽與 replace 自動備份）、帳本 CSV 匯出、設定總覽與群組名稱規則；M4b（Web UI 8 個畫面與首次設定精靈）尚未開始。
 
 ## 核心概念
 
@@ -26,7 +26,7 @@ M2 路由核心已完成(CHG-20261030-02、整理 CHG-20261101-02)。M3 分兩�
 
 - [企劃書](docs/proposal.md)：背景、目標、範圍、技術選型、合規邊界、里程碑、風險
 - [規格書](docs/spec.md)：資料模型、路由規則、額度與預估、effort、adapter、MCP、HTTP API、驗收標準
-- [UI layout](docs/ui/)：UI-1–UI-7 的設計稿（UI-8 的版面於 M4 決定）
+- [UI layout](docs/ui/)：UI-1–UI-7 的設計稿（UI-8「API 參考」的版面於 M4b 決定）
 
 ## 技術選型
 
@@ -79,7 +79,7 @@ spillway serve           # 只綁 127.0.0.1:8787
   - Codex：`~/.codex/config.toml` 的 `[mcp_servers.spillway-<群組>]`，`tool_timeout_sec = 600`。
   - Gemini CLI：`headers` 內的環境變數展開未見官方記載；若 401 或 `gemini mcp list` 顯示未連線，改用 `variants[1]`（stdio）。
   - stdio 設定的 `command` 是此台機器上 `spillway` 的絕對路徑，換機器或重裝後須重新產生。
-- 群組名 `all` 為保留字（`/mcp/all`），無法建立名為 `all` 的群組（422）。
+- 群組名稱規則（建立與匯入時檢查，違反回 422）：不可為 `.`、`..` 或保留字 `all`（`/mcp/all`），不可含 `/`、空白、控制字元、雙向控制字元與私用或未指派字元，長度 1–200，且須為 Unicode NFC（不自動正規化）。既有不符規則的群組仍可查詢、修改選擇器與刪除。
 - 新增、修改、刪除 route 或群組後，閘道送出 `notifications/tools/list_changed`；只有開啟通知串流（GET）的連線收得到，其他連線在下次列出工具時取得新清單。
 - 遞迴防護：請求帶 `X-Spillway-Depth` 且值不是 0 時回 403 `recursion_blocked`。
 
@@ -91,23 +91,63 @@ spillway serve           # 只綁 127.0.0.1:8787
 SPILLWAY_TOKEN=... spillway mcp-stdio --group coding [--port 8787]
 ```
 
-stdin／stdout 為換行分隔的 JSON-RPC，轉送到 `http://127.0.0.1:<port>/mcp/<群組>`（主機固定）。不開啟資料庫、不經系統代理、stderr 不印 token、prompt 與回應。環境變數 `SPILLWAY_DEPTH` 有值時轉為 `X-Spillway-Depth` header。被閘道拒絕時，每個未回應的請求收到 JSON-RPC 錯誤，`error.data.code` 為 `unauthorized`、`recursion_blocked`、`not_found` 或 `shutting_down`。
+stdin／stdout 為換行分隔的 JSON-RPC，轉送到 `http://127.0.0.1:<port>/mcp/<群組>`（主機固定）。不開啟資料庫、不經系統代理、stderr 不印 token、prompt 與回應。環境變數 `SPILLWAY_DEPTH` 有值時轉為 `X-Spillway-Depth` header。`SPILLWAY_TOKEN` 的前後空白（含結尾換行）會先去除。被閘道拒絕時（POST 的回應是閘道自己的錯誤格式，且錯誤碼與狀態碼成對：401 `unauthorized`、403 `recursion_blocked`／`host_not_allowed`／`origin_not_allowed`、404 `not_found`、503 `shutting_down`），每個未回應的請求收到 JSON-RPC 錯誤，`error.data.code` 為該錯誤碼，結束碼 3。其他 HTTP 錯誤只回 `error.data.http_status`（不帶 `code`、不轉印對方訊息），結束碼 1。
 
 | 結束碼 | 情況 |
 | --- | --- |
 | 0 | stdin 結束，請求皆已回應 |
-| 1 | 閘道未啟動或其他連線錯誤；stdin 結束後 5 秒內未收到回應也是 1 |
+| 1 | 閘道未啟動或其他連線錯誤；不是閘道拒絕的 HTTP 錯誤（例如 MCP session 數達上限的 503「Too many open sessions」、session 不存在的 404，或錯誤碼與狀態碼不成對）；通知串流（GET）被拒，例如閘道停機時重連；stdin 結束後 5 秒內未收到回應 |
 | 2 | `SPILLWAY_TOKEN` 未設定、空白或含換行，或 `SPILLWAY_DEPTH` 含 CR／LF（未連線） |
-| 3 | 被閘道拒絕（401、403、404、503） |
+| 3 | 被閘道拒絕（見上，錯誤碼與狀態碼成對） |
 | 130 | Ctrl-C |
 
 注意：真實工具通常不會把 `SPILLWAY_DEPTH` 傳給它啟動的 stdio server，實際有效的遞迴防線是 CLI 成員的子行程不載入任何 MCP。MCP session 存在記憶體，`serve` 重啟後用戶端須重新 initialize。
 
+## 設定匯入匯出
+
+成員、群組、route（含拖曳順序）與三個 context 設定可匯出成 YAML 版控，再匯入同一台或另一台機器的閘道（格式見規格書第 3 節）。
+
+```bash
+# 匯出（不含任何憑證值，只有 credential_ref；不含 token 雜湊、冷卻、帳本、payload、埠號）
+curl -fsS -o spillway-config.yaml http://127.0.0.1:8787/api/config/export
+
+# 預覽：完整驗證並套用後回滾，不寫入、不備份
+curl -fsS -X POST --data-binary @spillway-config.yaml -H 'Content-Type: application/yaml' \
+  'http://127.0.0.1:8787/api/config/import?mode=replace&dry_run=true'
+
+# 匯入
+curl -fsS -X POST --data-binary @spillway-config.yaml -H 'Content-Type: application/yaml' \
+  'http://127.0.0.1:8787/api/config/import?mode=replace'
+```
+
+- **設定檔等同程式碼，只匯入可信來源。** 匯入可改變成員的 `credential_ref`、上游位址（`params.api_base` 等）與 CLI 參數（`extra_args`、`effort_args`、`cwd`）；例如把 `api_base` 指向外部主機並把 `credential_ref` 設成任意環境變數，下一次呼叫就會把該變數的值送出去。匯入前先以 `dry_run=true` 預覽：回應的 `privileged` 列出會新增或變更這類欄位的成員 id（不含值）。伺服端不另外要求確認。
+- `mode` 必填：`merge` 只新增或整筆取代檔案中的成員、群組、route（檔案外的不動；route 的 `targets` 一併取代，沒列則回到預設順序；settings 只改檔案中出現的鍵）；`replace` 另外刪除檔案外的成員、群組、route，檔案沒有的 context 設定回到預設值（例如 `context_retention_days` 回到 7，下一次清理就會刪除較舊的 payload）。帳本、payload、存取 token 都不受影響；仍存在的成員保留冷卻狀態。
+- 任何欄位不合法時整批不寫入，回 422 `validation_error`，訊息列出欄位路徑（一次最多 20 筆，不回顯值）；匯入後有兩個以上同一個訂閱 CLI provider 的成員時回 409 `provider_single`。
+- curl 必須用 `--data-binary`（`-d` 會剝掉換行）並帶 `Content-Type: application/yaml`（也接受 `application/x-yaml`、`text/yaml`；其他型別回 422，這也讓網頁無法以跨站表單送出匯入）。檔案上限 1 MiB；YAML 的 anchor／alias、明確 tag（如 `!!binary`）與重複鍵都會被拒。
+- 回應：`{mode, dry_run, created, updated, deleted, backup, privileged}`，計數各為 `{deployments, groups, routes}`。
+- 既有成員的 `params` 含疑似憑證的鍵名（較早版本寫入）時匯出回 422，先以管理 API 改用 `credential_ref` 再匯出。
+
+### 備份與還原
+
+`replace`（非 `dry_run`）在寫入前自動把目前設定備份到資料目錄下的 `backups/config-<UTC 時間戳記>.yaml`（檔案 0600；同名時加 `-2`、`-3`…，不覆寫），回應的 `backup` 為檔名。還原：以 `replace` 匯入該備份檔即可，例如
+
+```bash
+curl -fsS -X POST --data-binary @"$SPILLWAY_HOME/backups/<backup>" -H 'Content-Type: application/yaml' \
+  'http://127.0.0.1:8787/api/config/import?mode=replace'
+```
+
+備份不含帳本與 payload，也不會自動清理。已知限制：本機其他程式（非瀏覽器）可直接呼叫匯入，備份是唯一的復原手段；匯入不檢查 `credential_ref` 指向的環境變數或 keyring 項目是否存在。
+
+## 帳本 CSV 與設定總覽
+
+- `GET /api/ledger/export.csv`：篩選參數與 `GET /api/ledger` 相同（`from`、`to`、`deployment`、`route`、`status`），不分頁，最多 100,000 列（超過回 422，請縮小範圍）。UTF-8 BOM、欄位與帳本列相同，不含 prompt 與回應；以 `=`、`+`、`-`、`@`、Tab、CR 開頭的文字欄位前面會加 `'`，避免試算表當成公式。下載期間閘道持有一份讀取快照。
+- `GET /api/settings`：埠號、資料目錄、版本、token 是否已產生（不含 token）、是否首次使用（`first_run`：沒有成員也沒有 route）、成員／群組／route／成功帳本列數與 context 設定。
+
 ## Host 與 Origin 檢查
 
-所有端點（`/v1`、`/api`、`/mcp`）只接受 `Host` 為 `127.0.0.1` 或 `localhost`（可帶埠號）的請求，其他回 403 `host_not_allowed`（包括 `[::1]`）；請以 `http://127.0.0.1:8787` 或 `http://localhost:8787` 連線。請求帶 `Origin` 時必須是 `http://127.0.0.1:<埠>` 或 `http://localhost:<埠>`（serve 實際的埠），否則回 403 `origin_not_allowed`；CLI 與 SDK 不送 `Origin`，不受影響。這擋住網頁發起的跨站請求與 DNS rebinding；本機其他程式（非瀏覽器）仍可呼叫 `/api`。
+所有端點（`/v1`、`/api`、`/mcp`）只接受 `Host` 為 `127.0.0.1` 或 `localhost`（可帶埠號）的請求，其他回 403 `host_not_allowed`（包括 `[::1]`）；請以 `http://127.0.0.1:8787` 或 `http://localhost:8787` 連線。請求帶 `Origin` 時必須是 `http://127.0.0.1:<埠>` 或 `http://localhost:<埠>`（serve 實際的埠），否則回 403 `origin_not_allowed`；CLI 與 SDK 不送 `Origin`，不受影響。帶兩個 `Host` header 的請求由伺服器（uvicorn）直接回 400。這擋住網頁發起的跨站請求與 DNS rebinding；本機其他程式（非瀏覽器）仍可呼叫 `/api`。
 
-## 升級與備份
+## 升級與備份（schema）
 
 新版會在 `serve` 或 `init` 開啟資料庫時自動把 schema v1 升級為 v2（冷卻改存 `cooldowns` 表）：
 
