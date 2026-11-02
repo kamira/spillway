@@ -290,7 +290,10 @@ async def test_middleware_runs_before_routing(app, path):
     status, payload, _ = await _req(app, "GET", path, [("host", "evil.example")])
     _assert_rejected(status, payload, "host_not_allowed")
     status, payload, _ = await _req(app, "GET", path, LOCAL)
-    assert status == 404
+    # 允許清單 ⑦(CHG-20261102-01 T2):/mcp mount 後,/mcp/x 未帶 token → 401(決策 10);
+    # /mcp → Starlette Mount 的 307(轉向 /mcp/)
+    expected = {"/mcp/x": (401,), "/mcp": (307,)}.get(path, (404,))
+    assert status in expected
 
 
 async def test_origin_compared_with_create_app_port(tmp_path):
