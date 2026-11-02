@@ -190,6 +190,7 @@ async def test_websocket_scope_rejected_with_close(app):
     _, _, sent = await _call(app, _scope("GET", "/mcp/all", [("host", "evil.example")],
                                          kind="websocket"))
     assert sent and sent[0]["type"] == "websocket.close"
+    assert sent[0]["code"] == 1008
     assert not any(m["type"].startswith("http.") for m in sent)
 
 
@@ -225,19 +226,58 @@ def _snapshot(db_path: Path) -> list[str]:
         conn.close()
 
 
+# 全部 GET 路由(含 Mount)。新增 GET 路由或 Mount 時必須在這裡明列,否則下方測試失敗
+# (例如 T2 的 `/mcp` mount、T5 的 `/api/mcp/config`)。值為呼叫時代入的路徑參數。
+KNOWN_GETS: dict[str, dict[str, str]] = {
+    "/v1/models": {},
+    "/api/deployments": {},
+    "/api/deployments/{dep_id}": {"dep_id": "loc-1"},
+    "/api/groups": {},
+    "/api/groups/{name}": {"name": "grp"},
+    "/api/routes": {},
+    "/api/routes/{name}": {"name": "rt"},
+    "/api/ledger": {},
+    "/api/ledger/{ledger_id}/payload": {"ledger_id": "1"},
+    "/api/settings/context": {},
+    "/api/dashboard": {},
+    "/api/adapters": {},
+}
+KNOWN_MOUNTS: dict[str, str] = {}   # mount 路徑 → 以 GET 呼叫的 URL
+
+
+def _walk_routes(routes, prefix: str = "") -> tuple[set[str], set[str]]:
+    """app.routes 攤平(FastAPI 的 included router 遞迴展開)→ (GET 路徑集合, Mount 路徑集合)。"""
+    from starlette.routing import Mount
+
+    gets: set[str] = set()
+    mounts: set[str] = set()
+    for r in routes:
+        inner = getattr(r, "original_router", None)
+        if inner is not None:   # FastAPI ≥ 0.16x 的 include_router 包裝
+            g, m = _walk_routes(inner.routes, prefix + r.include_context.prefix)
+            gets |= g
+            mounts |= m
+        elif isinstance(r, Mount):
+            mounts.add(prefix + r.path)
+        elif "GET" in (getattr(r, "methods", None) or ()):
+            gets.add(prefix + r.path)
+        elif not hasattr(r, "methods"):
+            pytest.fail(f"未知路由型別 {type(r).__name__}:{getattr(r, 'path', r)}")
+    return gets, mounts
+
+
 async def test_all_get_routes_do_not_change_state(spillway):
     c = spillway.client
     spillway.add_deployment(local_member("loc-1", dead_base().removesuffix("/v1"), tags=("g",)))
     assert (await c.post("/api/groups", json={"name": "grp", "selector": {"all": ["g"]}})).status_code == 201
     assert (await c.post("/api/routes", json={"name": "rt", "target": {"group": "grp"}})).status_code == 201
-    fill = {"dep_id": "loc-1", "name": "rt", "ledger_id": "1"}
-    group_fill = {"name": "grp"}
 
-    gets = [p for p, ops in spillway.app.openapi()["paths"].items() if "get" in ops]
-    assert {"/v1/models", "/api/dashboard", "/api/ledger", "/api/settings/context"} <= set(gets)
+    gets, mounts = _walk_routes(spillway.app.routes)
+    assert gets == set(KNOWN_GETS), "GET 路由與 KNOWN_GETS 不符(新增路由須明列並確認不改變狀態)"
+    assert mounts == set(KNOWN_MOUNTS), "Mount 與 KNOWN_MOUNTS 不符"
     before = _snapshot(spillway.db_path)
-    for path in gets:
-        url = path.format(**(group_fill if path.startswith("/api/groups/") else fill))
+    urls = [p.format(**params) for p, params in KNOWN_GETS.items()] + list(KNOWN_MOUNTS.values())
+    for url in urls:
         r = await c.get(url)
         assert r.status_code < 500, (url, r.status_code, r.text)
     assert _snapshot(spillway.db_path) == before
@@ -310,16 +350,20 @@ def test_subprocess_serve_checks_origin_against_bound_port(tmp_path):
     env = {k: v for k, v in os.environ.items()
            if k not in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
     env.update(SPILLWAY_HOME=str(home), PYTHONPATH=str(SRC), LITELLM_LOCAL_MODEL_COST_MAP="True")
-    p = subprocess.Popen([sys.executable, "-m", "spillway", "serve", "--port", str(port)], env=env,
-                         cwd=str(REPO_ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    log = tmp_path / "serve.log"   # 不用 PIPE:未讀的管線可能塞滿;只在失敗訊息時讀
+    with log.open("wb") as fh:
+        p = subprocess.Popen([sys.executable, "-m", "spillway", "serve", "--port", str(port)],
+                             env=env, cwd=str(REPO_ROOT), stdout=subprocess.DEVNULL, stderr=fh)
     url = f"http://127.0.0.1:{port}/api/settings/context"
+    client = httpx.Client(trust_env=False, timeout=10)   # 不受 proxy 環境變數影響
     try:
         deadline = time.monotonic() + 60
         while True:
             if p.poll() is not None:
-                pytest.fail(f"serve 提前結束 rc={p.returncode}\n{p.communicate()[1]}")
+                pytest.fail(f"serve 提前結束 rc={p.returncode}\n"
+                            f"{log.read_text(encoding='utf-8', errors='replace')}")
             try:
-                if httpx.get(url, timeout=2).status_code == 200:
+                if client.get(url, timeout=2).status_code == 200:
                     break
             except httpx.TransportError:
                 pass
@@ -327,22 +371,23 @@ def test_subprocess_serve_checks_origin_against_bound_port(tmp_path):
                 pytest.fail("serve 未在 60 秒內就緒")
             time.sleep(0.2)
 
-        r = httpx.get(url, headers={"Origin": f"http://127.0.0.1:{PORT}"}, timeout=10)
+        r = client.get(url, headers={"Origin": f"http://127.0.0.1:{PORT}"})
         assert r.status_code == 403
         assert r.json()["error"]["code"] == "origin_not_allowed"
         for origin in (f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
-            assert httpx.get(url, headers={"Origin": origin}, timeout=10).status_code == 200
-        r = httpx.get(url, headers={"Host": "evil.example"}, timeout=10)
+            assert client.get(url, headers={"Origin": origin}).status_code == 200
+        r = client.get(url, headers={"Host": "evil.example"})
         assert r.status_code == 403 and r.json()["error"]["code"] == "host_not_allowed"
         raw = _raw_http10(port, "/api/settings/context")
         head, _, body = raw.partition(b"\r\n\r\n")
         assert head.split(b" ", 2)[1] == b"403", raw[:200]
         assert json.loads(body)["error"]["code"] == "host_not_allowed"
     finally:
+        client.close()
         if p.poll() is None:
             p.terminate()
             try:
-                p.communicate(timeout=30)
+                p.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 p.kill()
-                p.communicate()
+                p.wait()

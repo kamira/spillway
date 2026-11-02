@@ -63,8 +63,8 @@ from spillway.adapters.base import (
 )
 from spillway.api import install_error_handlers
 from spillway.api import admin
-from spillway.api.host_origin import HostOriginMiddleware
 from spillway.api import openai as openai_api
+from spillway.api.host_origin import HostOriginMiddleware
 from spillway.clock import Clock, Rng, SystemClock, SystemRng
 from spillway.ledger import RetentionJob
 from spillway.routing import Router

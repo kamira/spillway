@@ -18,7 +18,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from spillway.api import error_response
 
@@ -26,47 +27,43 @@ __all__ = ["HostOriginMiddleware", "check_host", "check_origin"]
 
 _HOST_RE = re.compile(r"^(127\.0\.0\.1|localhost)(:[0-9]{1,5})?$", re.IGNORECASE)
 
-Scope = dict[str, Any]
+Headers = list[tuple[bytes, bytes]]
 
 
-def _values(headers: list[tuple[bytes, bytes]], name: bytes) -> list[bytes]:
-    return [v for k, v in headers if k.lower() == name]
+def _values(headers: Headers, name: bytes) -> list[str] | None:
+    """raw headers 中名為 `name` 的所有值(ASCII 解碼);任一值不是 ASCII 時回 None(視為不符)。"""
+    try:
+        return [v.decode("ascii") for k, v in headers if k.lower() == name]
+    except UnicodeDecodeError:
+        return None
 
 
-def check_host(headers: list[tuple[bytes, bytes]]) -> bool:
+def check_host(headers: Headers) -> bool:
     """raw headers 中 `host` 剛好一個且符合本機規則才回 True。"""
     hosts = _values(headers, b"host")
-    if len(hosts) != 1:
+    if hosts is None or len(hosts) != 1:
         return False
-    try:
-        host = hosts[0].decode("ascii")
-    except UnicodeDecodeError:
-        return False
-    return _HOST_RE.fullmatch(host) is not None
+    return _HOST_RE.fullmatch(hosts[0]) is not None
 
 
-def check_origin(headers: list[tuple[bytes, bytes]], port: int) -> bool:
+def check_origin(headers: Headers, port: int) -> bool:
     """沒有 `Origin` 放行;有則必須剛好一個且完整(不分大小寫)等於本機 + 綁定埠。"""
     origins = _values(headers, b"origin")
-    if not origins:
+    if origins == []:
         return True
-    if len(origins) != 1:
+    if origins is None or len(origins) != 1:
         return False
-    try:
-        origin = origins[0].decode("ascii").lower()
-    except UnicodeDecodeError:
-        return False
-    return origin in (f"http://127.0.0.1:{port}", f"http://localhost:{port}")
+    return origins[0].lower() in (f"http://127.0.0.1:{port}", f"http://localhost:{port}")
 
 
 class HostOriginMiddleware:
     """純 ASGI;見模組說明。`port` 為 serve 綁定埠(`create_app(port=...)`)。"""
 
-    def __init__(self, app: Any, *, port: int) -> None:
+    def __init__(self, app: ASGIApp, *, port: int) -> None:
         self.app = app
         self.port = port
 
-    async def __call__(self, scope: Scope, receive: Any, send: Any) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         kind = scope.get("type")
         if kind not in ("http", "websocket"):
             await self.app(scope, receive, send)
@@ -83,7 +80,7 @@ class HostOriginMiddleware:
         await self.app(scope, receive, send)
 
     @staticmethod
-    async def _reject(scope: Scope, receive: Any, send: Any, code: str, message: str) -> None:
+    async def _reject(scope: Scope, receive: Receive, send: Send, code: str, message: str) -> None:
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 1008, "reason": code})
             return
