@@ -5,7 +5,7 @@
 
 - 傳輸:`mcp.client.streamable_http.streamable_http_client(url, http_client=client)`,`client` 為自建的
   `httpx.AsyncClient(headers=..., trust_env=False, timeout=httpx.Timeout(30, read=660),
-  follow_redirects=False)`——`trust_env=False` 讓系統代理(`HTTP_PROXY`/`ALL_PROXY`、macOS 系統代理)
+  follow_redirects=False)`(SDK 仍會自行跟隨同 origin 的 redirect)——`trust_env=False` 讓系統代理(`HTTP_PROXY`/`ALL_PROXY`、macOS 系統代理)
   收不到明文 Bearer;read 660 秒涵蓋 600 秒的 `ask`。URL 主機固定 `127.0.0.1`(不提供 `--host`/`--url`),
   群組名以 `quote(g, safe="")` 編碼。
 - stdio 端:`mcp.server.stdio.stdio_server(stdin=, stdout=)`,stdin/stdout 傳入本模組的轉接物件:
@@ -25,8 +25,12 @@
 - depth:`SPILLWAY_DEPTH` 為空或未設定時不送 header;有值時原樣放進 `X-Spillway-Depth`(spec 8.1.6);
   含 CR/LF → 結束碼 2。
 - 不開資料庫、不取 `spillway.lock`、不建立資料目錄。
-- 日誌:`mcp`、`httpx` logger 設為 ERROR;自己的錯誤只輸出固定字串,不帶例外內容;不記 token、prompt 與回應。
-- `KeyboardInterrupt`(Ctrl-C)→ 結束碼 130,不印 traceback。stdin EOF → 正常結束,結束碼 0。
+- 日誌:`mcp`、`httpx`、`httpcore` logger 設為 ERROR、不往上傳遞、只掛 `NullHandler`(stderr 不出現 SDK 的
+  traceback);自己的錯誤只輸出固定字串,不帶例外內容;不記 token、prompt 與回應。
+- `KeyboardInterrupt`(Ctrl-C)→ 結束碼 130,不印 traceback。stdin EOF → 等進行中的 request 至多
+  `EOF_DRAIN_TIMEOUT` 秒後結束,結束碼 0;逾時仍未回應的 id 寫出錯誤,結束碼 1。
+- 閘道端串流自行結束(例如通知 POST 被拒絕,SDK 吞掉例外並關閉 read stream)→ 同時停止讀 stdin、立即結束:
+  記到拒絕狀態碼時結束碼 3(錯誤帶 `data.code`),否則 1;未回應的 id(含 stdin 已送出、尚未轉送者)都寫出錯誤。
 
 `run(group, port, environ=None) -> int` 為 `cli.py` 的入口。
 """
@@ -65,6 +69,8 @@ REJECT_CODES: dict[int, str] = {
     503: "shutting_down",
 }
 JSONRPC_SERVER_ERROR = -32000
+EOF_DRAIN_TIMEOUT = 5.0     # stdin EOF 後等待進行中 request 回應的上限(秒);逾時對其餘 id 寫出錯誤
+STDIN_DRAIN_TIMEOUT = 1.0   # 閘道端結束後,收集 stdin 已送出、尚未轉送的 request id 的上限(秒)
 _PREFIX = "spillway mcp-stdio"
 
 
@@ -108,6 +114,7 @@ class _StdinLines:
 
     def __init__(self, fd: int = 0) -> None:
         self._fd = fd
+        self._closed = False
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
@@ -134,12 +141,17 @@ class _StdinLines:
 
         threading.Thread(target=reader, name="mcp-stdio-stdin", daemon=True).start()
 
+    def close(self) -> None:
+        """停止交回後續的行(閘道端已結束時用;daemon thread 照舊讀到 EOF 或行程結束)。"""
+        self._closed = True
+        self._queue.put_nowait(None)
+
     def __aiter__(self) -> _StdinLines:
         return self
 
     async def __anext__(self) -> str:
-        line = await self._queue.get()
-        if line is None:
+        line = None if self._closed else await self._queue.get()
+        if line is None or self._closed:
             raise StopAsyncIteration
         return line
 
@@ -178,7 +190,8 @@ class _Stdout:
 class _State:
     pending: dict[Any, None] = field(default_factory=dict)   # 保留順序的集合
     rejected_status: int | None = None
-    eof: bool = False
+    eof: bool = False          # stdin 已 EOF
+    http_ended: bool = False   # 閘道端的串流自行結束(例如 SDK 吞掉被拒絕的通知 POST 並關閉 read stream)
 
 
 def _rejection(status: int) -> tuple[str, dict[str, Any]]:
@@ -210,6 +223,7 @@ def _leaves(exc: BaseException) -> list[BaseException]:
 
 
 async def _bridge(url: str, headers: dict[str, str]) -> int:
+    # 延遲 import:token/depth 不合法時(結束碼 2)不必載入 httpx、anyio 與 SDK
     import anyio
     import httpx
     from mcp import types
@@ -225,16 +239,29 @@ async def _bridge(url: str, headers: dict[str, str]) -> int:
             state.rejected_status = response.status_code
             raise httpx.HTTPStatusError("rejected by gateway", request=response.request, response=response)
 
+    def track(item: Any) -> bool:
+        """記錄 request id;解析失敗的項目只在 stderr 記類型,回傳 False(不轉送)。"""
+        if isinstance(item, Exception):
+            _say(f"stdin 訊息無法解析,已略過({type(item).__name__})")
+            return False
+        root = item.message.root
+        if isinstance(root, types.JSONRPCRequest):
+            state.pending[root.id] = None
+        return True
+
     async def stdin_to_http(src: Any, dst: Any, tg: Any) -> None:
-        async for item in src:
-            if isinstance(item, Exception):
-                _say(f"stdin 訊息無法解析,已略過({type(item).__name__})")
-                continue
-            root = item.message.root
-            if isinstance(root, types.JSONRPCRequest):
-                state.pending[root.id] = None
-            await dst.send(item)
+        try:
+            async for item in src:
+                if track(item):
+                    await dst.send(item)
+        except (anyio.ClosedResourceError, anyio.BrokenResourceError):   # SDK 已關閉 write stream
+            state.http_ended = True
+            tg.cancel_scope.cancel()
+            return
         state.eof = True
+        with anyio.move_on_after(EOF_DRAIN_TIMEOUT):   # 等進行中的 request 回應
+            while state.pending:
+                await anyio.sleep(0.02)
         tg.cancel_scope.cancel()
 
     async def http_to_stdout(src: Any, dst: Any, tg: Any) -> None:
@@ -246,7 +273,15 @@ async def _bridge(url: str, headers: dict[str, str]) -> int:
             if isinstance(root, (types.JSONRPCResponse, types.JSONRPCError)):
                 state.pending.pop(root.id, None)
             await dst.send(item)
-        tg.cancel_scope.cancel()   # 閘道端串流結束(例如通知被拒絕)
+        state.http_ended = True   # 閘道端串流結束(例如通知被拒絕):連 stdin 一起停,見下方
+        tg.cancel_scope.cancel()
+
+    async def collect_stdin(src: Any) -> None:
+        # 閘道端已結束:收下 stdin 端已讀出、卡在交接的項目(記錄其 request id,稍後回錯誤),讓 SDK 的
+        # stdin_reader 結束,stdio context 才能離開
+        with anyio.move_on_after(STDIN_DRAIN_TIMEOUT):
+            async for item in src:
+                track(item)
 
     client = httpx.AsyncClient(headers=headers, trust_env=False, follow_redirects=False,
                                timeout=httpx.Timeout(30, read=660),
@@ -255,7 +290,8 @@ async def _bridge(url: str, headers: dict[str, str]) -> int:
     transport_error: str | None = None
     try:
         async with client:
-            async with stdio_server(stdin=_StdinLines(), stdout=out) as (stdio_read, stdio_write):  # type: ignore[arg-type]
+            stdin = _StdinLines()
+            async with stdio_server(stdin=stdin, stdout=out) as (stdio_read, stdio_write):  # type: ignore[arg-type]
                 try:
                     async with streamable_http_client(url, http_client=client) as (http_read, http_write, _sid):
                         async with anyio.create_task_group() as tg:
@@ -263,6 +299,8 @@ async def _bridge(url: str, headers: dict[str, str]) -> int:
                             tg.start_soon(http_to_stdout, http_read, stdio_write, tg)
                 finally:
                     stdio_write.close()   # 否則 SDK 的 stdout_writer 一直等,stdio context 不會結束
+                    stdin.close()         # 不再交回 stdin 的後續行(閘道端已結束時不等 EOF)
+                await collect_stdin(stdio_read)
     except* httpx.HTTPStatusError as eg:
         status = _status_in(eg)
     except* httpx.ConnectError:
@@ -284,16 +322,26 @@ async def _bridge(url: str, headers: dict[str, str]) -> int:
         _write_errors(out, state, {"code": JSONRPC_SERVER_ERROR, "message": "gateway unavailable"})
         _say(message)
         return EXIT_ERROR
-    if state.pending and not state.eof:   # 閘道端意外結束,仍有未回應的 request
+    if state.http_ended:   # 閘道端意外結束(無論是否仍有未回應的 request)
         _write_errors(out, state, {"code": JSONRPC_SERVER_ERROR, "message": "gateway connection closed"})
         _say("閘道連線已結束")
+        return EXIT_ERROR
+    if state.pending:   # stdin EOF 後 EOF_DRAIN_TIMEOUT 內仍未回應
+        _write_errors(out, state, {"code": JSONRPC_SERVER_ERROR,
+                                   "message": "stdin closed before the gateway responded"})
+        _say(f"stdin 已關閉,{EOF_DRAIN_TIMEOUT:g} 秒內未收到閘道回應的 request 已回錯誤")
         return EXIT_ERROR
     return EXIT_OK
 
 
 def _quiet_loggers() -> None:
+    # ERROR 等級仍會經 logging.lastResort 印到 stderr(SDK 的 logger.exception 帶 traceback 與
+    # pydantic input_value,可能含回應文字):不往上傳遞、只掛 NullHandler
     for name in ("mcp", "httpx", "httpcore"):
-        logging.getLogger(name).setLevel(logging.ERROR)
+        lg = logging.getLogger(name)
+        lg.setLevel(logging.ERROR)
+        lg.propagate = False
+        lg.handlers[:] = [logging.NullHandler()]
 
 
 def run(group: str, port: int, environ: Mapping[str, str] | None = None) -> int:

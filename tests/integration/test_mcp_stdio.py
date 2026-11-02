@@ -48,7 +48,7 @@ INITIALIZED = {"jsonrpc": "2.0", "method": "notifications/initialized"}
 # ---------------------------------------------------------------------------- fixtures 與工具
 
 @pytest.fixture
-def gateway(fake_key_env: str, fake_api: Any, clock: Any, tmp_path: Path):
+def gateway(fake_key_env: str, fake_api: Any, clock: Any):
     from spillway import settings
 
     db_path = settings.db_path()
@@ -136,9 +136,10 @@ class Bridge:
         self._buf = b""
         self.lines: list[bytes] = []
 
-    def send(self, obj: dict[str, Any]) -> None:
+    def send(self, *objs: dict[str, Any]) -> None:
+        """一次寫出(多個物件在同一次 write 內)。"""
         assert self.proc.stdin is not None
-        self.proc.stdin.write((json.dumps(obj) + "\n").encode())
+        self.proc.stdin.write("".join(json.dumps(o) + "\n" for o in objs).encode())
         self.proc.stdin.flush()
 
     def recv(self, timeout: float = 20.0) -> dict[str, Any]:
@@ -202,6 +203,13 @@ def bridges():
     yield _start
     for b in started:
         b.kill()
+
+
+def _assert_clean_stderr(stderr: str, *secrets: str) -> None:
+    """失敗路徑的 stderr:沒有 traceback、沒有 pydantic 的 input_value(可能含回應文字)、沒有秘密。"""
+    assert "Traceback" not in stderr and "input_value" not in stderr
+    for secret in secrets:
+        assert secret not in stderr
 
 
 def _assert_jsonrpc_only(lines: list[bytes]) -> None:
@@ -280,8 +288,8 @@ def test_rejected_by_gateway_exit_3(gateway: LiveGateway, tmp_path: Path, bridge
                             "data": {"code": code, "http_status": status}}
     rc, stderr, lines = b.finish(close_stdin=False)   # 被拒絕後自行結束,不必等 stdin EOF
     assert rc == 3
-    assert code in stderr and "Traceback" not in stderr
-    assert gateway.token not in stderr
+    assert code in stderr
+    _assert_clean_stderr(stderr, gateway.token)
     _assert_jsonrpc_only(lines)
     if case == "shutting_down":
         gateway.call_in_loop(setattr, gateway.app.state, "shutting_down", False)
@@ -292,7 +300,8 @@ def test_bad_token_exit_2_without_connecting(tmp_path: Path, listener: CountingL
     b = bridges(_env(tmp_path, token=token), "coding", listener.port)
     rc, stderr, lines = b.finish(timeout=15)
     assert rc == 2
-    assert "SPILLWAY_TOKEN" in stderr and "Traceback" not in stderr
+    assert "SPILLWAY_TOKEN" in stderr
+    _assert_clean_stderr(stderr)
     assert lines == []
     time.sleep(0.2)
     assert listener.count == 0
@@ -304,7 +313,8 @@ def test_depth_with_crlf_exit_2_without_connecting(tmp_path: Path, listener: Cou
     b = bridges(_env(tmp_path, token="spw_x", depth=depth), "coding", listener.port)
     rc, stderr, lines = b.finish(timeout=15)
     assert rc == 2
-    assert "SPILLWAY_DEPTH" in stderr and "spw_x" not in stderr
+    assert "SPILLWAY_DEPTH" in stderr
+    _assert_clean_stderr(stderr, "spw_x")
     assert lines == [] and listener.count == 0
 
 
@@ -316,7 +326,7 @@ def test_gateway_not_running_exit_1(tmp_path: Path, bridges):
     assert "data" not in msg["error"]
     rc, stderr, lines = b.finish(close_stdin=False)
     assert rc == 1
-    assert "Traceback" not in stderr and "spw_x" not in stderr
+    _assert_clean_stderr(stderr, "spw_x")
     _assert_jsonrpc_only(lines)
 
 
@@ -337,9 +347,12 @@ def test_proxy_env_ignored_stdout_jsonrpc_only_and_no_secrets(gateway: LiveGatew
             "params": {"name": "ask", "arguments": {"route": "review", "prompt": PROMPT}}})
     called = b.recv_id("call-3")
     assert called["result"]["structuredContent"]["text"] == ANSWER
-    b.send({"this is": "not json-rpc"})   # 解析失敗:只在 stderr 記類型,不轉送
+    # 解析失敗(method 不是字串):只在 stderr 記類型,不轉送、也不當成 pending
+    b.send({"jsonrpc": "2.0", "id": 99, "method": 5})
     rc, stderr, lines = b.finish()
     assert rc == 0
+    assert "stdin 訊息無法解析,已略過(ValidationError)" in stderr
+    assert all(json.loads(x).get("id") != 99 for x in lines)
     assert listener.count == 0
     _assert_jsonrpc_only(lines)
     for secret in (gateway.token, PROMPT, ANSWER):
@@ -358,4 +371,72 @@ def test_sigint_exit_130_without_traceback(gateway: LiveGateway, tmp_path: Path,
     rc, stderr, lines = b.finish(close_stdin=False)
     assert rc == 130
     assert "Traceback" not in stderr and "KeyboardInterrupt" not in stderr
+    _assert_jsonrpc_only(lines)
+
+
+# ---------------------------------------------------------------------------- 審議修正(T4 review)
+
+def _handshake(b: Bridge) -> None:
+    b.send(INIT)
+    assert "result" in b.recv_id(1)
+    b.send(INITIALIZED)
+
+
+def test_rejected_notification_stops_bridge_and_errors_later_request(gateway: LiveGateway,
+                                                                     tmp_path: Path, bridges):
+    """通知 POST 被拒絕(SDK 吞掉例外、關閉 read stream)→ bridge 不等 stdin EOF,5 秒內結束碼 3;
+    緊接著送出的 request 收到錯誤而不是沒有回應。"""
+    b = bridges(_env(tmp_path, token=gateway.token), "coding", gateway.port)
+    _handshake(b)
+    time.sleep(0.3)
+    gateway.call_in_loop(setattr, gateway.app.state, "shutting_down", True)
+    try:
+        t0 = time.monotonic()
+        b.send({"jsonrpc": "2.0", "method": "notifications/roots/list_changed"},
+               {"jsonrpc": "2.0", "id": 7, "method": "tools/list"})
+        msg = b.recv_id(7, timeout=5)
+        assert msg["error"]["data"] == {"code": "shutting_down", "http_status": 503}
+        rc, stderr, lines = b.finish(timeout=5, close_stdin=False)
+        assert time.monotonic() - t0 < 5
+    finally:
+        gateway.call_in_loop(setattr, gateway.app.state, "shutting_down", False)
+    assert rc == 3
+    assert "shutting_down" in stderr
+    _assert_clean_stderr(stderr, gateway.token)
+    _assert_jsonrpc_only(lines)
+
+
+def test_stdin_eof_waits_for_inflight_request(gateway: LiveGateway, tmp_path: Path, bridges):
+    b = bridges(_env(tmp_path, token=gateway.token), "coding", gateway.port)
+    _handshake(b)
+    b.send({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+            "params": {"name": "ask", "arguments": {"route": "review", "prompt": PROMPT}}})
+    assert b.proc.stdin is not None
+    b.proc.stdin.close()   # 進行中的 request 仍要拿到回應
+    msg = b.recv_id(5)
+    assert msg["result"]["structuredContent"]["text"] == ANSWER
+    rc, stderr, lines = b.finish()
+    assert rc == 0
+    _assert_jsonrpc_only(lines)
+
+
+def test_stdin_eof_drain_timeout_writes_errors(gateway: LiveGateway, fake_api: Any, tmp_path: Path,
+                                               bridges):
+    from spillway.api.mcp.bridge import EOF_DRAIN_TIMEOUT
+
+    fake_api.set_mode("*", "delay", seconds=EOF_DRAIN_TIMEOUT + 2)
+    b = bridges(_env(tmp_path, token=gateway.token), "coding", gateway.port)
+    _handshake(b)
+    b.send({"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+            "params": {"name": "ask", "arguments": {"route": "review", "prompt": PROMPT}}})
+    time.sleep(0.3)
+    t0 = time.monotonic()
+    assert b.proc.stdin is not None
+    b.proc.stdin.close()
+    msg = b.recv_id(6, timeout=EOF_DRAIN_TIMEOUT + 5)
+    assert msg["error"] == {"code": -32000, "message": "stdin closed before the gateway responded"}
+    rc, stderr, lines = b.finish()
+    assert EOF_DRAIN_TIMEOUT - 0.5 <= time.monotonic() - t0 < EOF_DRAIN_TIMEOUT + 3
+    assert rc == 1
+    _assert_clean_stderr(stderr, gateway.token, PROMPT)
     _assert_jsonrpc_only(lines)
