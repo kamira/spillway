@@ -33,8 +33,11 @@ from spillway.adapters.base import (
     cli_timeout,
     effort_to_upstream,
     messages_to_prompt,
+    nonneg_int,
     resolve_signals,
+    tail,
 )
+from spillway.adapters.base.cli_common import cli_cwd
 
 __all__ = ["CodexCliAdapter", "ENV_REMOVE", "ENV_SET", "IGNORE_USER_CONFIG", "MCP_OFF", "messages_to_prompt"]
 
@@ -43,7 +46,6 @@ ENV_REMOVE = ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL")   # 決策 9
 ENV_SET = {"SPILLWAY_DEPTH": "1"}
 MCP_OFF = ("-c", "mcp_servers={}")                                    # 決策 11:固定停用全部 MCP
 IGNORE_USER_CONFIG = "--ignore-user-config"   # 決策 11 補記:不讀 $CODEX_HOME/config.toml(其中的 MCP)
-WORK_SUBDIR = ("work", "codex")
 _ERROR_TAIL = 1000   # 錯誤訊息只留最後這麼多字元
 
 def _error(message: str) -> CallResult:
@@ -131,15 +133,6 @@ def last_usage(events: list[dict[str, Any]]) -> Mapping[str, Any] | None:
     return None
 
 
-def _int_or_none(v: Any) -> int | None:
-    return v if isinstance(v, int) and not isinstance(v, bool) else None
-
-
-def _tail(text: str) -> str:
-    text = text.strip()
-    return text if len(text) <= _ERROR_TAIL else "…" + text[-_ERROR_TAIL:]
-
-
 def _jsonl_failure(events: list[dict[str, Any]]) -> str:
     """stdout JSONL 中最後一個 error/turn.failed 事件的訊息;沒有時空字串。"""
     for e in reversed(events):
@@ -162,26 +155,12 @@ class CodexCliAdapter:
     def _params(self, dep: Deployment) -> dict[str, Any]:
         return {**self.manifest.default_params, **(dep.params or {})}
 
-    def _cwd(self, params: Mapping[str, Any]) -> Path | str:
-        """回傳工作目錄;無法決定時回錯誤訊息字串。"""
-        raw = params.get("cwd")
-        if raw:
-            return Path(str(raw)).expanduser()
-        if self.context.data_dir is None:
-            return "未設定 params.cwd,且 AdapterContext.data_dir 未注入:無法決定 codex 的工作目錄"
-        cwd = Path(self.context.data_dir).joinpath(*WORK_SUBDIR)
-        try:
-            cwd.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            return f"無法建立工作目錄 {cwd}:{type(exc).__name__}: {exc.strerror or exc}"
-        return cwd
-
     async def call(self, dep: Deployment, req: ChatRequest, effort: str | None) -> CallResult:
         if dep.kind not in self.manifest.kinds:
             return _error(f"此模組不支援 kind {dep.kind!r}")
         runner = self.context.cli_runner
         if runner is None:
-            return _error("cli_runner 未注入:無法啟動 codex 子行程")
+            return _error(f"cli_runner 未注入:無法啟動 {EXECUTABLE} 子行程")
         params = self._params(dep)
         try:
             signals = resolve_signals(self.manifest.default_signals, dep.params)
@@ -202,9 +181,10 @@ class CodexCliAdapter:
         prompt = messages_to_prompt(req.messages)   # adapters.base 共用轉換(spec 7.5.1;決策 12a)
         if not prompt:
             return _error("沒有可送出的文字訊息")
-        cwd = self._cwd(params)
-        if isinstance(cwd, str):
-            return _error(cwd)
+        try:
+            cwd = cli_cwd(params, self.context, EXECUTABLE)
+        except ValueError as exc:
+            return _error(str(exc))
 
         try:
             fd, out_path = tempfile.mkstemp(prefix="spillway-codex-", suffix=".txt")   # 0600
@@ -218,11 +198,11 @@ class CodexCliAdapter:
                                        cwd=cwd, timeout=timeout)
             except OSError as exc:
                 # 找不到執行檔、argv 過長(E2BIG)、cwd 不存在等;訊息不含 argv(prompt)
-                return _error(f"無法啟動 codex 子行程:{type(exc).__name__}"
+                return _error(f"無法啟動 {EXECUTABLE} 子行程:{type(exc).__name__}"
                               f"(errno {exc.errno}):{exc.strerror or '未知原因'}")
             except ValueError:
                 # argv 含 NUL 字元(execve 不接受);訊息不含 argv
-                return _error("無法啟動 codex 子行程:引數含 NUL 字元")
+                return _error(f"無法啟動 {EXECUTABLE} 子行程:引數含 NUL 字元")
             try:
                 text = Path(out_path).read_text(encoding="utf-8", errors="replace")
             except OSError:
@@ -238,9 +218,9 @@ class CodexCliAdapter:
     def _result(out: CliOutput, text: str, signals: Mapping[str, Any],
                 timeout: float | None) -> CallResult:
         if out.killed_reason == "shutdown":
-            return _error("codex 子行程因閘道停機被終止(shutdown)")
+            return _error(f"{EXECUTABLE} 子行程因閘道停機被終止(shutdown)")
         if out.timed_out:
-            return _error(f"codex 逾時(超過 {timeout:g} 秒)" if timeout is not None else "codex 逾時")
+            return _error(f"{EXECUTABLE} 逾時(超過 {timeout:g} 秒)" if timeout is not None else f"{EXECUTABLE} 逾時")
         events = _events(out.stdout)
         if out.exit_code != 0:
             jsonl_msg = _jsonl_failure(events)
@@ -250,14 +230,14 @@ class CodexCliAdapter:
             raw = {"exit_code": out.exit_code, "stderr": matched, "message": message}
             return CallResult(ok=False, text="", tokens_in=None, tokens_out=None, cost_usd=None,
                               status=classify(raw, signals),
-                              error=_tail(message) or f"codex 結束碼 {out.exit_code}")
+                              error=tail(message, _ERROR_TAIL) or f"{EXECUTABLE} 結束碼 {out.exit_code}")
         if not events:
-            return _error("codex 輸出不是 JSONL(stdout 沒有可解析的事件)")
+            return _error(f"{EXECUTABLE} 輸出不是 JSONL(stdout 沒有可解析的事件)")
         if not text.strip():
-            return _error("codex 沒有寫出回應(-o 檔為空)")
+            return _error(f"{EXECUTABLE} 沒有寫出回應(-o 檔為空)")
         usage = last_usage(events) or {}
-        return CallResult(ok=True, text=text, tokens_in=_int_or_none(usage.get("input_tokens")),
-                          tokens_out=_int_or_none(usage.get("output_tokens")), cost_usd=None,
+        return CallResult(ok=True, text=text, tokens_in=nonneg_int(usage.get("input_tokens")),
+                          tokens_out=nonneg_int(usage.get("output_tokens")), cost_usd=None,
                           status="ok", error=None, finish_reason="stop")
 
     async def health(self, dep: Deployment) -> bool:
