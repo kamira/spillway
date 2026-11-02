@@ -82,6 +82,7 @@ from spillway.api import openai as openai_api
 from spillway.api.host_origin import HostOriginMiddleware
 from spillway.api.mcp import McpEndpoint, McpRuntime, SpillwayServer
 from spillway.api.mcp.events import McpEvents
+from spillway.api.mcp.sdk_logging import install_sdk_root_log_filter
 from spillway.api.mcp.server import install_shutdown_hook
 from spillway.api.drain import CANCELLED_DRAIN_TIMEOUT, SECOND_CANCEL_WAIT, ShutdownHooks
 from spillway.clock import Clock, Rng, SystemClock, SystemRng
@@ -215,6 +216,8 @@ def create_app(
 ) -> FastAPI:
     clk: Clock = clock if clock is not None else SystemClock()
     rnd: Rng = rng if rng is not None else SystemRng()
+    # CHG-20261102-01 終審修正 A:SDK 直接寫 root logger 的驗證失敗紀錄含 request 片段(可能是 prompt)
+    install_sdk_root_log_filter()
     path = Path(db_path) if db_path is not None else settings.db_path()
     extra = tuple(extra_adapter_paths)
 

@@ -361,6 +361,26 @@ def test_proxy_env_ignored_stdout_jsonrpc_only_and_no_secrets(gateway: LiveGatew
     assert not (tmp_path / "bridge-home").exists()
 
 
+def test_invalid_tools_call_prompt_not_logged(gateway: LiveGateway, tmp_path: Path, bridges, caplog):
+    """CHG-20261102-01 終審修正 A:`arguments` 為字串的 `tools/call` 經 bridge 轉送 → 閘道回 -32602;
+    bridge 的 stderr 與閘道的日誌(SDK 寫 root logger 的驗證失敗紀錄)都沒有 prompt。"""
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    b = bridges(_env(tmp_path, token=gateway.token), "coding", gateway.port)
+    _handshake(b)
+    b.send({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": {"name": "ask", "arguments": f"route=review prompt={PROMPT}"}})
+    msg = b.recv_id(4)
+    assert msg["error"]["code"] == -32602
+    rc, stderr, lines = b.finish()
+    assert rc == 0
+    _assert_clean_stderr(stderr, gateway.token, PROMPT)
+    _assert_jsonrpc_only(lines)
+    assert all(PROMPT.encode() not in x for x in lines)
+    assert PROMPT not in caplog.text and "Failed to validate request" not in caplog.text
+
+
 def test_sigint_exit_130_without_traceback(gateway: LiveGateway, tmp_path: Path, bridges):
     b = bridges(_env(tmp_path, token=gateway.token), "coding", gateway.port)
     b.send(INIT)

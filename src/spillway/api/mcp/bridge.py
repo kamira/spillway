@@ -47,6 +47,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
+from .sdk_logging import install_sdk_root_log_filter
+
 __all__ = [
     "EXIT_OK", "EXIT_ERROR", "EXIT_CONFIG", "EXIT_REJECTED", "EXIT_SIGINT", "REJECT_CODES",
     "TOKEN_ENV", "DEPTH_ENV", "DEPTH_HEADER", "HOST", "bridge_url", "build_headers", "run",
@@ -342,6 +344,8 @@ def _quiet_loggers() -> None:
         lg.setLevel(logging.ERROR)
         lg.propagate = False
         lg.handlers[:] = [logging.NullHandler()]
+    # SDK 也會直接寫 root logger(`logging.warning("Failed to validate request: …")`,含 request 片段)
+    install_sdk_root_log_filter()
 
 
 def run(group: str, port: int, environ: Mapping[str, str] | None = None) -> int:

@@ -22,10 +22,11 @@ route(spec 8.1.4)。群組在 session 期間被刪:`tools/list` 回空清單、`
   `error="shutdown"`;決策 18,T3)。非預期例外 → `internal_error`(訊息只含例外型別)。工具錯誤碼的單一清單在
   `catalog.TOOL_ERRORS`。
 
-`list_routes`(決策 12):`{"routes": [{name, mode, ordered, slots: [{slot, members: [{id, effort, weight}]}]}]}`;
-有手動排序時 `ordered` 為 `"manual"`,slot 與成員順序與 `GET /api/routes/{name}` 的 `order` 同源
-(`repo.list_route_targets`);沒有時依 spec 4.3.2 以 `routing.OrderPlanner` 產生預設順序,`ordered` 為
-`"default"`(chat route 不列 cli 成員,與 CandidateFilter 一致;編號仍依全部成員固定)。
+`list_routes`(決策 12,終審修訂):`{"routes": [{name, mode, ordered, slots: [{slot, members: [{id, effort,
+weight}]}]}]}`;兩種情形都以 `routing.OrderPlanner().plan(route_targets, 候選, 成員)` 產生,與 Router 實際
+使用的順序相同:手動 slot(`repo.list_route_targets`)在前,未列入手動順序的成員依 spec 4.3.2 接成後續層級
+(4.3.3),已不是成員的 target 略過;chat route 不列 cli 成員(與 CandidateFilter 一致;編號仍依全部成員
+固定)。有已存的手動順序時 `ordered` 為 `"manual"`,否則為 `"default"`。不套用冷卻、額度等執行期篩選。
 
 `quota_status`(決策 12):`{"members": [{id, kind, provider, budget_type, remaining, window, cooling_until,
 cooling_reason}]}`,範圍為群組選擇器涵蓋的成員(與 `GET /api/groups/{name}` 的預覽同源;`all` 為全部
@@ -360,20 +361,15 @@ def _list_routes(app: Any, group: str) -> types.CallToolResult:
         groups = repo.list_groups(conn) if routes else []
         out = []
         for r in routes:
+            # 與 Router 同一條路徑(決策 12 終審修訂):手動 slot 在前、未列入的成員接成後續層級、
+            # 已不是成員的 target 略過;chat route 不列 cli 成員(CandidateFilter)
             targets = repo.list_route_targets(conn, r.name)   # 已依 (slot, position, id) 排序
-            if targets:
-                slots: dict[int, list[dict[str, Any]]] = {}
-                for t in targets:
-                    slots.setdefault(t.slot, []).append(
-                        {"id": t.deployment_id, "effort": t.effort, "weight": t.weight})
-                out.append({"name": r.name, "mode": r.mode, "ordered": "manual",
-                            "slots": [{"slot": n, "members": slots[n]} for n in sorted(slots)]})
-                continue
             members = members_of(r.target, deps, groups)
             pool = [d for d in members if not (r.mode == "chat" and d.kind == "cli")]
             cands = [Candidate(deployment=d, estimate=None) for d in pool]  # type: ignore[arg-type]
-            plan = OrderPlanner().plan([], cands, members)
-            out.append({"name": r.name, "mode": r.mode, "ordered": "default", "slots": [
+            plan = OrderPlanner().plan(targets, cands, members)
+            out.append({"name": r.name, "mode": r.mode,
+                        "ordered": "manual" if targets else "default", "slots": [
                 {"slot": s.number,
                  "members": [{"id": e.deployment.id, "effort": e.effort, "weight": e.weight}
                              for e in s.entries]}

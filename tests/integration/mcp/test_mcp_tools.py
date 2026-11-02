@@ -257,6 +257,62 @@ async def test_list_routes_default_order(seeded_gateway, fake_cli):
         {"id": "api-z", "effort": None, "weight": "medium"}]}]
 
 
+def _slots(route: dict) -> list[tuple[int, list[tuple[str, str, str | None]]]]:
+    return [(s["slot"], [(m["id"], m["weight"], m["effort"]) for m in s["members"]]) for s in route["slots"]]
+
+
+async def test_list_routes_follows_router_plan(seeded_gateway, fake_api, fake_cli):
+    """終審修正 C(決策 12 修訂):兩種情形都走 `OrderPlanner.plan`——手動順序缺的成員接成後續層級、
+    已不是成員的 target 略過、chat route 不列 cli 成員;與 Router 的 dry-run 順序相同。"""
+    gw = seeded_gateway
+    with gw.http() as http:
+        r = http.post("/api/deployments", json={
+            "id": "claude-sub", "model_name": "claude-sub", "kind": "cli", "provider": "claude-cli",
+            "model": "claude-sonnet-5-5", "params": {"max_concurrency": 1, "timeout": 60},
+            "capabilities": {"ctx": 1000000, "tools": False, "vision": False,
+                             "efforts": ["low", "medium", "high", "max"]},
+            "tags": ["a"]})
+        assert r.status_code == 201, r.text
+        for name in ("task-r", "task-d"):
+            assert http.post("/api/routes", json={"name": name, "target": {"group": "coding"},
+                                                  "mode": "task"}).status_code == 201
+    with gw.db() as conn:
+        repo.save_deployment(conn, api_member("api-c", fake_api.base_url, tags=("a",)))
+        repo.save_deployment(conn, api_member("api-old", fake_api.base_url, tags=("a",)))
+        manual = [repo.RouteTarget("api-ab", 1, 0, "low", "high"), repo.RouteTarget("api-old", 1, 1),
+                  repo.RouteTarget("claude-sub", 3, 0, None, "low")]
+        for name in ("review", "task-r"):
+            repo.replace_route_targets(conn, name, manual)
+        # api-old 已不是 coding 的成員:手動順序裡的它成為過時的 target
+        repo.save_deployment(conn, api_member("api-old", fake_api.base_url, tags=("b",)))
+    async with gw.mcp_session("coding") as c:
+        r = await c.session.call_tool("list_routes", {})
+    assert r.isError is False
+    routes = {x["name"]: x for x in r.structuredContent["routes"]}
+    assert {n: x["ordered"] for n, x in routes.items()} == {
+        "review": "manual", "review-b": "default", "task-d": "default", "task-r": "manual"}
+    rest = [("api-a", "medium", None), ("api-c", "medium", None)]
+    # 手動 slot 1、3 → 未列入者從 slot 4 起依 4.3.2(cli 層 4 為空、api 層 5)
+    assert _slots(routes["review"]) == [(1, [("api-ab", "high", "low")]), (5, rest)]   # chat:無 cli
+    assert _slots(routes["task-r"]) == [(1, [("api-ab", "high", "low")]),
+                                        (3, [("claude-sub", "low", None)]), (5, rest)]
+    api_tier = [("api-a", "medium", None), ("api-ab", "medium", None), ("api-c", "medium", None)]
+    assert _slots(routes["review-b"]) == [(2, api_tier)]                                  # chat:無 cli
+    assert _slots(routes["task-d"]) == [(1, [("claude-sub", "medium", None)]), (2, api_tier)]
+
+    # 與 Router 自己的順序(dry-run;slot 內依 position 排回)相同
+    with gw.http() as http:
+        for name, route in routes.items():
+            plan = http.post(f"/api/routes/{name}/dry-run",
+                             json={"messages": [{"role": "user", "content": "x"}]})
+            assert plan.status_code == 200, plan.text
+            router_slots = [
+                (s["number"], [(e["deployment"], e["weight"]) for e in
+                               sorted(s["entries"], key=lambda e: (e["position"], e["deployment"]))])
+                for s in plan.json()["slots"]]
+            assert router_slots == [(n, [(i, w) for i, w, _ in ms]) for n, ms in _slots(route)], name
+
+
 # ---- quota_status ------------------------------------------------------------------------------
 
 async def test_quota_status_scope_and_matches_dashboard(seeded_gateway, clock):
