@@ -27,8 +27,8 @@
   錯誤碼不成對、body 超過上限、其他狀態碼)→ `{"code":-32000,"message":"gateway error (HTTP <s>)",
   "data":{"http_status":<s>}}`(不帶 `data.code`),結束碼 1;一律不轉印對方的 `message`。
   `httpx.ConnectError`(閘道未啟動)與其他傳輸錯誤 → 錯誤不帶 `data`,結束碼 1。
-- token:`SPILLWAY_TOKEN` 先 `strip()`;未設定、空值或含 CR/LF → 結束碼 2,不連線。
-- depth:`SPILLWAY_DEPTH` 為空或未設定時不送 header;有值時原樣放進 `X-Spillway-Depth`(spec 8.1.6);
+- token:`settings.TOKEN_ENV` 先 `strip()`;未設定、空值或含 CR/LF → 結束碼 2,不連線。
+- depth:`settings.DEPTH_ENV` 為空或未設定時不送 header;有值時原樣放進 `settings.DEPTH_HEADER`(spec 8.1.6);
   含 CR/LF → 結束碼 2。
 - 不開資料庫、不取 `spillway.lock`、不建立資料目錄。
 - 日誌:`mcp`、`httpx`、`httpcore` logger 設為 ERROR、不往上傳遞、只掛 `NullHandler`(stderr 不出現 SDK 的
@@ -64,7 +64,7 @@ __all__ = [
 
 EXIT_OK = 0
 EXIT_ERROR = 1        # 閘道未啟動或其他傳輸錯誤
-EXIT_CONFIG = 2       # SPILLWAY_TOKEN / SPILLWAY_DEPTH 不合法(未連線)
+EXIT_CONFIG = 2       # settings.TOKEN_ENV / settings.DEPTH_ENV 不合法(未連線)
 EXIT_REJECTED = 3     # 被閘道拒絕(spec 9.1.2 body,且狀態碼與錯誤碼成對)
 
 HOST = DEFAULT_HOST
@@ -215,7 +215,7 @@ def gateway_code(status: int, content_type: str | None, body: bytes | None) -> s
         return None
     try:
         payload = json.loads(body)
-    except (ValueError, UnicodeDecodeError):
+    except Exception:   # noqa: BLE001 — 含深層巢狀造成的 RecursionError:一律視為不是閘道的拒絕
         return None
     error = payload.get("error") if isinstance(payload, dict) else None
     code = error.get("code") if isinstance(error, dict) else None

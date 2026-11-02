@@ -578,6 +578,8 @@ _BIG = {"error": {"code": "shutting_down", "message": "x" * (64 * 1024)}}
     ("over_64k", 503, _BIG, "application/json"),
     ("other_status", 500, _spec_body("internal_error"), "application/json"),
     ("not_a_dict", 404, ["not_found"], "application/json"),
+    ("deep_nesting_503", 503, "[" * 30000, "application/json"),   # json.loads → RecursionError
+    ("deep_nesting_401", 401, "[" * 30000, "application/json"),
 ])
 def test_non_gateway_rejection_exit_1_with_http_status_only(fake_http: FakeHttpEndpoint, tmp_path: Path,
                                                              bridges, case, status, body, content_type):
@@ -607,6 +609,7 @@ def test_gateway_code_pairs():
     assert gateway_code(500, "application/json", ok) is None
     assert gateway_code(401, "application/json", b"\xff\xfe") is None
     assert gateway_code(401, "application/json", b'{"error": "unauthorized"}') is None
+    assert gateway_code(401, "application/json", b"[" * 30000) is None    # RecursionError 不外洩
 
 
 def _tracking_stream(chunks: list[bytes]) -> Any:
