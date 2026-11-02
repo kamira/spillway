@@ -5,9 +5,9 @@
 SQL 一律經 `store.repo`。HTTP 轉換、請求與檔案模型驗證屬介面層(`api/admin/config_io.py`、
 `api/admin/config_file.py`)。
 
-本檔目前提供匯出(T3):`dump(conn) -> str`、格式常數與 `_Dumper`。匯入(T4:`load_yaml`、`ConfigPlan`、
-`apply`、`ImportResult`、`ImportConflict`、`ConfigSyntaxError`)沿用下方的鍵名與預設值常數,
-省略規則與匯出共用同一份定義(往返的前提,決策 8)。
+匯出(T3):`dump(conn) -> str`、格式常數與 `_Dumper`。匯入(T4):`load_yaml`(嚴格 loader)、
+`ConfigPlan`、`apply`、`ImportResult`、`ImportConflict`、`ConfigSyntaxError`、`format_path`;
+沿用下方的鍵名與預設值常數,省略規則與匯出共用同一份定義(往返的前提,決策 8)。
 
 匯出格式(決策 5,逐欄定死;改動須經修改治理,黃金檔 `tests/unit/data/config_golden.yaml` 釘住):
 - 頂層 `TOP_KEYS`:`version`(= `FORMAT_VERSION`)、`settings`、`deployments`、`groups`、`routes`
@@ -32,21 +32,31 @@ SQL 一律經 `store.repo`。HTTP 轉換、請求與檔案模型驗證屬介面�
 """
 from __future__ import annotations
 
+import json
+import os
+import re
 import sqlite3
-from collections.abc import Iterable, Mapping
+import stat
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 import yaml
 
 from spillway.domain import Budget, Deployment
 from spillway.store import repo
+from spillway.store.db import transaction
 
 __all__ = [
     "FORMAT_VERSION", "TOP_KEYS", "SETTING_KEYS", "SETTING_TYPES", "DEPLOYMENT_KEYS", "BUDGET_KEYS",
     "SELECTOR_KEYS", "ROUTE_KEYS", "TARGET_ENTRY_KEYS", "DEFAULT_MODE", "DEFAULT_WEIGHT",
     "DUMP_KWARGS", "dump", "render", "build_document", "utc_stamp_filename",
 ]
+# 匯入(T4)的名稱(`load_yaml`、`ConfigSyntaxError`、`ConfigPlan`、`apply`、`ImportResult`、`ImportConflict`、
+# `format_path`、`privileged_view`、`MAX_DEPTH`、`BACKUP_FILENAME_FORMAT`)以 `configio.<名稱>` 取用;
+# `__all__` 維持匯出部分(`tests/unit/test_configio_dump.py::test_public_surface` 釘住)。
 
 FORMAT_VERSION = 1
 
@@ -255,3 +265,415 @@ def dump(conn: sqlite3.Connection) -> str:
             route_targets=repo.list_all_route_targets(conn),
         )
     return render(document)
+
+
+# ================================================================ 匯入(T4;決策 6、7、18、20)
+
+MAX_DEPTH = 32                      # 巢狀深度上限(mapping/sequence 層數,決策 18)
+BACKUP_FILENAME_FORMAT = "config-%Y%m%dT%H%M%SZ.yaml"
+_PLAIN_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def format_path(parts: Iterable[str | int]) -> str:
+    """欄位路徑(決策 6):list 索引為 0 起算 `[i]`;鍵符合 `^[A-Za-z0-9_-]+$` 時為 `.key`(開頭不加點),
+    否則為 `["..."]`(JSON 跳脫)。例:`deployments[1].kind`、`routes["a.b"].targets[0][1].deployment`。
+    回顯的鍵名由介面層另經 `redact_echo` 遮罩(本模組不 import `spillway.api`)。"""
+    out = ""
+    for part in parts:
+        if isinstance(part, int) and not isinstance(part, bool):
+            out += f"[{part}]"
+        elif _PLAIN_KEY.match(str(part)):
+            out += f".{part}" if out else str(part)
+        else:
+            out += "[" + json.dumps(str(part), ensure_ascii=False) + "]"
+    return out
+
+
+class ConfigSyntaxError(ValueError):
+    """YAML 層的錯誤(語法、anchor/alias、深度、明確 tag、重複鍵、非字串鍵、頂層形狀、version)。
+    `path`:欄位路徑(`format_path`),語法類錯誤為 `yaml`;`reason`:說明,只含行列與問題描述,
+    不含原始行片段(決策 18)。"""
+
+    def __init__(self, path: str, reason: str) -> None:
+        super().__init__(f"{path}: {reason}")
+        self.path = path
+        self.reason = reason
+
+
+def _mark_reason(mark: Any, problem: str) -> str:
+    if mark is None:
+        return problem
+    return f"line {mark.line + 1} column {mark.column + 1}: {problem}"
+
+
+class _StrictLoader(yaml.SafeLoader):
+    """嚴格 loader(決策 18):拒絕 anchor/alias 與任何明確 tag;巢狀深度上限 `MAX_DEPTH`;
+    不解析 timestamp(日期當字串)與 merge key(`<<` 當一般字串鍵);bool 只認 true/false(不分大小寫),
+    `on`、`yes` 等保持字串。重複鍵與非字串鍵在 `_to_python` 檢查。"""
+
+    def __init__(self, stream: str) -> None:
+        super().__init__(stream)
+        self._depth = 0
+
+    def compose_node(self, parent: Any, index: Any) -> Any:
+        event = self.peek_event()
+        if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None) is not None:
+            raise ConfigSyntaxError("yaml", _mark_reason(event.start_mark, "不支援 anchor/alias"))
+        if getattr(event, "tag", None) is not None:
+            raise ConfigSyntaxError("yaml", _mark_reason(event.start_mark, "不支援明確 tag"))
+        nested = isinstance(event, (yaml.SequenceStartEvent, yaml.MappingStartEvent))
+        if nested:
+            self._depth += 1
+            if self._depth > MAX_DEPTH:
+                raise ConfigSyntaxError(
+                    "yaml", _mark_reason(event.start_mark, f"巢狀深度超過 {MAX_DEPTH} 層"))
+        try:
+            return super().compose_node(parent, index)
+        finally:
+            if nested:
+                self._depth -= 1
+
+
+_BOOL_TAG = "tag:yaml.org,2002:bool"
+_DROPPED_TAGS = {_BOOL_TAG, "tag:yaml.org,2002:timestamp", "tag:yaml.org,2002:merge"}
+_StrictLoader.yaml_implicit_resolvers = {
+    first: [(tag, rx) for tag, rx in resolvers if tag not in _DROPPED_TAGS]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+_StrictLoader.add_implicit_resolver(
+    _BOOL_TAG, re.compile(r"^(?:[Tt][Rr][Uu][Ee]|[Ff][Aa][Ll][Ss][Ee])$"), list("tTfF"))
+
+_STR_TAG = "tag:yaml.org,2002:str"
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _to_python(loader: _StrictLoader, node: yaml.Node, path: tuple[str | int, ...]) -> Any:
+    """節點樹 → Python 物件,沿途帶欄位路徑;深度已由 composer 限制。"""
+    if isinstance(node, yaml.ScalarNode):
+        value = loader.construct_object(node)
+        if isinstance(value, str) and _SURROGATE.search(value):
+            # 雙引號跳脫 `"\ud800"` 可產生孤立代理字元;無法以 UTF-8 寫入資料庫或匯出
+            raise ConfigSyntaxError(format_path(path) or "yaml", "不可含孤立的代理字元")
+        return value
+    if isinstance(node, yaml.SequenceNode):
+        return [_to_python(loader, child, (*path, i)) for i, child in enumerate(node.value)]
+    if isinstance(node, yaml.MappingNode):
+        out: dict[str, Any] = {}
+        for key_node, value_node in node.value:
+            if not isinstance(key_node, yaml.ScalarNode) or key_node.tag != _STR_TAG:
+                raise ConfigSyntaxError(format_path(path) or "yaml",
+                                        _mark_reason(key_node.start_mark, "鍵必須是字串"))
+            key = loader.construct_object(key_node)
+            if _SURROGATE.search(key):
+                raise ConfigSyntaxError(format_path(path) or "yaml", "鍵不可含孤立的代理字元")
+            if key in out:
+                raise ConfigSyntaxError(format_path((*path, key)), "重複的鍵")
+            out[key] = _to_python(loader, value_node, (*path, key))
+        return out
+    raise ConfigSyntaxError(format_path(path) or "yaml", "不支援的節點")
+
+
+def load_yaml(text: str) -> Any:
+    """嚴格解析設定檔(決策 18)。回傳頂層 mapping(已確認 `version == 1`);任何錯誤丟
+    `ConfigSyntaxError`,訊息只含行列與問題描述(不用 `str(exc)`、不取原始行片段)。"""
+    loader: _StrictLoader | None = None
+    try:
+        loader = _StrictLoader(text)    # Reader 在建構時就檢查不可列印字元(ReaderError)
+        node = loader.get_single_node()
+        data = None if node is None else _to_python(loader, node, ())
+    except ConfigSyntaxError:
+        raise
+    except yaml.MarkedYAMLError as exc:
+        raise ConfigSyntaxError(
+            "yaml", _mark_reason(exc.problem_mark, str(exc.problem or "語法錯誤"))) from None
+    except yaml.reader.ReaderError as exc:
+        raise ConfigSyntaxError("yaml", f"位置 {exc.position}: 不允許的字元") from None
+    except yaml.YAMLError:
+        raise ConfigSyntaxError("yaml", "語法錯誤") from None
+    except RecursionError:
+        raise ConfigSyntaxError("yaml", "巢狀過深") from None
+    finally:
+        if loader is not None:
+            loader.dispose()
+    if not isinstance(data, dict):
+        raise ConfigSyntaxError("yaml", "頂層必須是 mapping")
+    version = data.get("version")
+    if type(version) is not int or version != FORMAT_VERSION:
+        raise ConfigSyntaxError("version", f"必須為 {FORMAT_VERSION}")
+    return data
+
+
+@dataclass(frozen=True)
+class ConfigPlan:
+    """已驗證的設定檔(介面層 `config_file.parse` 產生)。`routes` 每項為 `(route, targets)`,
+    `targets` 為 None 表示檔案沒列 `targets`(回到預設順序;與空 tuple 效果相同)。
+    `settings` 只含檔案中出現的鍵(已轉型)。"""
+
+    deployments: tuple[Deployment, ...] = ()
+    groups: tuple[repo.Group, ...] = ()
+    routes: tuple[tuple[repo.Route, tuple[repo.RouteTarget, ...] | None], ...] = ()
+    settings: Mapping[str, Any] = field(default_factory=dict)
+
+
+def _counts(deployments: int = 0, groups: int = 0, routes: int = 0) -> dict[str, int]:
+    return {"deployments": deployments, "groups": groups, "routes": routes}
+
+
+@dataclass
+class ImportResult:
+    """`created`/`updated`/`deleted` 各為 `{deployments, groups, routes}` 計數;`backup` 為備份檔名
+    (merge 與 dry_run 為 None);`affected_ids` = 交易前 ∪ 交易後的成員 id(呼叫端據此逐一讓健康快取
+    失效);`privileged` 見 `privileged_view`(依 id 排序,只含 id)。"""
+
+    mode: str
+    created: dict[str, int]
+    updated: dict[str, int]
+    deleted: dict[str, int]
+    backup: str | None
+    affected_ids: frozenset[str]
+    privileged: tuple[str, ...]
+    dry_run: bool
+
+
+_STATUS_OF_CODE = {"provider_single": 409, "validation_error": 422, "internal_error": 500}
+
+
+class ImportConflict(Exception):
+    """套用階段的失敗(交易已回滾):`validation_error`(422;targets 參照不存在的成員、route 目標群組
+    不存在)、`provider_single`(409)、`internal_error`(500;備份失敗)。`path` 為欄位路徑(可為空),
+    `message` 可能含使用者輸入的 id 或名稱,介面層回應前須經 `redact_echo`。"""
+
+    def __init__(self, code: str, path: str, message: str) -> None:
+        super().__init__(f"{path}: {message}" if path else message)
+        self.code = code
+        self.path = path
+        self.message = message
+
+    @property
+    def status(self) -> int:
+        return _STATUS_OF_CODE.get(self.code, 422)
+
+
+# ---------------------------------------------------------------- privileged 欄位(決策 20)
+
+_URL_KEYS = frozenset({"api_base", "base_url", "url", "endpoint"})
+_URL_SUFFIXES = ("_url", "_base", "_endpoint")
+_CLI_PRIVILEGED_PARAMS = ("extra_args", "effort_args", "cwd")
+
+
+def _is_url_key(key: str) -> bool:
+    k = key.lower()
+    return k in _URL_KEYS or k.endswith(_URL_SUFFIXES)
+
+
+def privileged_view(dep: Deployment | None) -> tuple[Any, ...]:
+    """成員的 privileged 欄位投影(決策 20):`credential_ref`、URL 類 `params` 頂層鍵(`api_base`、
+    `base_url`、`url`、`endpoint` 或以 `_url`/`_base`/`_endpoint` 結尾)、CLI 成員的 `params.extra_args`、
+    `effort_args`、`cwd`。`params.timeout` 等其他鍵不列入。不存在的成員視同全部未設定。"""
+    if dep is None:
+        return (None, {}, {})
+    params = dep.params or {}
+    urls = {k: params[k] for k in params if _is_url_key(str(k))}
+    cli = {k: params[k] for k in _CLI_PRIVILEGED_PARAMS if k in params} if dep.kind == "cli" else {}
+    return (dep.credential_ref, urls, cli)
+
+
+# ---------------------------------------------------------------- 備份(決策 7)
+
+
+def _write_backup(backup_dir: Path, now: datetime, text: str) -> str:
+    """寫入 `backup_dir/config-<UTC>.yaml`(0600、O_EXCL|O_NOFOLLOW、fsync;同名已存在時加 `-<n>`,n 從 2
+    遞增,一律不覆寫)。`backup_dir` 以 0700 建立;是 symlink 或不是目錄 → `ImportConflict(internal_error)`。
+    回傳檔名(不含目錄)。"""
+    try:
+        backup_dir.mkdir(mode=0o700, exist_ok=True)
+        st = backup_dir.lstat()
+    except OSError as exc:
+        raise ImportConflict("internal_error", "", f"無法建立備份目錄({type(exc).__name__})") from None
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        raise ImportConflict("internal_error", "", "備份目錄不是一般目錄(可能是 symlink),未匯入")
+    base = utc_stamp_filename(now, BACKUP_FILENAME_FORMAT)
+    stem = base[: -len(".yaml")]
+    data = text.encode("utf-8")
+    n = 1
+    while True:
+        name = base if n == 1 else f"{stem}-{n}.yaml"
+        path = backup_dir / name
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            n += 1
+            continue
+        except OSError as exc:
+            raise ImportConflict("internal_error", "", f"無法寫入備份({type(exc).__name__})") from None
+        try:
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view):]
+            os.fsync(fd)
+        except OSError as exc:
+            os.close(fd)
+            _unlink_quiet(path)
+            raise ImportConflict("internal_error", "", f"無法寫入備份({type(exc).__name__})") from None
+        os.close(fd)
+        return name
+
+
+def _unlink_quiet(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------- 套用(決策 7、20)
+
+
+class _DryRunRollback(Exception):
+    """dry_run:套用與檢查都做完後丟出,讓 `transaction` 回滾。"""
+
+    def __init__(self, result: ImportResult) -> None:
+        super().__init__("dry_run")
+        self.result = result
+
+
+def _route_path(name: str, *rest: str | int) -> str:
+    return format_path(("routes", name, *rest))
+
+
+def apply(
+    conn: sqlite3.Connection,
+    plan: ConfigPlan,
+    mode: Literal["merge", "replace"],
+    *,
+    cardinality_of: Callable[[str, str], str | None],
+    backup_dir: Path,
+    now: datetime,
+    dry_run: bool = False,
+) -> ImportResult:
+    """在單一 `transaction(conn)`(BEGIN IMMEDIATE)內套用設定檔(決策 7):
+
+    1. targets 內每個成員必須存在於「檔案 ∪(merge 時)資料庫」,否則 `ImportConflict(validation_error)`
+       (寫入 route_targets 之前檢查,不撞外鍵);
+    2. 只限 replace、非 dry_run:`dump` 目前設定並寫備份(寫鎖內、刪除之前);
+    3. UPSERT 檔案內的成員、群組、route(`save_*`),每條 route 以 `replace_route_targets` 取代排序;
+       settings 只覆寫檔案中出現的鍵;
+    4. 只限 replace:刪除檔案外的 routes → groups → deployments(其 tags、budget、冷卻、route_targets
+       由外鍵串聯刪除),並刪除檔案中沒有的 `SETTING_DEFAULTS` 鍵(回到預設);其他 settings 鍵、帳本、
+       payload 不動;
+    5. 最終狀態檢查:route `target.group` 存在(422);`cardinality_of(provider, kind) == "single"` 的 provider
+       至多 1 個成員(409 `provider_single`);不檢查成員是否屬於 route 目標(stale targets 由 Router 過濾)。
+    任一步失敗 → ROLLBACK(本次寫的備份檔一併移除)並丟 `ImportConflict`。`dry_run=True` 時做完 1、3–5
+    後 ROLLBACK,回傳同樣的計數與 `privileged`(`backup` 為 None)。
+    """
+    if mode not in ("merge", "replace"):
+        raise ValueError(f"mode 必須為 merge 或 replace:{mode!r}")
+    replace = mode == "replace"
+    written: list[Path] = []
+    try:
+        with transaction(conn):
+            result = _apply_tx(conn, plan, replace, cardinality_of=cardinality_of,
+                               backup_dir=backup_dir, now=now, dry_run=dry_run, written=written)
+            if dry_run:
+                raise _DryRunRollback(result)
+    except _DryRunRollback as rb:
+        return rb.result
+    except BaseException:
+        for path in written:
+            _unlink_quiet(path)
+        raise
+    return result
+
+
+def _apply_tx(
+    conn: sqlite3.Connection,
+    plan: ConfigPlan,
+    replace: bool,
+    *,
+    cardinality_of: Callable[[str, str], str | None],
+    backup_dir: Path,
+    now: datetime,
+    dry_run: bool,
+    written: list[Path],
+) -> ImportResult:
+    before_deps = {d.id: d for d in repo.list_deployments(conn)}
+    before_groups = {g.name for g in repo.list_groups(conn)}
+    before_routes = {r.name for r in repo.list_routes(conn)}
+    file_deps = {d.id for d in plan.deployments}
+    file_groups = {g.name for g in plan.groups}
+    file_routes = {r.name for r, _ in plan.routes}
+
+    # 1. targets 參照的成員必須存在(寫入 route_targets 之前)
+    known = file_deps if replace else file_deps | set(before_deps)
+    for route, targets in plan.routes:
+        for t in targets or ():
+            if t.deployment_id not in known:
+                raise ImportConflict(
+                    "validation_error",
+                    _route_path(route.name, "targets", t.slot - 1, t.position, "deployment"),
+                    f"成員 {t.deployment_id} 不存在")
+
+    # 2. 備份(只限 replace、非 dry_run;寫鎖內、刪除之前)
+    backup: str | None = None
+    if replace and not dry_run:
+        backup = _write_backup(backup_dir, now, dump(conn))
+        written.append(backup_dir / backup)
+
+    # 3. UPSERT
+    for dep in plan.deployments:
+        repo.save_deployment(conn, dep)
+    for group in plan.groups:
+        repo.save_group(conn, group)
+    for route, targets in plan.routes:
+        repo.save_route(conn, route)
+        repo.replace_route_targets(conn, route.name, list(targets or ()))
+    for key, value in plan.settings.items():
+        repo.set_setting(conn, key, value)
+
+    # 4. replace:刪除檔案外的實體與 context 設定鍵
+    deleted = _counts()
+    if replace:
+        gone_routes = sorted(before_routes - file_routes)
+        gone_groups = sorted(before_groups - file_groups)
+        gone_deps = sorted(set(before_deps) - file_deps)
+        for name in gone_routes:
+            repo.delete_route(conn, name)
+        for name in gone_groups:
+            repo.delete_group(conn, name)
+        for dep_id in gone_deps:
+            repo.delete_deployment(conn, dep_id)
+        repo.delete_settings(conn, [k for k in repo.SETTING_DEFAULTS if k not in plan.settings])
+        deleted = _counts(len(gone_deps), len(gone_groups), len(gone_routes))
+
+    # 5. 最終狀態檢查
+    for route in repo.list_routes(conn):
+        group = route.target.get("group")
+        if group is not None and repo.get_group(conn, group) is None:
+            raise ImportConflict("validation_error", _route_path(route.name, "target", "group"),
+                                 f"群組 {group} 不存在")
+    single = sorted({p for k, p in repo.list_kinds_providers(conn)
+                     if cardinality_of(p, k) == "single"})
+    by_provider = repo.deployment_ids_by_provider(conn)
+    for provider in single:
+        ids = by_provider.get(provider, [])
+        if len(ids) > 1:
+            raise ImportConflict(
+                "provider_single", "deployments",
+                f"provider {provider} 的模組僅允許 1 個成員,匯入後共有 {len(ids)} 個:{', '.join(ids)}")
+
+    before_ids = set(before_deps)
+    privileged = tuple(sorted(
+        d.id for d in plan.deployments
+        if privileged_view(d) != privileged_view(before_deps.get(d.id))))
+    return ImportResult(
+        mode="replace" if replace else "merge",
+        created=_counts(len(file_deps - before_ids), len(file_groups - before_groups),
+                        len(file_routes - before_routes)),
+        updated=_counts(len(file_deps & before_ids), len(file_groups & before_groups),
+                        len(file_routes & before_routes)),
+        deleted=deleted,
+        backup=backup,
+        affected_ids=frozenset(before_ids | file_deps),
+        privileged=privileged,
+        dry_run=dry_run,
+    )

@@ -797,3 +797,23 @@ def list_all_route_targets(conn: sqlite3.Connection) -> dict[str, list[RouteTarg
             effort=r["effort"], weight=r["weight"],
         ))
     return out
+
+
+# ---------------------------------------------------------------- config 匯入寫入(CHG-20261102-02 T4)
+# `spillway.configio.apply` 用(呼叫端已在 `transaction(conn)` 內)。實體的刪除沿用 `delete_route`、
+# `delete_group`、`delete_deployment`(逐筆;不整表 DELETE)。
+
+
+def delete_settings(conn: sqlite3.Connection, keys: Iterable[str]) -> None:
+    """刪除指定的 settings 鍵(之後讀取回到 `SETTING_DEFAULTS`);不存在的鍵略過。禁止整表 DELETE
+    (存取 token 雜湊與其他設定同表)。"""
+    with transaction(conn):
+        conn.executemany("DELETE FROM settings WHERE key = ?", [(k,) for k in keys])
+
+
+def deployment_ids_by_provider(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """`{provider: [成員 id…]}`(各清單依 id 排序);匯入後的 cardinality 檢查用。"""
+    out: dict[str, list[str]] = {}
+    for provider, dep_id in conn.execute("SELECT provider, id FROM deployments ORDER BY provider, id"):
+        out.setdefault(provider, []).append(dep_id)
+    return out
