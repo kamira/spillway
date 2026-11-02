@@ -432,7 +432,7 @@ async def test_second_codex_member_409_provider_single(home):
     body = {"model_name": "codex", "kind": "cli", "provider": "codex-cli", "model": "gpt-5.5"}
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8787") as c:
             r1 = await c.post("/api/deployments", json={"id": "codex-a", **body})
             assert r1.status_code == 201, r1.text
             r2 = await c.post("/api/deployments", json={"id": "codex-b", **body})

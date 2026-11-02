@@ -1,7 +1,13 @@
 """FastAPI app 組裝(CHG-20261030-02 T13 擁有;design D1、D2、D4;spec 2.4.5、7.6.6)。
 
 `create_app(*, clock=None, rng=None, extra_adapter_paths=(), db_path=None,
-retention_interval_seconds=3600, retention_poll_seconds=30.0, issue_token=False) -> FastAPI`
+retention_interval_seconds=3600, retention_poll_seconds=30.0, issue_token=False, port=8787) -> FastAPI`
+
+`port`(CHG-20261102-01 T1,決策 4):serve 綁定的埠,存為 `app.state.port`,供 Host/Origin 檢查
+比對 `Origin`;`spillway serve` 以實際埠傳入。最外層掛 `HostOriginMiddleware`(純 ASGI):每個
+`http`/`websocket` 請求的 Host 必須是 127.0.0.1 或 localhost(403 `host_not_allowed`),帶 `Origin`
+時必須等於 `http://127.0.0.1:<port>` 或 `http://localhost:<port>`(403 `origin_not_allowed`)。
+不變式(D33):所有 GET 端點不得改變狀態。
 
 lifespan 啟動依序:
 1. `load_litellm()`:本地價格表(`LITELLM_LOCAL_MODEL_COST_MAP=True`)、關閉 verbose 與遙測。
@@ -28,6 +34,7 @@ lifespan 啟動依序:
 - `registry`:已 `discover()` 的 `AdapterRegistry`
 - `router`:`spillway.routing.Router`(其 `quota`、`estimator` 只在 route()/dry_run() 內可用)
 - `retention`:`RetentionScheduler`(`runs` 成功次數、`task`、`run_once()`)
+- `port`:serve 綁定埠(CHG-20261102-01 T1)
 - `cli_runner`:`CliRunner`(T2);`shutting_down`:停機旗標,預設 False(CHG-20261101-03 決策 16)
 `registry`、`router`、`retention` 在 lifespan 啟動後才存在。
 
@@ -56,6 +63,7 @@ from spillway.adapters.base import (
 )
 from spillway.api import install_error_handlers
 from spillway.api import admin
+from spillway.api.host_origin import HostOriginMiddleware
 from spillway.api import openai as openai_api
 from spillway.clock import Clock, Rng, SystemClock, SystemRng
 from spillway.ledger import RetentionJob
@@ -171,6 +179,7 @@ def create_app(
     retention_interval_seconds: float = DEFAULT_RETENTION_INTERVAL_SECONDS,
     retention_poll_seconds: float = DEFAULT_RETENTION_POLL_SECONDS,
     issue_token: bool = False,
+    port: int = 8787,
 ) -> FastAPI:
     clk: Clock = clock if clock is not None else SystemClock()
     rnd: Rng = rng if rng is not None else SystemRng()
@@ -214,6 +223,7 @@ def create_app(
     app.state.cli_runner = CliRunner()
     app.state.shutting_down = False   # T6(決策 16):T8 的訊號處理設為 True;Router 不再開始新嘗試
     app.state.db_path = path
+    app.state.port = port   # CHG-20261102-01 T1(決策 4):Origin 比對用的 serve 綁定埠
     app.state.conn_factory = conn_factory
     install_error_handlers(app)
 
@@ -221,4 +231,7 @@ def create_app(
     # ---- T15(CHG-20261030-02)只在此處追加下一行掛載管理端點,其餘不動 ----
     app.include_router(admin.router)
     # ---- T15 追加處結束 ----
+    # CHG-20261102-01 T1(決策 4、AM-11):Host/Origin 檢查。add_middleware 後加者在外層,
+    # 所以這一行必須是 create_app 的最後一個 add_middleware,讓它先於所有路由與 `/mcp` 執行。
+    app.add_middleware(HostOriginMiddleware, port=port)
     return app

@@ -61,7 +61,7 @@ def make_app(db_path: Path, clock: FakeClock):
 async def _client_for(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8787") as c:
             yield c
 
 

@@ -217,7 +217,7 @@ def _run_server(host: str, port: int, graceful_timeout: float = GRACEFUL_TIMEOUT
 
     from spillway import app as app_module
 
-    app = app_module.create_app(issue_token=True)
+    app = app_module.create_app(issue_token=True, port=port)
     runner = app.state.cli_runner
     # 決策 16 ④:第二次 Ctrl-C(force_exit)會略過 lifespan;finally 與 atexit 是子行程清理的最後防線
     atexit.register(runner.kill_all_sync)

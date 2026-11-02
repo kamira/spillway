@@ -33,7 +33,7 @@ from spillway.app import create_app
 from spillway.clock import FakeClock, SystemRng
 from spillway.store.db import connect
 
-BASE_URL = "http://spillway.test"
+BASE_URL = "http://127.0.0.1:8787"
 FIXED_SEED = 20261030
 # 憑證值刻意與 AC-15 prompt 裡的 `sk-test-0000` 不同(末端審查 M28):
 # 否則 Router 的 extra_secrets 也會遮掉 prompt,分不出是 `sk-` 樣式規則遮罩的。

@@ -11,7 +11,7 @@ fixture:
   的 `clock`(`FakeClock`),未給 rng 時用 `SystemRng(seed=0)`。其餘關鍵字原樣傳給 `create_app()`。
 - `spillway`:以預設參數開好的 `SpillwayHarness`(最常用)。
 
-`SpillwayHarness` 欄位:`app`、`client`(`httpx.AsyncClient`,base_url `http://spillway.test`)、
+`SpillwayHarness` 欄位:`app`、`client`(`httpx.AsyncClient`,base_url `http://127.0.0.1:8787`)、
 `clock`、`rng`、`home`(SPILLWAY_HOME)、`db_path`;方法:`db()`(context manager,開一條新連線、
 離開時關閉)、`add_deployment(dep)`、`add_route(route, targets=())`、`ledger()`(新到舊的帳本列)。
 
@@ -37,7 +37,7 @@ from spillway.domain import Deployment
 from spillway.store import repo
 from spillway.store.db import connect
 
-BASE_URL = "http://spillway.test"
+BASE_URL = "http://127.0.0.1:8787"
 
 
 @dataclass
