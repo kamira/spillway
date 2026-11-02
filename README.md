@@ -136,7 +136,11 @@ curl -fsS -X POST --data-binary @"$SPILLWAY_HOME/backups/<backup>" -H 'Content-T
   'http://127.0.0.1:8787/api/config/import?mode=replace'
 ```
 
-備份不含帳本與 payload，也不會自動清理。已知限制：本機其他程式（非瀏覽器）可直接呼叫匯入，備份是唯一的復原手段；匯入不檢查 `credential_ref` 指向的環境變數或 keyring 項目是否存在。
+備份不含帳本與 payload，也不會自動清理。
+
+`replace` 在刪除任何資料前，會先檢查「目前的設定」能否通過匯出的憑證鍵名掃描與匯入解析器；不能通過時回 HTTP 422 `validation_error`，只列出位置、不含值，不刪除、不寫備份；`dry_run=true` 同樣回此 422。因此 `replace` 寫下的備份一定可還原。要繼續，請先用管理 API 修正所列的資料列，再重試。
+
+已知限制：① 本機其他程式（非瀏覽器）可直接呼叫匯入，備份是唯一的復原手段；匯入不檢查 `credential_ref` 指向的環境變數或 keyring 項目是否存在；② 資料庫內既有的違規資料（例如 route 指向不存在的群組、單一 provider 群組有兩個成員）會讓每一次 `merge` 匯入都被擋下（最終狀態檢查涵蓋整個資料庫）；③ 改變成員的 `provider` 不列入回應的 `privileged`。
 
 ## 帳本 CSV 與設定總覽
 

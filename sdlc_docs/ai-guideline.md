@@ -32,7 +32,7 @@
 |--------|------|------|
 | M1 規格定案 | 企劃書、規格書、UI layout | 規格審閱通過(**已完成**,文件已在 `docs/`) |
 | M2 路由核心 | SQLite schema 與帳本、路由器與額度計算、LiteLLM adapter(api、local)、OpenAI 相容 HTTP API、管理 API | 路由測試全過(G3、G4) |
-| M3 CLI 與 MCP | 拆為兩筆 CHG(使用者決定 2026-11-01):**M3a**(CHG-20261101-03)claude-cli、codex-cli adapter 與子行程執行器 CliRunner、CLI 併發上限、schema v2(冷卻獨立成 `cooldowns` 表)與 v1→v2 migration、存取 token 與 `spillway init`、graceful shutdown;**M3b**(CHG-20261102-01)MCP server(Streamable HTTP + stdio 橋接 `mcp-stdio`)、MCP 設定輸出、全端點 Host/Origin 檢查——**範圍已完成**(自動化驗收通過,待擁有者以 4 種工具真實冒煙) | 4 種工具可連線(G1、G6);閘門於 M3b 結束時驗收 |
+| M3 CLI 與 MCP | 拆為兩筆 CHG(使用者決定 2026-11-01):**M3a**(CHG-20261101-03)claude-cli、codex-cli adapter 與子行程執行器 CliRunner、CLI 併發上限、schema v2(冷卻獨立成 `cooldowns` 表)與 v1→v2 migration、存取 token 與 `spillway init`、graceful shutdown;**M3b**(CHG-20261102-01)MCP server(Streamable HTTP + stdio 橋接 `mcp-stdio`)、MCP 設定輸出、全端點 Host/Origin 檢查——**已完成**(自動化驗收與擁有者真實冒煙皆通過,ACC-20261102-01) | 4 種工具可連線(G1、G6);閘門於 M3b 結束時驗收(已通過) |
 | M4 Web UI | 拆為兩筆 CHG(使用者決定 2026-11-02,CHG-20261102-02 決策 1):**M4a**(CHG-20261102-02,後端)設定匯入匯出(含 `dry_run`、`privileged`、replace 自動備份)、帳本 CSV 匯出、設定總覽 `GET /api/settings`、群組名稱規則與 M3b 帶入項;**M4b**(後續 CHG)8 個畫面(UI-1–UI-8)、首次設定精靈畫面,畫面以 Playwright 自動測試(dev 相依,下載 Chromium 前另徵同意;CHG-20261102-02 決策 3) | 空 DB 首呼 ≤ 10 分(G2、G5、G7);閘門於 M4b 結束時驗收 |
 
 ### 不納入(明確排除)
@@ -111,7 +111,7 @@
 以規格書第 12 節為準,依里程碑分組:
 
 - [ ] M2 閘門:AC-3、AC-4、AC-5、AC-7、AC-13、AC-14、AC-15、AC-18、AC-19 通過;NFR-1、NFR-2、NFR-3、NFR-5 量測達標。4.2.5、4.2.6 的邏輯先以 api 成員驗證。
-- [x] M3 閘門(ACC-20261102-01,2026-11-02 通過;M3a 冒煙見 ACC-20261101-02):AC-1、AC-2、AC-9、AC-11、AC-12、AC-16、AC-17 通過(AC-1、AC-2、AC-12、AC-16、AC-17 的前置條件用到 claude-sub;AC-11 依 CHG-20261102-01 決策 1 改為直接驗證遞迴防護:`/mcp` 帶 `X-Spillway-Depth: 1` 或 `SPILLWAY_DEPTH=1` 的 `mcp-stdio` 被拒);NFR-6 量測達標。閘門於 M3b 結束時驗收;M3a 先以假執行檔驗證 AC-1、AC-2、AC-12、AC-16 與 AC-17 的 CLI 版、NFR-6,並由擁有者以真實 claude、codex 各冒煙一次(記入 ACC-20261101-02);AC-9、AC-11 屬 M3b。M3b(CHG-20261102-01)範圍已完成、自動化驗收通過;本閘門待擁有者以 4 種工具真實冒煙(AC-9;Gemini CLI 依 UD-1(CHG-20261102-01):其 HTTP headers 路徑失敗時改用 stdio variant,headers 或 stdio 任一成功即算 AC-9 通過,並於 ACC 記錄採用路徑與 headers 結果)並記入 ACC-20261102-01 後才打勾。
+- [x] M3 閘門(ACC-20261102-01,2026-11-02 通過;M3a 冒煙見 ACC-20261101-02):AC-1、AC-2、AC-9、AC-11、AC-12、AC-16、AC-17 通過(AC-1、AC-2、AC-12、AC-16、AC-17 的前置條件用到 claude-sub;AC-11 依 CHG-20261102-01 決策 1 改為直接驗證遞迴防護:`/mcp` 帶 `X-Spillway-Depth: 1` 或 `SPILLWAY_DEPTH=1` 的 `mcp-stdio` 被拒);NFR-6 量測達標。閘門已於 M3b 結束時驗收通過(ACC-20261102-01);M3a 先以假執行檔驗證 AC-1、AC-2、AC-12、AC-16 與 AC-17 的 CLI 版、NFR-6,並由擁有者以真實 claude、codex 各冒煙一次(記入 ACC-20261101-02);AC-9、AC-11 屬 M3b。M3b(CHG-20261102-01)範圍已完成、自動化驗收通過;擁有者已以 4 種工具真實冒煙並記入 ACC-20261102-01,全數通過(AC-9;Gemini CLI 依 UD-1(CHG-20261102-01):其 HTTP headers 路徑失敗時改用 stdio variant,headers 或 stdio 任一成功即算 AC-9 通過,並於 ACC 記錄採用路徑與 headers 結果)。
 - [ ] M4 閘門:AC-6、AC-8、AC-10、AC-20、AC-21、AC-22 通過;NFR-4 對資料庫、匯出檔、日誌三者搜尋命中數為 0。M4 閘門(含 AC-10、NFR-4)於 M4b 驗收;M4a(CHG-20261102-02)提供 AC-10 的自動化判準(匯出 → 空資料庫 replace 匯入 → 再匯出逐位元組相同)與 NFR-4 的匯出部分。M4b 以 Playwright(dev 相依,下載 Chromium 前另徵同意)。
 - [ ] 全部:每個閘門在 macOS 通過,並附擁有者的真實冒煙結果(Q1);Linux、Windows 標「未涵蓋」(Q2)。
 

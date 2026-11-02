@@ -18,7 +18,7 @@ spillway/
 │   ├── m2c/                     # CHG-20261101-02 的驗收產物(integration.xml、contract.xml、http-log.jsonl)
 │   ├── m3a/                     # CHG-20261101-03 的驗收產物(integration.xml、contract.xml、http-log.jsonl:只含 method、path、status、elapsed_ms)
 │   ├── m3b/                     # CHG-20261102-01 的驗收產物(integration.xml、cli.xml、contract.xml、http-log.jsonl〔四鍵,含 MCP 請求〕、operation-results.json)
-│   └── m4a/                     # CHG-20261102-02 的驗收產物(integration.xml、cli.xml、contract.xml、http-log.jsonl〔四鍵〕、operation-results.json)
+│   └── m4a/                     # CHG-20261102-02 的驗收產物(integration.xml、cli.xml、contract.xml 由 Interaction spec 指令產生,不進版控、不一定存在於工作樹;http-log.jsonl〔四鍵〕、operation-results.json 由操作驗收產生)
 ├── src/spillway/
 │   ├── __init__.py
 │   ├── __main__.py / cli.py     # spillway serve(M2;M3a 加 _preflight 與 graceful shutdown;M3b 停用 sse-starlette auto-drain、shutdown_hooks、drain_expired、Ctrl-C 結束碼 130)、init [--rotate](M3a)、mcp-stdio --group <g> [--port](M3b)

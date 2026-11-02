@@ -225,11 +225,13 @@ CREATE TABLE settings (
 
 3.1.10 套用：系統必須在單一寫入交易內依序 ① 檢查 `targets` 參照的成員存在（3.1.4）；② `replace` 時寫入自動備份（3.1.11）；③ 新增或整筆取代檔案中的成員（含 tag、額度）、群組、route，每條檔案中的 route 都以檔案的 `targets` 取代其手動排序（未列時清除，3.1.5）；`settings` 只覆寫檔案中出現的鍵；④ 只限 `replace`：刪除檔案外的 route、群組、成員（連同其 tag、額度、冷卻與排序），並將檔案中沒有的 `settings` 鍵（3.1.6 的三個鍵）回到初始值；⑤ 對最終狀態檢查：route 的 `target.group` 必須存在（否則 422，路徑 `routes.<名稱>.target.group`），`single` 模組的 provider 至多 1 個成員（否則 409 `provider_single`，2.1.4、9.2.3）。任一步失敗時整批回滾。帳本、`usage_payloads`、存取 token 雜湊與其他 `settings` 鍵不受影響；仍存在的成員保留冷卻狀態，被刪除成員的冷卻一併刪除。成功後（`dry_run` 除外），系統必須讓受影響成員的健康快取失效，並發送 `notifications/tools/list_changed`（8.1.5）。
 
-3.1.11 自動備份：`replace`（非 `dry_run`）在同一交易的寫鎖內、刪除之前，將匯入前的設定以 3.1.6 的格式寫入資料目錄下的 `backups/config-<UTC yyyymmddThhmmssZ>.yaml`（同名已存在時加 `-2`、`-3`…，不覆寫）；目錄新建時權限 0700、檔案 0600；`backups` 為 symlink 或不是目錄時回傳 HTTP 500，錯誤碼 `internal_error`，不匯入。備份不會自動清理；以 `replace` 匯入備份檔即可還原設定。
+3.1.11 自動備份：`replace`（非 `dry_run`）在同一交易的寫鎖內、刪除之前，將匯入前的設定以 3.1.6 的格式寫入資料目錄下的 `backups/config-<UTC yyyymmddThhmmssZ>.yaml`（同名已存在時加 `-2`、`-3`…，不覆寫）；目錄新建時權限 0700、檔案 0600；`backups` 為 symlink 或不是目錄時回傳 HTTP 500，錯誤碼 `internal_error`，不匯入。備份不會自動清理。`replace` 在刪除任何資料前，須先在同一寫鎖內檢查匯入前的設定能通過 3.1.6 的憑證鍵名掃描與 3.1.9 的解析；不能通過時回傳 HTTP 422，錯誤碼 `validation_error`，列出位置（不含值），不刪除、不寫備份；`dry_run=true` 回傳同一個 422。因此 `replace` 寫下的備份一定可以通過匯入，以 `replace` 匯入備份檔即可還原設定。要繼續時，先以管理 API 修正所列資料列再重試。
 
 3.1.12 設定檔是可信輸入：匯入等同以擁有者權限執行的設定（可改變憑證參照、上游位址與 CLI 參數），只可匯入可信來源。回應的 `privileged` 列出匯入後相對匯入前新增或變更了下列欄位的成員 `id`（依 `id` 排序；只含 id，不含值；被刪除的成員不列）：`credential_ref`；`params` 頂層的 URL 類鍵（`api_base`、`base_url`、`url`、`endpoint`，或以 `_url`、`_base`、`_endpoint` 結尾）；`kind: cli` 成員的 `params.extra_args`、`params.effort_args`、`params.cwd`。`params.timeout` 等其他鍵不列入。`dry_run=true` 時系統同樣解析、驗證、套用並檢查，之後回滾：不寫入、不寫備份、不讓健康快取失效、不發送 `list_changed`；回應同樣的計數與 `privileged`，`backup` 為 null；驗證失敗時回傳與非 `dry_run` 相同的錯誤。伺服端不強制確認 privileged 變更。
 
 3.1.13 匯入成功回應：`{"mode", "dry_run", "created", "updated", "deleted", "backup", "privileged"}`；`created`、`updated`、`deleted` 各為 `{"deployments", "groups", "routes"}` 計數（`updated` 為檔案中且匯入前已存在的實體數，不論內容是否改變；`merge` 的 `deleted` 皆為 0）；`backup` 為 `backups/` 下的檔名，`merge` 與 `dry_run` 為 null。
+
+3.1.14 已知限制：① 備份不自動清理，不驗證 `credential_ref` 指向的變數或 keyring 項目是否存在；② 3.1.10 ⑤ 的最終狀態檢查涵蓋整個資料庫，既有資料已違反規則（route 指向不存在的群組、`single` 群組有兩個同 provider 成員）時，每一次 `merge` 匯入都被擋下；③ 改變成員的 `provider` 不列入 `privileged`。
 
 ### 3.2 範例
 
@@ -805,7 +807,7 @@ env_vars = ["SPILLWAY_TOKEN"]
 | GET | `/api/ledger` | 帳本查詢；參數 `from`、`to`、`deployment`、`route`、`status`、`page` |
 | GET | `/api/ledger/export.csv` | 帳本 CSV 匯出（9.2.6）；篩選參數同 `/api/ledger`，不分頁 |
 | GET | `/api/mcp/config` | MCP 設定輸出（8.2）；參數 `group`（群組名或 `all`）、`tool`（`claude-code`、`codex`、`cursor`、`gemini`、`stdio`） |
-| POST | `/api/config/import` | 匯入 YAML（3.1.7–3.1.13）；參數 `mode=merge\|replace`（必填）、`dry_run=true`（選填，預覽後回滾） |
+| POST | `/api/config/import` | 匯入 YAML（3.1.7–3.1.13）；參數 `mode=merge\|replace`（必填）、`dry_run=true`（選填，預覽後回滾）；`replace` 先檢查匯入前的設定可通過憑證鍵名掃描與解析，否則 422 `validation_error`（3.1.11） |
 | GET | `/api/config/export` | 匯出 YAML（3.1.6） |
 | GET | `/api/settings` | 設定總覽（9.2.7） |
 | POST | `/api/settings/token/rotate` | 重新產生存取 token |
