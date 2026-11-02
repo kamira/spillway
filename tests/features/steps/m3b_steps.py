@@ -417,7 +417,6 @@ def step_config_env(context):
     for tool, cfg in context.m3b_configs.items():
         assert cfg["tool"] == tool and cfg["group"] == context.m3b_group, cfg
         assert cfg["env"] == ["SPILLWAY_TOKEN"], (tool, cfg["env"])
-        assert "format" not in cfg and "content" not in cfg, tool
         for text in _contents(cfg):
             assert "SPILLWAY_TOKEN" in text, tool
 

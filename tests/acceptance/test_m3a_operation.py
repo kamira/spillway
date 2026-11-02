@@ -40,8 +40,8 @@ import pytest
 from spillway import cli
 from spillway.store import db as store_db
 from tests.acceptance import procs
-from tests.helpers import redact_tokens
 from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install, safe_subprocess_env
+from tests.helpers import redact_tokens
 
 pytestmark = pytest.mark.skipif(not procs.HAS_LSOF, reason="需要 lsof(macOS 驗收平台)")
 

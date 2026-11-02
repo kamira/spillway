@@ -40,6 +40,7 @@ import pytest
 
 from tests.acceptance import procs
 from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install
+from tests.helpers import redact_tokens
 from tests.features.support.mcp_proc import (
     INIT_BODY,
     MCP_ACCEPT,

@@ -109,10 +109,11 @@ def dead_base() -> str:
     return f"http://127.0.0.1:{port}/v1"
 
 
-def redact_tokens(text: str, tokens: Iterable[str | None] | None) -> str:
+def redact_tokens(text: str, tokens: str | Iterable[str | None] | None) -> str:
     """把 `text` 中每個 token 明文換成 `<token>`(CHG-20261102-02 決策 14;失敗訊息帶出 serve stderr
     或回應本文時一律經它,避免測試輸出洩漏 token)。空字串與 None 略過;其餘文字不變。"""
-    for tok in tokens or ():
-        if tok:
-            text = text.replace(tok, "<token>")
+    if isinstance(tokens, str):
+        tokens = [tokens]
+    for tok in sorted({t for t in tokens or () if t}, key=len, reverse=True):   # 長的先換,避免殘留尾巴
+        text = text.replace(tok, "<token>")
     return text

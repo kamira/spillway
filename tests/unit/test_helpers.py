@@ -68,3 +68,10 @@ def test_failure_message_path_hides_injected_token():
     with pytest.raises(AssertionError) as ei:
         assert False, redact_tokens(stderr, [token])
     assert token not in str(ei.value) and "<token>" in str(ei.value)
+
+
+def test_redact_tokens_overlap_and_bare_str():
+    from tests.helpers import redact_tokens
+    assert redact_tokens("x abcdef y", ["abc", "abcdef"]) == "x <token> y"
+    assert redact_tokens("x abcdef y", ["abcdef", "abc"]) == "x <token> y"
+    assert redact_tokens("a tok b tok", "tok") == "a <token> b <token>"

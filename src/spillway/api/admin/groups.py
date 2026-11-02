@@ -14,16 +14,11 @@ from spillway.api.deps import request_conn
 from spillway.domain import Deployment
 from spillway.routing import members_of
 from spillway.routing.target import normalize_selector
-from spillway.settings import MCP_ALL_GROUP
 from spillway.store import repo
 from spillway.store.db import transaction
 
 from .common import _invalid, _not_found, router, tools_changed
 from .models import GroupIn, GroupUpdate, group_name_problem
-
-# CHG-20261102-01 決策 22:保留給 `/mcp/all`、`mcp_catalog(app, "all")`(單一定義在 settings)
-RESERVED_GROUP_NAME = MCP_ALL_GROUP
-
 
 def _member_brief(d: Deployment) -> dict[str, Any]:
     return {"id": d.id, "model_name": d.model_name, "kind": d.kind, "provider": d.provider,
