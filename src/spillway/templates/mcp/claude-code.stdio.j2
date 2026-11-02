@@ -3,7 +3,7 @@
     {{ name|tojson }}: {
       "type": "stdio",
       "command": {{ command|tojson }},
-      "args": {{ (args_prefix + ["mcp-stdio", "--group", group])|tojson }},
+      "args": {{ (args_prefix + ["mcp-stdio", "--group", group, "--port", port|string])|tojson }},
       "env": {
         "SPILLWAY_TOKEN": "${SPILLWAY_TOKEN}"
       }

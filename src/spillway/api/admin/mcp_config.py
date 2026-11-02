@@ -27,14 +27,14 @@ from urllib.parse import quote
 import jinja2
 from fastapi import Request
 
-from spillway.store import repo
 from spillway.api.deps import request_conn
+from spillway.store import repo
 
 from .common import _invalid, _not_found, router
+from .groups import RESERVED_GROUP_NAME
 
 DEFAULT_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates" / "mcp"
 ENV_VARS = ["SPILLWAY_TOKEN"]
-ALL_GROUP = "all"
 
 
 @dataclass(frozen=True)
@@ -47,36 +47,31 @@ class VariantSpec:
     filename: str | None = None
 
 
-def _v(label: str, scope: str, fmt: str, template: str, path: str | None = None,
-       filename: str | None = None) -> VariantSpec:
-    return VariantSpec(label, scope, fmt, template, path, filename)  # type: ignore[arg-type]
-
-
 TOOL_FORMATS: dict[str, list[VariantSpec]] = {
     "claude-code": [
-        _v("專案 .mcp.json", "project", "json", "claude-code.project.j2", ".mcp.json", ".mcp.json"),
-        _v("claude mcp add 命令", "user", "command", "claude-code.command.j2"),
+        VariantSpec("專案 .mcp.json", "project", "json", "claude-code.project.j2", ".mcp.json", ".mcp.json"),
+        VariantSpec("claude mcp add 命令", "user", "command", "claude-code.command.j2"),
     ],
     "codex": [
-        _v("~/.codex/config.toml", "user", "toml", "codex.toml.j2", "~/.codex/config.toml", "config.toml"),
-        _v("codex mcp add 命令", "user", "command", "codex.command.j2"),
+        VariantSpec("~/.codex/config.toml", "user", "toml", "codex.toml.j2", "~/.codex/config.toml", "config.toml"),
+        VariantSpec("codex mcp add 命令", "user", "command", "codex.command.j2"),
     ],
     "cursor": [
-        _v("~/.cursor/mcp.json", "user", "json", "cursor.http.j2", "~/.cursor/mcp.json", "mcp.json"),
-        _v("專案 .cursor/mcp.json", "project", "json", "cursor.http.j2", ".cursor/mcp.json", "mcp.json"),
+        VariantSpec("~/.cursor/mcp.json", "user", "json", "cursor.http.j2", "~/.cursor/mcp.json", "mcp.json"),
+        VariantSpec("專案 .cursor/mcp.json", "project", "json", "cursor.http.j2", ".cursor/mcp.json", "mcp.json"),
     ],
     "gemini": [
-        _v("~/.gemini/settings.json(HTTP)", "user", "json", "gemini.http.j2",
+        VariantSpec("~/.gemini/settings.json(HTTP)", "user", "json", "gemini.http.j2",
            "~/.gemini/settings.json", "settings.json"),
-        _v("~/.gemini/settings.json(stdio)", "user", "json", "gemini.stdio.j2",
+        VariantSpec("~/.gemini/settings.json(stdio)", "user", "json", "gemini.stdio.j2",
            "~/.gemini/settings.json", "settings.json"),
     ],
     "stdio": [
-        _v("Claude Code(專案 .mcp.json)", "project", "json", "claude-code.stdio.j2", ".mcp.json", ".mcp.json"),
-        _v("Cursor(~/.cursor/mcp.json)", "user", "json", "cursor.stdio.j2", "~/.cursor/mcp.json", "mcp.json"),
-        _v("Codex(~/.codex/config.toml)", "user", "toml", "codex.stdio.j2", "~/.codex/config.toml",
+        VariantSpec("Claude Code(專案 .mcp.json)", "project", "json", "claude-code.stdio.j2", ".mcp.json", ".mcp.json"),
+        VariantSpec("Cursor(~/.cursor/mcp.json)", "user", "json", "cursor.stdio.j2", "~/.cursor/mcp.json", "mcp.json"),
+        VariantSpec("Codex(~/.codex/config.toml)", "user", "toml", "codex.stdio.j2", "~/.codex/config.toml",
            "config.toml"),
-        _v("Gemini CLI(~/.gemini/settings.json)", "user", "json", "gemini.stdio.j2",
+        VariantSpec("Gemini CLI(~/.gemini/settings.json)", "user", "json", "gemini.stdio.j2",
            "~/.gemini/settings.json", "settings.json"),
     ],
 }
@@ -183,11 +178,11 @@ async def mcp_config(request: Request, group: str, tool: str) -> dict[str, Any]:
     """見模組 docstring。"""
     if tool not in TOOL_FORMATS:
         raise _invalid("query.tool", "不支援的工具(可用:" + "、".join(TOOL_FORMATS) + ")")
-    if group != ALL_GROUP:
+    if group != RESERVED_GROUP_NAME:
         with request_conn(request) as conn:
             if repo.get_group(conn, group) is None:
                 raise _not_found(f"群組 {group}")
-    ctx = build_context(group, int(getattr(request.app.state, "port", 8787)))
+    ctx = build_context(group, int(request.app.state.port))
     variants = render_config(tool, ctx)
     first = variants[0]
     return {"group": group, "tool": tool, "variants": variants, "env": list(ENV_VARS),

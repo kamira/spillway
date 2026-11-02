@@ -1,4 +1,4 @@
 [mcp_servers.{{ name|toml_key }}]
 command = {{ command|toml_str }}
-args = [{% for a in args_prefix + ["mcp-stdio", "--group", group] %}{{ a|toml_str }}{{ ", " if not loop.last }}{% endfor %}]
+args = [{% for a in args_prefix + ["mcp-stdio", "--group", group, "--port", port|string] %}{{ a|toml_str }}{{ ", " if not loop.last }}{% endfor %}]
 env_vars = ["SPILLWAY_TOKEN"]

@@ -110,7 +110,7 @@ async def test_gemini(client):
         "headers": {"Authorization": "Bearer $SPILLWAY_TOKEN"}}
     s = json.loads(v1["content"])["mcpServers"]["spillway-all"]
     assert s["env"] == {"SPILLWAY_TOKEN": "$SPILLWAY_TOKEN"} and "url" not in s and "httpUrl" not in s
-    assert s["args"][-3:] == ["mcp-stdio", "--group", "all"]
+    assert s["args"][-5:] == ["mcp-stdio", "--group", "all", "--port", "8787"]
 
 
 async def test_stdio_variants_and_absolute_command(client):
@@ -127,7 +127,7 @@ async def test_stdio_variants_and_absolute_command(client):
     assert co["env_vars"] == ["SPILLWAY_TOKEN"] and "env" not in co
     for cfg in (cc, cu, ge, co):
         assert Path(cfg["command"]).is_absolute()
-        assert cfg["args"][-3:] == ["mcp-stdio", "--group", "all"]
+        assert cfg["args"][-5:] == ["mcp-stdio", "--group", "all", "--port", "8787"]
         assert "SPILLWAY_DEPTH" not in json.dumps(cfg)
     assert any("絕對路徑" in n["text"] for n in body["notes"])
 
@@ -141,29 +141,46 @@ def test_stdio_command_fallback(monkeypatch):
     assert mcp_config.stdio_command() == ("/opt/bin/spillway", [])
 
 
+HOSTILE = [EVIL, 'q"uote', "back\\slash", ".", "..", "a'b", "a$HOME`x`"]
+
+
+@pytest.mark.parametrize("group", HOSTILE)
 @pytest.mark.parametrize("tool", TOOLS)
-async def test_hostile_group_name_stays_parseable(client, tool):
-    await _mk_group(client, EVIL)
-    body = (await _get(client, tool, EVIL)).json()
-    url = f"http://127.0.0.1:8787/mcp/{quote(EVIL, safe='')}"
-    name = f"spillway-{EVIL}"
+async def test_hostile_group_name_stays_parseable(client, tool, group):
+    await _mk_group(client, group)
+    body = (await _get(client, tool, group)).json()
+    url = f"http://127.0.0.1:8787/mcp/{quote(group, safe='')}"
+    name = f"spillway-{group}"
     for v in body["variants"]:
         parsed = _parse(v)
         if v["format"] == "command":
             assert len(parsed) == (9 if tool == "claude-code" else 8)
             assert name in parsed and url in parsed
-        elif v["format"] == "json":
-            assert list(parsed["mcpServers"]) == [name]
-            srv = parsed["mcpServers"][name]
-            assert srv.get("url", srv.get("httpUrl", url)) == url
-            if "args" in srv:
-                assert srv["args"][-1] == EVIL
         else:
-            assert list(parsed["mcp_servers"]) == [name]
-            srv = parsed["mcp_servers"][name]
-            assert srv.get("url", url) == url
+            servers = parsed["mcpServers" if v["format"] == "json" else "mcp_servers"]
+            assert list(servers) == [name]
+            srv = servers[name]
             if "args" in srv:
-                assert srv["args"][-1] == EVIL
+                assert srv["args"][-4:] == ["--group", group, "--port", "8787"]
+            else:
+                assert (srv.get("url") or srv.get("httpUrl")) == url
+
+
+async def test_port_in_stdio_args_and_urls(make_app, make_client):
+    app = make_app()
+    app.state.port = 9911
+    async with make_client(app) as c:
+        for tool in TOOLS:
+            for v in (await _get(c, tool)).json()["variants"]:
+                p = _parse(v)
+                if v["format"] == "command":
+                    assert "http://127.0.0.1:9911/mcp/all" in p or "http://127.0.0.1:9911/mcp/all" in " ".join(p)
+                    continue
+                srv = next(iter(p["mcpServers" if v["format"] == "json" else "mcp_servers"].values()))
+                if "args" in srv:
+                    assert srv["args"][-4:] == ["--group", "all", "--port", "9911"]
+                else:
+                    assert (srv.get("url") or srv.get("httpUrl")) == "http://127.0.0.1:9911/mcp/all"
 
 
 async def test_toml_escape_extremes():

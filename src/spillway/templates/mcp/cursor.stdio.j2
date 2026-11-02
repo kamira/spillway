@@ -2,7 +2,7 @@
   "mcpServers": {
     {{ name|tojson }}: {
       "command": {{ command|tojson }},
-      "args": {{ (args_prefix + ["mcp-stdio", "--group", group])|tojson }},
+      "args": {{ (args_prefix + ["mcp-stdio", "--group", group, "--port", port|string])|tojson }},
       "env": {
         "SPILLWAY_TOKEN": "${env:SPILLWAY_TOKEN}"
       }
