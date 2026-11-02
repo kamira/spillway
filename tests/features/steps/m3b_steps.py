@@ -42,6 +42,7 @@ from tests.features.support.mcp_proc import (
     group_alive,
     mcp_http_session,
     pid_alive,
+    redact,
     stdio_session,
 )
 from tests.helpers.live_gateway import start_live_gateway
@@ -96,6 +97,10 @@ def _mcp_post(context, path: str, headers: dict[str, str]) -> httpx.Response:
     resp = context.gw.post(path, json=INIT_BODY, headers={"Accept": MCP_ACCEPT, **headers})
     context.m3b_http = resp
     return resp
+
+
+def _secrets(context) -> list[str]:
+    return [t for t in (getattr(context, "m3b_token", None), getattr(context, "m3b_old_token", None)) if t]
 
 
 def _token_hash(context) -> str | None:
@@ -276,15 +281,15 @@ def step_header_request(context, name, value, method, path):
 @step(r'HTTP 回應狀態為 (\d+) 且錯誤碼為 "([^"]+)"')
 def step_http_status_code(context, status, code):
     r = context.m3b_http
-    assert r.status_code == int(status), (r.status_code, r.text)
+    assert r.status_code == int(status), (r.status_code, redact(r.text, _secrets(context)))
     assert r.headers["content-type"].startswith("application/json"), r.headers
     body = r.json()
     assert body["error"]["code"] == code, body
     assert set(body["error"]) >= {"code", "message"}, body      # spec 9.1.2
     if int(status) == 401:
         assert r.headers.get("www-authenticate", "").lower().startswith("bearer"), r.headers
-    for tok in (getattr(context, "m3b_token", None), getattr(context, "m3b_old_token", None)):
-        assert not tok or tok not in r.text
+    leaked = any(tok in r.text for tok in _secrets(context))
+    assert not leaked, "錯誤回應含 token 明文"
 
 
 # ---------------------------------------------------------------- 遞迴(子行程 serve + mcp-stdio)
@@ -297,7 +302,8 @@ def _serve(context, graceful: float) -> ServeProc:
     s = ServeProc(gw.home, fake_bin=context.fake_cli_bin, graceful=graceful,
                   log_path=context.tmp / f"serve-{len(context.scenario_teardown)}.log",
                   extra_env={TEST_KEY_ENV: TEST_KEY,
-                             "SPILLWAY_LOCAL_API_BASE": context.fake.base_url + "/v1"})
+                             "SPILLWAY_LOCAL_API_BASE": context.fake.base_url + "/v1"},
+                  secrets=_secrets(context))
     _teardown(context, s.stop)
     s.wait_ready()
     context.m3b_serve = s
@@ -316,15 +322,16 @@ def step_stdio_depth(context, depth, group):
 @step(r'stdio 用戶端收到 JSON-RPC 錯誤且 error\.data\.code 為 "([^"]+)"')
 def step_stdio_error(context, code):
     out = context.m3b_stdio
-    assert out.init is None and out.error is not None, out
+    assert out.init is None and out.error is not None, (out.init, out.error)
     assert isinstance(out.error.data, dict) and out.error.data.get("code") == code, out.error
-    assert code in out.stderr, out.stderr
-    assert context.m3b_token not in out.stderr
+    assert code in out.stderr, redact(out.stderr, _secrets(context))
+    leaked = context.m3b_token in out.stderr
+    assert not leaked, "mcp-stdio stderr 含 token 明文"
 
 
 @step(r"mcp-stdio 的結束碼為 (\d+)")
 def step_stdio_rc(context, rc):
-    assert context.m3b_stdio.returncode == int(rc), context.m3b_stdio
+    assert context.m3b_stdio.returncode == int(rc), context.m3b_stdio.returncode
 
 
 # ---------------------------------------------------------------- list_changed(live_gateway)
@@ -412,7 +419,7 @@ def step_config_env(context):
         assert cfg["env"] == ["SPILLWAY_TOKEN"], (tool, cfg["env"])
         assert cfg["content"] == cfg["variants"][0]["content"], tool
         for text in _contents(cfg):
-            assert "SPILLWAY_TOKEN" in text, (tool, text)
+            assert "SPILLWAY_TOKEN" in text, tool
 
 
 @step(r"每份設定的 content 不含存取 token 明文")
@@ -427,7 +434,7 @@ def step_config_url(context, url):
     for tool, cfg in context.m3b_configs.items():
         if tool == "stdio":
             continue
-        assert url in cfg["content"], (tool, cfg["content"])
+        assert url in cfg["content"], tool
 
 
 # ---------------------------------------------------------------- 停機(子行程 serve)
@@ -484,11 +491,12 @@ def step_ask_error(context, code):
 @step(r"serve 在寬限期內結束且沒有殘留的假 claude 行程")
 def step_serve_exited(context):
     s = context.m3b_serve
-    assert s.proc.returncode == -signal.SIGTERM, (s.proc.returncode, s.log_text())
+    assert s.proc.returncode == -signal.SIGTERM, (s.proc.returncode, s.safe_log())
     assert context.m3b_exit_elapsed <= context.m3b_grace, f"serve 未在寬限內結束({context.m3b_exit_elapsed:.2f}s)"
     rec = context.m3b_fake_rec
     assert not pid_alive(rec["pid"]) and not group_alive(rec["pid"]), "假 claude 或其孫行程仍在"
     assert len(context.fake_cli.records("claude")) == 1
     assert "Traceback" not in s.log_text()
-    assert context.m3b_token not in s.log_text()
+    leaked = any(t in s.log_text() for t in _secrets(context))
+    assert not leaked, "serve 日誌含 token 明文"
     assert_only_fakes()

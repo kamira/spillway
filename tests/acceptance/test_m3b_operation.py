@@ -51,6 +51,7 @@ from tests.features.support.mcp_proc import (
     mcp_http_session,
     pid_alive,
     raw_get_stream,
+    redact,
     stdio_session,
 )
 
@@ -71,6 +72,9 @@ LIST_CHANGED_WAIT = 5.0
 CLAUDE, API, GROUP = "claude-sub", "deepseek-api", "coding"
 TOOLS = ("claude-code", "codex", "cursor", "gemini", "stdio")
 PROMPT = "請檢查這段程式碼"
+# 本模組產生過的全部 token 明文(只在測試行程記憶體);模組結束時掃描 artifacts/m3b/ 每個檔案,
+# 並用於遮掉斷言訊息中的日誌/回應文字
+TOKENS: list[str] = []
 
 # M3 閘門對照表(CHG「Acceptance operation」;結果記入 ACC-20261102-01)
 M3_GATES = [
@@ -141,9 +145,20 @@ def _fresh_artifacts():
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     for p in (HTTP_LOG, RESULTS):
         p.unlink(missing_ok=True)
+    TOKENS.clear()
     yield
-    for line in HTTP_LOG.read_text(encoding="utf-8").splitlines() if HTTP_LOG.exists() else []:
-        assert set(json.loads(line)) == LOG_KEYS, line
+    # 1) http-log.jsonl:存在、非空、每行恰好四鍵,且含 MCP 請求
+    assert HTTP_LOG.exists(), "沒有產生 http-log.jsonl"
+    lines = [json.loads(ln) for ln in HTTP_LOG.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert lines, "http-log.jsonl 是空的"
+    bad = [sorted(ln) for ln in lines if set(ln) != LOG_KEYS]
+    assert not bad, bad
+    assert any(str(ln["path"]).startswith("/mcp") for ln in lines), "http-log.jsonl 沒有 MCP 請求"
+    # 2) operation-results.json 寫入之後,artifacts/m3b/ 下每個檔案都不含任何 token 明文
+    assert RESULTS.exists(), "沒有產生 operation-results.json"
+    assert TOKENS, "前置條件:至少產生過一個 token"
+    leaked = sorted({f for tok in TOKENS for f in _files_containing(ARTIFACTS, tok)})
+    assert not leaked, f"含 token 明文的產物:{leaked}"
 
 
 def _files_containing(root: Path, needle: str) -> list[str]:
@@ -167,10 +182,15 @@ class Op:
                                                   "codex": str(self.fake.path("codex"))}
         r = subprocess.run([sys.executable, "-m", "spillway", "init"], env=env, cwd=str(REPO_ROOT),
                            capture_output=True, text=True, timeout=120)
-        assert r.returncode == 0, r.stderr
+        self.tokens: list[str] = []
         self.token = r.stdout.strip()
-        assert self.token and len(r.stdout.splitlines()) == 1 and self.token not in r.stderr
-        self.tokens = [self.token]
+        if self.token:
+            self.register(self.token)
+        assert r.returncode == 0, redact(r.stderr, TOKENS)
+        one_line = bool(self.token) and len(r.stdout.splitlines()) == 1
+        assert one_line, "init 的 stdout 應只有一行 token"
+        in_stderr = self.token in r.stderr
+        assert not in_stderr, "init 的 stderr 含 token 明文"
         self.serves: list[ServeProc] = []
         self.http: httpx.Client = None  # type: ignore[assignment] — serve 就緒後才建立
         self.fake_proc, self.fake_base = procs.start_fake_upstream(tmp_path)
@@ -182,10 +202,15 @@ class Op:
         self.http = httpx.Client(base_url=self.serve.url, trust_env=False, timeout=60,
                                  event_hooks=HttpLog.sync_hooks())
 
+    def register(self, token: str) -> None:
+        self.tokens.append(token)
+        TOKENS.append(token)
+
     # -- 行程
     def start_serve(self) -> ServeProc:
         s = ServeProc(self.home, fake_bin=self.fake.bin_dir, graceful=GRACE,
-                      log_path=self.tmp / f"serve-{len(self.serves)}.log", extra_env=self.extra_env)
+                      log_path=self.tmp / f"serve-{len(self.serves)}.log", extra_env=self.extra_env,
+                      secrets=TOKENS)
         self.serves.append(s)
         s.wait_ready()
         return s
@@ -204,7 +229,8 @@ class Op:
 
     # -- HTTP
     def ok(self, r: httpx.Response, status: int = 200) -> Any:
-        assert r.status_code == status, f"{r.request.method} {r.request.url.path} → {r.status_code} {r.text}"
+        assert r.status_code == status, \
+            f"{r.request.method} {r.request.url.path} → {r.status_code} {redact(r.text, TOKENS)}"
         return r.json() if r.content else None
 
     def seed(self) -> None:
@@ -336,8 +362,9 @@ async def test_m3b_operation_auth_and_tools(op: Op):
     old = op.token
     new = op.ok(op.http.post("/api/settings/token/rotate"))["token"]
     op.token = new
-    op.tokens.append(new)
-    assert new != old and op.token_hash() == hashlib.sha256(new.encode()).hexdigest()
+    op.register(new)
+    rotated = new != old and op.token_hash() == hashlib.sha256(new.encode()).hexdigest()
+    assert rotated, "rotate 應回傳新 token 且資料庫只存新 token 的雜湊"
     obs["old_token_after_rotate"] = _error(op.raw_mcp({"Authorization": f"Bearer {old}"}))
     obs["new_token_after_rotate"] = op.raw_mcp({"Authorization": f"Bearer {new}"}).status_code
     assert obs["old_token_after_rotate"] == (401, "unauthorized") and obs["new_token_after_rotate"] == 200
@@ -353,7 +380,7 @@ async def test_m3b_operation_auth_and_tools(op: Op):
                       "env": cfg["env"], "token_free": all(t not in text for t in op.tokens),
                       "url_port_ok": tool == "stdio" or f"{op.serve.url}/mcp/{GROUP}" in cfg["content"]}
         assert cfg["env"] == ["SPILLWAY_TOKEN"] and "SPILLWAY_TOKEN" in cfg["content"], cfg
-        assert cfgs[tool]["token_free"] and cfgs[tool]["url_port_ok"], (tool, cfg["content"])
+        assert cfgs[tool]["token_free"] and cfgs[tool]["url_port_ok"], (tool, cfgs[tool])
     obs["mcp_config"] = cfgs
 
     # ---- 只聽 127.0.0.1;token 明文不外洩
@@ -378,6 +405,22 @@ async def _prove_get_stream(op: Op, inbox: list[Any]) -> int:
     pytest.fail("GET 通知串流未就緒")
 
 
+async def _drain(inbox: list[Any], quiet: float = 0.5, limit: float = 5.0) -> None:
+    """等到 `quiet` 秒內沒有新通知(最多 `limit` 秒)再清空。"""
+    deadline = time.monotonic() + limit
+    seen = len(inbox)
+    last = time.monotonic()
+    while time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+        if len(inbox) != seen:
+            seen, last = len(inbox), time.monotonic()
+        elif time.monotonic() - last >= quiet:
+            break
+    else:
+        pytest.fail("通知持續進來,無法清空")
+    inbox.clear()
+
+
 async def test_m3b_operation_list_changed(op: Op):
     inbox: list[Any] = []
 
@@ -389,17 +432,18 @@ async def test_m3b_operation_list_changed(op: Op):
     async with op.mcp(message_handler=handler) as (s, _init, _sid):
         assert ask_route_enum((await s.list_tools()).tools) == ["review"]   # 決策 13:列過工具才登記
         obs["get_stream_ready_after_attempts"] = await _prove_get_stream(op, inbox)
-        inbox.clear()
+        await _drain(inbox)               # 不讓 _prove_get_stream 的遲到通知被當成 review2 的通知
         t0 = time.monotonic()
         op.ok(await asyncio.to_thread(op.http.post, "/api/routes", json={
             "name": "review2", "target": {"group": GROUP}, "mode": "task"}), 201)
 
         async def wait() -> None:
-            while not inbox:
+            while not any(ts >= t0 for ts in inbox):
                 await asyncio.sleep(0.02)
 
         await asyncio.wait_for(wait(), LIST_CHANGED_WAIT)
-        obs["list_changed_latency_s"] = round(inbox[0] - t0, 3)
+        obs["list_changed_latency_s"] = round(min(ts for ts in inbox if ts >= t0) - t0, 3)
+        obs["notifications_after_create"] = len(inbox)
         obs["relisted_enum"] = ask_route_enum((await s.list_tools()).tools)
     assert obs["list_changed_latency_s"] <= LIST_CHANGED_WAIT
     assert obs["relisted_enum"] == ["review", "review2"]
@@ -414,7 +458,7 @@ async def test_m3b_operation_stdio(op: Op):
     bridge_home = op.tmp / "bridge-home"
     ok = await stdio_session(group=GROUP, port=op.serve.port, token=op.token, bridge_home=bridge_home,
                              fake_bin=op.fake.bin_dir, call=("ask", {"route": "review", "prompt": PROMPT}))
-    assert ok.error is None and ok.init is not None, ok
+    assert ok.error is None and ok.init is not None, (ok.error, ok.returncode, redact(ok.stderr, TOKENS))
     assert ok.call is not None and ok.call.isError is False, ok.call
     denied = await stdio_session(group=GROUP, port=op.serve.port, token=op.token, depth="1",
                                  bridge_home=bridge_home, fake_bin=op.fake.bin_dir)
@@ -430,7 +474,8 @@ async def test_m3b_operation_stdio(op: Op):
     }
     assert obs["ok"]["tools"] == ["ask", "list_routes", "quota_status"]
     assert obs["ok"]["ask_served_by"] == CLAUDE and obs["ok"]["returncode"] == 0, obs
-    assert denied.init is None and isinstance(denied.error.data, dict), denied
+    assert denied.init is None and denied.error is not None and isinstance(denied.error.data, dict), \
+        (denied.error, denied.returncode)
     assert denied.error.data["code"] == "recursion_blocked", denied.error
     assert obs["depth_rejected"]["returncode"] == 3 and obs["depth_rejected"]["stderr_has_code"], obs
     assert obs["bridge_created_data_dir"] is False and obs["stderr_token_free"]
@@ -470,7 +515,7 @@ async def test_m3b_operation_shutdown(op: Op):
     assert obs["sigterm"]["get_stream_closed_s"] < GET_CLOSE_LIMIT, obs           # GET 串流立即結束
     assert result.isError is True and obs["sigterm"]["ask_error_code"] == "shutting_down", result.content
     assert answered < GRACE and exited <= GRACE, obs                               # 寬限內回應並結束
-    assert serve.proc.returncode == -signal.SIGTERM, serve.log_text()
+    assert serve.proc.returncode == -signal.SIGTERM, serve.safe_log()
     assert obs["sigterm"]["leftover_fake_claude"] is False
     assert len(op.fake.records("claude")) == 1
     c = sqlite3.connect(str(op.home / "spillway.db"))
@@ -491,7 +536,7 @@ async def test_m3b_operation_shutdown(op: Op):
     log = second.log_text()
     obs["sigint"] = {"returncode": second.proc.returncode, "elapsed_s": round(time.monotonic() - t1, 3),
                      "traceback_in_stderr": "Traceback" in log}
-    assert second.proc.returncode == 130 and not obs["sigint"]["traceback_in_stderr"], log
+    assert second.proc.returncode == 130 and not obs["sigint"]["traceback_in_stderr"], second.safe_log()
     assert "Traceback" not in serve.log_text()
     obs["token_leaks"] = op.assert_no_token_leak()
     record("shutdown", obs)

@@ -12,12 +12,14 @@
 - `HeldSession`:跨步驟持有一個 session;`inbox` 收 `notifications/tools/list_changed`。
 - `ServeProc`:子行程 `python -m spillway serve --port <隨機>`(環境經 `safe_subprocess_env`;
   `SPILLWAY_TEST_GRACEFUL_TIMEOUT`;`start_new_session=True`;stdout/stderr 寫入檔案)。
-- `stdio_initialize(...)`:官方 SDK `stdio_client` 經子行程 `python -m spillway mcp-stdio` 送出
-  `initialize`(可再呼叫工具);bridge 的結束碼由一層透明的包裝行程寫入檔案取得(SDK 的 stdio 用戶端
-  不提供結束碼;包裝行程的 stdin/stdout 直接繼承給 bridge,不轉送、不解析)。
-- `ToolListChanged` 判斷:`is_list_changed(message)`。
+- `stdio_session(...)`:官方 SDK `stdio_client` 經子行程 `python -m spillway mcp-stdio` 送出
+  `initialize`(成功時再 `tools/list`,可再呼叫一個工具),回傳 `StdioOutcome`;bridge 的結束碼由一層透明的
+  包裝行程寫入暫存檔(先寫 `.tmp` 再 `os.replace`)取得(SDK 的 stdio 用戶端不提供結束碼;包裝行程的
+  stdin/stdout 直接繼承給 bridge,不轉送、不解析)。
+- `is_list_changed(message)`:用戶端 `message_handler` 收到的訊息是否為 `notifications/tools/list_changed`。
+- `redact(text, secrets)`:斷言訊息與錯誤中顯示日誌/stderr 前把 token 換成 `<token>`。
 
-token 明文只存在呼叫端記憶體與子行程環境變數,不寫入任何檔案。
+token 明文只存在呼叫端記憶體與子行程環境變數,不寫入任何檔案,也不出現在斷言訊息。
 """
 from __future__ import annotations
 
@@ -41,6 +43,7 @@ from mcp import ClientSession, McpError, types
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
+from tests.acceptance.procs import free_port, listening
 from tests.fakes.cli_upstream import safe_subprocess_env
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -52,11 +55,22 @@ INIT_BODY = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
     "protocolVersion": "2025-06-18", "capabilities": {},
     "clientInfo": {"name": "spillway-m3b", "version": "0"}}}
 
-# bridge 的透明包裝:stdin/stdout/stderr 直接繼承;結束後把 bridge 的結束碼寫入 argv[1]
-_RC_WRAPPER = ("import subprocess, sys\n"
+# bridge 的透明包裝:stdin/stdout/stderr 直接繼承;結束後把 bridge 的結束碼寫入 argv[1](先寫暫存檔再
+# os.replace,讀取端不會讀到寫一半的內容)
+_RC_WRAPPER = ("import os, subprocess, sys\n"
                "rc = subprocess.call(sys.argv[2:])\n"
-               "open(sys.argv[1], 'w').write(str(rc))\n"
+               "tmp = sys.argv[1] + '.tmp'\n"
+               "with open(tmp, 'w') as f:\n"
+               "    f.write(str(rc))\n"
+               "os.replace(tmp, sys.argv[1])\n"
                "sys.exit(rc)\n")
+
+
+def redact(text: str, secrets: Any) -> str:
+    for s in secrets or ():
+        if s:
+            text = text.replace(s, "<token>")
+    return text
 
 
 def is_list_changed(message: Any) -> bool:
@@ -67,13 +81,6 @@ def is_list_changed(message: Any) -> bool:
 def ask_route_enum(tools: list[types.Tool]) -> list[str]:
     ask = next(t for t in tools if t.name == "ask")
     return list(ask.inputSchema["properties"]["route"].get("enum") or [])
-
-
-def free_port() -> int:
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def pid_alive(pid: int) -> bool:
@@ -239,8 +246,10 @@ class ServeProc:
     """`python -m spillway serve --port <port>`(資料目錄由呼叫端準備;token 已產生時 serve 不印)。"""
 
     def __init__(self, home: Path, *, fake_bin: Path | None, graceful: float,
-                 log_path: Path, extra_env: Mapping[str, str] | None = None) -> None:
+                 log_path: Path, extra_env: Mapping[str, str] | None = None,
+                 secrets: Any = ()) -> None:
         self.home = home
+        self.secrets = secrets          # 錯誤訊息顯示日誌前遮掉(呼叫端持有的 token 清單)
         self.port = free_port()
         self.url = f"http://127.0.0.1:{self.port}"
         self.log_path = log_path
@@ -252,10 +261,15 @@ class ServeProc:
             start_new_session=True)
 
     def wait_ready(self, timeout: float = 60.0) -> None:
+        """行程仍在、本埠的監聽者是這個 serve 行程(lsof),且 HTTP 回 200。"""
         deadline = time.monotonic() + timeout
+        want = f"127.0.0.1:{self.port}"
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
-                raise RuntimeError(f"serve 提前結束 rc={self.proc.returncode}\n{self.log_text()}")
+                raise RuntimeError(f"serve 提前結束 rc={self.proc.returncode}\n{self.safe_log()}")
+            if want not in listening(self.proc.pid):
+                time.sleep(0.2)
+                continue
             try:
                 r = httpx.get(f"{self.url}/api/settings/context", timeout=2, trust_env=False)
                 if r.status_code == 200:
@@ -273,6 +287,9 @@ class ServeProc:
     def log_text(self) -> str:
         self._log.flush()
         return self.log_path.read_text(encoding="utf-8", errors="replace")
+
+    def safe_log(self) -> str:
+        return redact(self.log_text(), self.secrets)
 
     def stop(self) -> None:
         if self.proc.poll() is None:
@@ -317,7 +334,7 @@ class StdioOutcome:
     tools: list[types.Tool]
     call: types.CallToolResult | None
     returncode: int | None
-    stderr: str
+    stderr: str = field(repr=False)      # 不進 repr:斷言訊息不帶 stderr 原文
 
 
 async def stdio_session(
