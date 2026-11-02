@@ -340,10 +340,12 @@ def test_sigterm_waits_graceful_then_kills_cli_group_and_records_shutdown(serve)
     box = s.start_task_request()
     rec = _wait_fake_started(s)
 
+    signalled_at = time.monotonic()
     s.proc.send_signal(signal.SIGTERM)
     _new_request_not_served(s)
-    elapsed = s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
-    assert elapsed >= GRACEFUL - 0.5, f"沒有等待進行中請求({elapsed:.1f}s)"
+    s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
+    elapsed = time.monotonic() - signalled_at
+    assert elapsed >= cli.drain_expire_delay(GRACEFUL) - 0.5, f"沒有等待進行中請求({elapsed:.1f}s)"
     assert s.proc.returncode == -signal.SIGTERM, s.err
     _assert_shutdown_outcome(s, rec, box)
 
@@ -354,12 +356,14 @@ def test_sigint_to_process_group_does_not_hit_cli_child_directly(serve):
     box = s.start_task_request()
     rec = _wait_fake_started(s)
 
+    signalled_at = time.monotonic()
     os.killpg(s.proc.pid, signal.SIGINT)                     # 模擬終端 Ctrl-C(整個前景 group)
     time.sleep(0.5)
     assert _pid_alive(rec["pid"]), "假 claude 自成 session,不應被終端的 SIGINT 直接打到"
     _new_request_not_served(s)
-    elapsed = s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
-    assert elapsed >= GRACEFUL - 1.0, f"沒有等待進行中請求({elapsed:.1f}s)"
+    s.wait_exit(GRACEFUL + TERM_GRACE + SLACK)
+    elapsed = time.monotonic() - signalled_at
+    assert elapsed >= cli.drain_expire_delay(GRACEFUL) - 0.5, f"沒有等待進行中請求({elapsed:.1f}s)"
     assert s.proc.returncode == 130, s.err
     _assert_shutdown_outcome(s, rec, box)
 
