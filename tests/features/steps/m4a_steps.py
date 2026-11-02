@@ -201,6 +201,9 @@ def step_export_targets(context, route, order):
     assert got == _parse_slots(order), targets
 
 
+# 與 Background 的「… 且該環境變數為測試假值」不重疊:`use_step_matcher("re")` 為 behave 的
+# SimplifiedRegexMatcher,登記時自動編譯成 `^…$`(全句比對);pattern 內自行寫 `$` 會被 behave 拒絕
+# (ValueError: should not use begin/end-markers)。
 @step(r'成員 "([^"]+)" 的 credential_ref 為 "([^"]+)"')
 def step_export_credential(context, dep_id, ref):
     assert _dep(context.m4a_export, dep_id)["credential_ref"] == ref
@@ -368,7 +371,7 @@ def step_no_backup(context):
 
 @step(r'以 mode "(merge|replace)" 匯入兩個 provider 為 "(claude-cli)" 的成員')
 def step_import_two_single(context, mode, provider):
-    deps = [{k: v for k, v in _cli_body(d, provider).items()} for d in ("claude-one", "claude-two")]
+    deps = [_cli_body(d, provider) for d in ("claude-one", "claude-two")]
     _import(context, {"version": 1, "deployments": deps}, mode)
 
 
@@ -382,22 +385,21 @@ def step_ledger_rows(context, total, in_route, route):
     messages = [{"role": "user", "content": CSV_PROMPT}]
     for _ in range(in_route):
         r = gw.chat(route, messages=messages, metadata=dict(TASK_META))
-        assert r.status_code == 200, r.text
+        assert r.status_code == 200, _safe(context, r.text)
     for _ in range(total - in_route):
         r = gw.chat("api-a", messages=messages)          # 隱含 route(model_name)
-        assert r.status_code == 200, r.text
+        assert r.status_code == 200, _safe(context, r.text)
     assert gw.ledger_total() == total
     assert gw.ledger(route=route)["total"] == in_route
     with gw.db() as conn:
         n = conn.execute("SELECT COUNT(*) FROM usage_payloads").fetchone()[0]
     assert n > 0, "前置條件:有請求內容被保存(CSV 不可含它)"
-    context.m4a_csv_route = route
 
 
 @step(r'以管理 API 匯出 route 為 "([^"]+)" 的帳本 CSV')
 def step_export_csv(context, route):
     resp = context.gw.get(CSV_PATH, params={"route": route})
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 200, _safe(context, resp.text)
     assert resp.headers["content-type"].startswith("text/csv"), resp.headers
     context.m4a_csv_resp = resp
     text = resp.content.decode("utf-8-sig")

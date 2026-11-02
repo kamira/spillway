@@ -10,7 +10,8 @@
      與 chat route `chat-x`;送 3 次請求產生帳本(2 次 task 到 review、1 次 chat 到 chat-x)。
      「其中一列 `error` 以 `=1+1` 開頭」:假上游與假 CLI 的錯誤訊息是固定文字,無法由請求帶出,所以
      由測試行程以 SQL 把 review 的一列 `error` 改為 `=1+1 …`(只改該欄;其餘列不動)。
-   - 匯出 A → serve 2(空資料目錄)以 replace 匯入 A → 匯出 B;黃金檔(決策 8)serve 3 → serve 4 往返;
+   - 匯出 A → serve 2(空資料目錄)以 replace 匯入 A → 匯出 B;黃金檔(決策 8)serve 3 → serve 4 往返
+     (DB 比對為設定表快照:只比 `CONFIG_TABLES` 與 token 雜湊以外的 settings,不含帳本、payload、冷卻);
      serve 1 上 merge、dry_run、replace(縮小)、不合法檔案、兩個 claude-cli、CSV、總覽、`..` 群組。
 2. `test_m4a_operation_mcp_stdio_max_sessions`:`SPILLWAY_TEST_MCP_MAX_SESSIONS=1` 的 serve 上,第一個
    MCP session(官方 SDK Streamable HTTP)保持開啟,第二個以子行程 `mcp-stdio`(官方 SDK stdio 用戶端)
@@ -44,6 +45,7 @@ import httpx
 import pytest
 import yaml
 
+from spillway import settings
 from tests.acceptance import procs
 from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install
 from tests.features.support.mcp_proc import (
@@ -186,8 +188,9 @@ class Node:
         self.token = r.stdout.strip()
         if self.token:
             TOKENS.append(self.token)
-        assert r.returncode == 0, _safe(r.stderr)
-        assert self.token and len(r.stdout.splitlines()) == 1, "init 的 stdout 應只有一行 token"
+        rc, n_lines = r.returncode, len(r.stdout.splitlines())
+        assert rc == 0, f"init 失敗 rc={rc}"
+        assert self.token and n_lines == 1, f"init 的 stdout 應只有一行 token(實際 {n_lines} 行)"
 
     # -- HTTP
     def ok(self, r: httpx.Response, status: int = 200) -> Any:
@@ -232,7 +235,7 @@ class Node:
         try:
             out = {t: [tuple(r) for r in c.execute(f"SELECT * FROM {t} ORDER BY 1, 2")] for t in CONFIG_TABLES}
             out["settings"] = [tuple(r) for r in c.execute(
-                "SELECT * FROM settings WHERE key != 'access_token_sha256' ORDER BY key")]
+                "SELECT * FROM settings WHERE key != ? ORDER BY key", (settings.ACCESS_TOKEN_KEY,))]
             return out
         finally:
             c.close()
@@ -382,7 +385,7 @@ def test_m4a_operation_config(env: Env):
     assert r.status_code == 200, _safe(r.text)
     g2 = s4.export()
     obs["golden_round_trip"] = {"export_equals_golden": g == GOLDEN.read_bytes(), "re_export_equal": g == g2,
-                                "db_config_rows_equal": s3.config_rows() == s4.config_rows()}
+                                "config_tables_snapshot_equal": s3.config_rows() == s4.config_rows()}
     assert all(obs["golden_round_trip"].values()), obs["golden_round_trip"]
 
     # ---- merge:由現有 api-b 匯出後只改 tags
@@ -487,8 +490,7 @@ def test_m4a_operation_config(env: Env):
     roots = [n.home for n in (s1, s2, s3, s4)]
     files = [env.tmp / "A.yaml", env.tmp / "B.yaml", env.tmp / "ledger.csv", *(s.log_path for s in env.serves)]
     for root in roots:
-        files += [p for p in root.glob("spillway.db*")] + [p for p in (root / "backups").glob("*")
-                                                         if (root / "backups").exists()]
+        files += [*root.glob("spillway.db*"), *(root / "backups").glob("*")]
     assert any(p.name == "spillway.db" for p in files) and any(p.parent.name == "backups" for p in files)
     hits = {name: sorted(str(p.relative_to(env.tmp)) for p in files if p.is_file() and s.encode() in p.read_bytes())
             for name, s in [("fake_key", procs.TEST_KEY)] + [(f"token{i}", t) for i, t in enumerate(TOKENS)]}
@@ -521,6 +523,10 @@ async def test_m4a_operation_mcp_stdio_max_sessions(env: Env):
     assert out.init is None and out.error is not None, (out.error, out.returncode)
     assert out.error.data == {"http_status": 503}, out.error
     assert out.returncode == 1 and obs["stderr_token_free"], (out.returncode, _safe(out.stderr))
-    hits = [t for t in TOKENS if t in s.serve.log_text()]
-    assert hits == [] and procs.TEST_KEY not in s.serve.log_text()
+    log = s.serve.log_text()
+    token_in_log = any(t in log for t in TOKENS)
+    key_in_log = procs.TEST_KEY in log
+    del log
+    assert not token_in_log and not key_in_log, \
+        f"serve 日誌含 token 明文={token_in_log}、假金鑰={key_in_log}"
     record("mcp_stdio_max_sessions", obs)
