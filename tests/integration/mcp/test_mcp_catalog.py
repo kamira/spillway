@@ -20,7 +20,7 @@ pytestmark = pytest.mark.anyio
 # 決策 8(AM-13)
 EXPECTED_HTTP = {"host_not_allowed": 403, "origin_not_allowed": 403, "recursion_blocked": 403,
                  "unauthorized": 401, "shutting_down": 503, "not_found": 404}
-EXPECTED_TOOL = ["route_not_found", "no_candidate", "shutting_down", "validation_error"]
+EXPECTED_TOOL = ["route_not_found", "no_candidate", "shutting_down", "internal_error", "validation_error"]
 EXPECTED_SDK = [400, 404, 406, 413, 503]
 
 

@@ -11,7 +11,8 @@ API
     先以 127.0.0.1:0 綁好 socket 取得隨機埠,以**同一個埠**呼叫 `create_app(port=port, db_path=...,
     **create_app_kwargs)`(Origin 比對與 catalog URL 用它),再在背景 thread 以 `asyncio.run(server.serve(
     sockets=[sock]))` 啟動 uvicorn(`lifespan="on"`、`timeout_graceful_shutdown=graceful_timeout`、
-    不裝訊號處理——非主 thread 時 uvicorn 自動略過)。等到 `server.started` 才回傳;啟動失敗 raise。
+    不裝訊號處理——非主 thread 時 uvicorn 自動略過)。等到 `server.started` 才回傳;啟動失敗時原樣丟出
+    lifespan 的原始例外(uvicorn 本身只記錄)。
     - `db_path` 省略時為 `settings.db_path()`(測試的暫存 `SPILLWAY_HOME`)。
     - `token=True`(預設):啟動前先 migration 並以 `settings.rotate_access_token` 產生 token,明文只存在
       `gw.token`(測試行程記憶體);`token=False`:不產生(「尚未產生 token → 401」)。
@@ -41,6 +42,8 @@ API
   SDK 用戶端在 initialize 後會自己開 GET 通知串流;要確定它已就緒再觸發通知,呼叫
   `wait_stream_open(client.session_id)`。
 - `stop(timeout=10.0)` → `server.should_exit = True` 並 join;逾時改設 `force_exit` 再 join。冪等。
+  force_exit 後執行緒仍在、uvicorn 執行緒丟出例外(`gw.error`)、或 lifespan 關閉失敗
+  (`gw.lifespan_error`)時 raise `RuntimeError`(原始例外為 `__cause__`),不靜默吞掉。
 
 注意:測試結束前先離開 `mcp_session`(SDK 用戶端會 DELETE session 並關閉 GET 串流),否則停機要等
 `graceful_timeout`。
@@ -48,6 +51,7 @@ API
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import socket
 import sqlite3
 import threading
@@ -90,7 +94,8 @@ class LiveGateway:
     server: uvicorn.Server
     thread: threading.Thread | None = None
     loop: asyncio.AbstractEventLoop | None = None
-    error: BaseException | None = None
+    error: BaseException | None = None            # uvicorn 執行緒本身的例外
+    lifespan_error: BaseException | None = None   # app 的 lifespan 丟出的原始例外(啟動或關閉)
     _stopped: bool = field(default=False, repr=False)
 
     # ------------------------------------------------------------------ 位址與 HTTP
@@ -196,6 +201,12 @@ class LiveGateway:
             if self.thread.is_alive():
                 self.server.force_exit = True
                 self.thread.join(timeout)
+            if self.thread.is_alive():
+                raise RuntimeError(f"live_gateway 在 force_exit 後仍未停止(埠 {self.port})")
+        if self.error is not None:
+            raise RuntimeError("live_gateway 的 uvicorn 執行緒丟出例外") from self.error
+        if self.lifespan_error is not None:
+            raise RuntimeError("live_gateway 的 lifespan 關閉失敗") from self.lifespan_error
 
 
 def start_live_gateway(
@@ -222,9 +233,21 @@ def start_live_gateway(
     port = sock.getsockname()[1]
     create_app_kwargs.setdefault("retention_poll_seconds", 3600)
     app = create_app(port=port, db_path=path, **create_app_kwargs)
-    config = uvicorn.Config(app, host=HOST, port=port, lifespan="on", log_level="warning",
+    holder: dict[str, LiveGateway] = {}
+
+    async def asgi(scope: Any, receive: Any, send: Any) -> None:
+        # uvicorn 只記錄 lifespan 例外;攔下原始例外,啟動失敗時原樣往上丟、關閉失敗時由 stop() 回報
+        try:
+            await app(scope, receive, send)
+        except BaseException as exc:
+            if scope["type"] == "lifespan":
+                holder["gw"].lifespan_error = exc
+            raise
+
+    config = uvicorn.Config(asgi, host=HOST, port=port, lifespan="on", log_level="warning",
                             access_log=False, timeout_graceful_shutdown=graceful_timeout)
     gw = LiveGateway(app=app, port=port, db_path=path, token=tok, server=uvicorn.Server(config))
+    holder["gw"] = gw
     gw.thread = threading.Thread(target=gw._serve, args=(sock,), name=f"live-gateway-{port}", daemon=True)
     gw.thread.start()
 
@@ -233,10 +256,15 @@ def start_live_gateway(
     while not gw.server.started:
         if not gw.thread.is_alive():
             sock.close()
-            raise RuntimeError(f"live_gateway 啟動失敗:{type(gw.error).__name__ if gw.error else '未知'}") \
-                from gw.error
+            gw._stopped = True
+            if gw.lifespan_error is not None:   # 原始的啟動例外(例如 AdapterConflictError)
+                raise gw.lifespan_error
+            if gw.error is not None:
+                raise gw.error
+            raise RuntimeError("live_gateway 啟動失敗(uvicorn 未啟動,原因見其日誌)")
         if waited >= startup_timeout:
-            gw.stop()
+            with contextlib.suppress(Exception):
+                gw.stop()
             raise TimeoutError("live_gateway 啟動逾時")
         deadline.wait(0.02)
         waited += 0.02

@@ -60,6 +60,29 @@ async def test_depth_rejected_before_token(asgi_app, values):
         _assert_error(r, 403, "recursion_blocked")   # `01` 為數值 1(前導零)仍 ≥ 1
 
 
+@pytest.mark.parametrize("value", ["1" * 5000, "0" * 4999 + "1"])
+async def test_huge_depth_is_403_not_500(asgi_app, value):
+    """超過 Python 整數字串長度上限(4300 位數)的值:不可因 int() 的 ValueError 變成 500。"""
+    r = await asgi_app.client.post("/mcp/all", json=INIT_BODY,
+                                   headers=_hdrs(asgi_app.token, **{"X-Spillway-Depth": value}))
+    _assert_error(r, 403, "recursion_blocked")
+
+
+async def test_huge_zero_depth_passes(asgi_app):
+    r = await asgi_app.client.post("/mcp/all", json=INIT_BODY,
+                                   headers=_hdrs(asgi_app.token, **{"X-Spillway-Depth": "0" * 5000}))
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.parametrize("method", ["GET", "DELETE"])
+@pytest.mark.parametrize("value", ["1", "-1", "abc"])
+async def test_depth_rejected_on_get_and_delete(asgi_app, method, value):
+    for token in (asgi_app.token, None):
+        r = await asgi_app.client.request(method, "/mcp/all",
+                                          headers=_hdrs(token, **{"X-Spillway-Depth": value}))
+        _assert_error(r, 403, "recursion_blocked")
+
+
 @pytest.mark.parametrize("values", [["0"], ["0", "0"], ["00"]])
 async def test_depth_zero_passes(asgi_app, values):
     raw = [(b"x-spillway-depth", v.encode()) for v in values]

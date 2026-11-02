@@ -18,7 +18,8 @@ route(spec 8.1.4)。群組在 session 期間被刪:`tools/list` 回空清單、`
 - 錯誤一律回 `CallToolResult(isError=True, content=[TextContent(json)], structuredContent={"error":
   {code, message}, "attempts": [...]?})`:`route_not_found`、`no_candidate`(帶 `attempts`,每項
   `{deployment, status, slot}`)、`validation_error`;`shutting_down` 由 T3 經 `api.drain.run_until_drain`
-  接上(決策 18)。非預期例外 → `internal_error`(既有 9.1.2 錯誤碼;訊息只含例外型別)。
+  接上(決策 18)。非預期例外 → `internal_error`(訊息只含例外型別)。工具錯誤碼的單一清單在
+  `catalog.TOOL_ERRORS`。
 
 `list_routes`(決策 12):`{"routes": [{name, mode, ordered, slots: [{slot, members: [{id, effort, weight}]}]}]}`;
 有手動排序時 `ordered` 為 `"manual"`,slot 與成員順序與 `GET /api/routes/{name}` 的 `order` 同源
@@ -57,7 +58,7 @@ from spillway.routing import (
 from spillway.store import repo
 
 __all__ = [
-    "ALL_GROUP", "TOOL_NAMES", "TOOL_ERROR_CODES", "ASK_OUTPUT_SCHEMA", "LIST_ROUTES_OUTPUT_SCHEMA",
+    "ALL_GROUP", "ASK_OUTPUT_SCHEMA", "LIST_ROUTES_OUTPUT_SCHEMA",
     "QUOTA_STATUS_OUTPUT_SCHEMA", "group_exists", "visible_routes", "tool_definitions", "call_tool",
     "error_result",
 ]
@@ -65,9 +66,6 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 ALL_GROUP = "all"
-TOOL_NAMES = ("ask", "list_routes", "quota_status")
-# 工具層錯誤碼(決策 8 `errors.tool`)
-TOOL_ERROR_CODES = ("route_not_found", "no_candidate", "shutting_down", "validation_error")
 
 _ERROR_PROPS: dict[str, Any] = {
     "error": {
@@ -323,6 +321,8 @@ async def _ask(app: Any, group: str, args: dict[str, Any]) -> types.CallToolResu
         visible = {r.name for r in visible_routes(conn, group)}
     finally:
         conn.close()
+    # 群組檢查與 `Router.route` 之間沒有 await:同一事件迴圈上的管理 API 無法在兩者之間改動 route;
+    # Router 開始解析後才被刪除時由下方的 RouteNotFound 接住(route 改屬別的群組的窄縫不另檢查)
     if route not in visible:
         return error_result("validation_error",
                             f"route: {REDACTOR.redact(route)[0]} 不是群組 {group} 的 route")

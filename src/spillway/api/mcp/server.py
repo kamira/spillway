@@ -142,7 +142,7 @@ class McpRuntime:
             return
         try:
             await asyncio.wait_for(asyncio.shield(task), STOP_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task

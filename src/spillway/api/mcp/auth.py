@@ -63,7 +63,8 @@ def check_depth(headers: Headers) -> bool:
     values = _values(headers, b"x-spillway-depth")
     if values is None:
         return False
-    return all(_DEPTH_RE.fullmatch(v) is not None and int(v) == 0 for v in values)
+    # 不用 int():超過 4300 位數的值會讓 int() 丟 ValueError(Python 的整數字串長度上限)→ 500
+    return all(_DEPTH_RE.fullmatch(v) is not None and set(v) <= {"0"} for v in values)
 
 
 def check_bearer(headers: Headers, stored_hash: str | None) -> bool:

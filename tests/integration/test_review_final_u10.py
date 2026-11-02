@@ -70,7 +70,7 @@ async def test_probe1_member_without_budget_429_dashboard_stays_calendar_month(s
 
 
 async def test_v1_placeholder_row_kept_and_dashboard_treats_as_no_budget(spillway, fake_api):
-    """v1 留下的暫行列(migration 保留,決策 4):儀表板仍比照沒有 budgets 列(`_is_cooling_only`)。"""
+    """v1 留下的暫行列(migration 保留,決策 4):儀表板仍比照沒有 budgets 列(`spillway.quota.is_cooling_only`)。"""
     _setup(spillway, fake_api.base_url, a_budget=Budget("none", None, "none"))
     _spend(spillway, "a", spillway.clock.now() - timedelta(days=2), 0.25)
     row = _dash((await spillway.client.get("/api/dashboard")).json())["a"]

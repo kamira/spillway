@@ -42,6 +42,7 @@ TOOL_ERRORS: tuple[dict[str, Any], ...] = (
     {"code": "route_not_found", "description": "route 不存在,或 session 綁定的群組已被刪除"},
     {"code": "no_candidate", "description": "沒有可用的候選成員;structuredContent.attempts 列出每次嘗試"},
     {"code": "shutting_down", "description": "停機期滿,進行中的 ask 已取消"},
+    {"code": "internal_error", "description": "工具執行時發生非預期錯誤(訊息只含例外型別)"},
     {"code": "validation_error",
      "description": "參數不合法:route 不是本群組可見的 route、prompt 為空、effort 不在五級內或多餘參數"},
 )
