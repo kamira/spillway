@@ -1,12 +1,19 @@
-"""`/api/ledger` 與 payload 檢視(CHG-20261101-02 決策 9)。"""
+"""`/api/ledger` 與 payload 檢視(CHG-20261101-02 決策 9);`/api/ledger/export.csv`
+(CHG-20261102-02 決策 9)。"""
 from __future__ import annotations
 
+import asyncio
+import csv
 import dataclasses
+import io
 import math
+from collections.abc import AsyncIterator, Iterable
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 
 from fastapi import Query, Request
+from starlette.responses import StreamingResponse
+from starlette.types import Receive, Scope, Send
 
 from spillway.api import ApiError
 from spillway.api.deps import request_conn
@@ -80,6 +87,111 @@ async def list_ledger(
                                   since=since, until=until)
     return {"items": [_ledger_out(r) for r in rows], "page": page, "page_size": page_size,
             "total": total, "pages": math.ceil(total / page_size)}
+
+
+# ================================================================ /api/ledger/export.csv
+# CHG-20261102-02 決策 9(決策審議 AM-10)
+
+
+LEDGER_CSV_MAX_ROWS = 100_000
+LEDGER_CSV_BATCH = 1000
+# 欄位與順序同 `_ledger_out`(`id` 在前,其餘為 `repo.LedgerRow` 欄位順序)
+LEDGER_CSV_COLUMNS = (
+    "id", "ts", "route_name", "deployment_id", "effort", "tokens_in", "tokens_out", "cost_usd",
+    "status", "slot", "fallback_depth", "latency_ms", "est_tokens_in", "est_tokens_out_p50",
+    "est_tokens_out_p90", "est_cost_usd_p90", "error",
+)
+CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+_BOM = "\ufeff"
+
+
+def _csv_cell(value: Any) -> Any:
+    """None → 空字串;`str` 以 `= + - @ Tab CR` 開頭時前置 `'`(試算表公式注入防護);數字原樣。"""
+    if value is None:
+        return ""
+    if isinstance(value, str) and value.startswith(CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
+def _csv_text(rows: Iterable[Iterable[Any]]) -> str:
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\r\n")
+    for row in rows:
+        w.writerow([_csv_cell(v) for v in row])
+    return buf.getvalue()
+
+
+def _csv_row(r: repo.LedgerRow) -> list[Any]:
+    out = _ledger_out(r)
+    return [out[c] for c in LEDGER_CSV_COLUMNS]
+
+
+class _ClosingStreamingResponse(StreamingResponse):
+    """回應結束(含用戶端中途斷線、取消)時一定 `aclose()` body 的 async generator,
+    讓 generator 內開的連線在事件迴圈執行緒內、立即關閉,不等垃圾回收。"""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await self.body_iterator.aclose()  # type: ignore[attr-defined]
+
+
+@router.get("/ledger/export.csv", response_model=None,
+            responses={200: {"content": {"text/csv": {}}, "description": "帳本 CSV(UTF-8 BOM)"}})
+async def export_ledger_csv(
+    request: Request,
+    from_: Annotated[str | None, Query(alias="from")] = None,
+    to: Annotated[str | None, Query()] = None,
+    deployment: Annotated[str | None, Query()] = None,
+    route: Annotated[str | None, Query()] = None,
+    status: Annotated[StatusLit | None, Query()] = None,
+) -> StreamingResponse:
+    """帳本 CSV 匯出(spec 9.2.6;決策 9)。篩選參數同 `GET /api/ledger`(`from`、`to`、`deployment`、
+    `route`、`status`),不分頁,依 `ts DESC, id DESC`;符合列數超過 100,000 → 422 `validation_error`
+    (請縮小範圍)。
+
+    欄位與順序同帳本列(`LEDGER_CSV_COLUMNS`);`ts` 為 UTC ISO 8601;None 為空字串;不含 payload。
+    `str` 欄位以 `= + - @ Tab CR` 開頭時前置 `'`;數字欄不加。回應 `text/csv; charset=utf-8`、
+    UTF-8 BOM、`Content-Disposition: attachment; filename="spillway-ledger-<UTC yyyymmddThhmmssZ>.csv"`
+    (時間取自 clock)、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`。
+
+    串流:預檢在 `request_conn` 內完成;CSV 由 async generator 在事件迴圈執行緒內自行以
+    `conn_factory()` 開連線、`try/finally` 關閉(design D27 的 CSV 串流例外),以
+    `repo.iter_ledger` 逐批輸出,批次之間讓出事件迴圈。
+    """
+    since = _parse_time(from_, "query.from")
+    until = _parse_time(to, "query.to")
+    filters: dict[str, Any] = {"route_name": route, "deployment_id": deployment, "status": status,
+                               "since": since, "until": until}
+    with request_conn(request) as conn:
+        total = repo.count_ledger(conn, **filters)
+    if total > LEDGER_CSV_MAX_ROWS:
+        raise _invalid("query", f"符合條件的帳本列有 {total} 列,超過上限 {LEDGER_CSV_MAX_ROWS} 列,"
+                                "請縮小範圍")
+    stamp = _clock(request).now().astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    factory = request.app.state.conn_factory
+
+    async def body() -> AsyncIterator[str]:
+        conn = factory()
+        try:
+            yield _BOM + _csv_text([LEDGER_CSV_COLUMNS])
+            batches = repo.iter_ledger(conn, **filters, limit=LEDGER_CSV_MAX_ROWS,
+                                       batch=LEDGER_CSV_BATCH)
+            try:
+                for rows in batches:
+                    yield _csv_text(_csv_row(r) for r in rows)
+                    await asyncio.sleep(0)
+            finally:
+                batches.close()
+        finally:
+            conn.close()
+
+    return _ClosingStreamingResponse(
+        body(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="spillway-ledger-{stamp}.csv"',
+                 "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/ledger/{ledger_id}/payload")

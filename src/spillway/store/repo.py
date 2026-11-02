@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -513,6 +513,63 @@ def count_ledger(
     與 `list_ledger` 是兩條獨立敘述,呼叫端不包交易(CHG-20261101-02 決策審議 D25)。"""
     where, args = _ledger_where(route_name, deployment_id, status, since, until)
     return int(conn.execute("SELECT COUNT(*) FROM usage_ledger" + where, args).fetchone()[0])
+
+
+def iter_ledger(
+    conn: sqlite3.Connection,
+    *,
+    route_name: str | None = None,
+    deployment_id: str | None = None,
+    status: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    limit: int,
+    batch: int = 1000,
+) -> Iterator[list[LedgerRow]]:
+    """依條件逐批讀出帳本(條件與順序同 `list_ledger`:新到舊),每批至多 `batch` 列、合計至多 `limit` 列。
+
+    帳本 CSV 匯出用(CHG-20261102-02 決策 9):以 `fetchmany` 分批讀,不一次載入整個結果;
+    整段在一個讀交易內(`BEGIN` … `COMMIT`),各批看到同一份快照。呼叫端在中途停止迭代
+    (`close()`、例外)時回滾讀交易。呼叫端已在交易中時沿用,不另開也不提交。"""
+    where, args = _ledger_where(route_name, deployment_id, status, since, until)
+    sql = "SELECT * FROM usage_ledger" + where + " ORDER BY ts DESC, id DESC LIMIT ?"
+    args.append(limit)
+    own = not conn.in_transaction
+    if own:
+        conn.execute("BEGIN")
+    finished = False
+    try:
+        cur = conn.execute(sql, args)
+        try:
+            while True:
+                rows = cur.fetchmany(batch)
+                if not rows:
+                    break
+                yield [_ledger_from_row(r) for r in rows]
+        finally:
+            cur.close()
+        finished = True
+    finally:
+        if own and conn.in_transaction:
+            conn.execute("COMMIT" if finished else "ROLLBACK")
+
+
+def payload_stats(conn: sqlite3.Connection) -> tuple[int, int]:
+    """`usage_payloads` 的 `(列數, bytes 欄加總)`;沒有列時 `(0, 0)`(設定總覽,決策 10)。"""
+    n, total = conn.execute("SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM usage_payloads").fetchone()
+    return int(n), int(total)
+
+
+def count_config(conn: sqlite3.Connection) -> dict[str, int]:
+    """設定總覽的計數(決策 10):`deployments`、`groups`、`routes` 為各表列數,
+    `ledger_ok` 為 `status = 'ok'` 的帳本列數。各一個 COUNT,不載入資料列。"""
+    return {
+        "deployments": int(conn.execute("SELECT COUNT(*) FROM deployments").fetchone()[0]),
+        "groups": int(conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]),
+        "routes": int(conn.execute("SELECT COUNT(*) FROM routes").fetchone()[0]),
+        "ledger_ok": int(conn.execute(
+            "SELECT COUNT(*) FROM usage_ledger WHERE status = 'ok'").fetchone()[0]),
+    }
 
 
 def ledger_spend(
