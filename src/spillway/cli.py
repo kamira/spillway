@@ -81,7 +81,7 @@ __all__ = ["main"]
 
 EXIT_USAGE = 2
 EXIT_STARTUP_FAILED = 1
-EXIT_SIGINT = 130   # CHG-20261102-01 決策 19:serve 被 Ctrl-C(SIGINT)結束
+EXIT_SIGINT = settings.EXIT_SIGINT   # CHG-20261102-01 決策 19:serve 被 Ctrl-C 結束(單一定義在 settings)
 WORK_SUBDIRS = CLI_WORK_SUBDIRS   # 決策 10、11、20(CHG-20261102-01):CLI 模組未設定 cwd 時的工作目錄
 GRACEFUL_TIMEOUT = 30.0   # 決策 16 ②:停機時等待進行中請求的上限(秒)
 TEST_GRACEFUL_TIMEOUT_ENV = "SPILLWAY_TEST_GRACEFUL_TIMEOUT"   # 僅供測試,見 _test_graceful_timeout

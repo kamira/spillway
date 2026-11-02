@@ -22,16 +22,15 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote
 
 import jinja2
 from fastapi import Request
 
 from spillway.api.deps import request_conn
+from spillway.settings import MCP_ALL_GROUP, mcp_url
 from spillway.store import repo
 
 from .common import _invalid, _not_found, router
-from .groups import RESERVED_GROUP_NAME
 
 DEFAULT_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates" / "mcp"
 ENV_VARS = ["SPILLWAY_TOKEN"]
@@ -152,7 +151,7 @@ def stdio_command() -> tuple[str, list[str]]:
 def build_context(group: str, port: int) -> dict[str, Any]:
     command, args_prefix = stdio_command()
     return {"name": f"spillway-{group}", "group": group, "port": port,
-            "url": f"http://127.0.0.1:{port}/mcp/{quote(group, safe='')}",
+            "url": mcp_url(port, group),
             "command": command, "args_prefix": args_prefix}
 
 
@@ -178,7 +177,7 @@ async def mcp_config(request: Request, group: str, tool: str) -> dict[str, Any]:
     """見模組 docstring。"""
     if tool not in TOOL_FORMATS:
         raise _invalid("query.tool", "不支援的工具(可用:" + "、".join(TOOL_FORMATS) + ")")
-    if group != RESERVED_GROUP_NAME:
+    if group != MCP_ALL_GROUP:
         with request_conn(request) as conn:
             if repo.get_group(conn, group) is None:
                 raise _not_found(f"群組 {group}")

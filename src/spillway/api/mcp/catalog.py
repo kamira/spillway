@@ -15,11 +15,12 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import quote
 
+from spillway.settings import MCP_ALL_GROUP as ALL_GROUP
+from spillway.settings import mcp_url
 from spillway.store import repo
 
-from .tools import ALL_GROUP, tool_definitions
+from .tools import tool_definitions
 
 __all__ = ["mcp_catalog", "HTTP_ERRORS", "TOOL_ERRORS", "SDK_TRANSPORT_ERRORS"]
 
@@ -67,10 +68,6 @@ _NOTIFICATIONS: tuple[dict[str, Any], ...] = (
 )
 
 
-def _url(port: int, group: str) -> str:
-    return f"http://127.0.0.1:{port}/mcp/{quote(group, safe='')}"
-
-
 def mcp_catalog(app: Any, group: str = ALL_GROUP) -> dict[str, Any]:
     port = int(app.state.port)
     conn = app.state.conn_factory()
@@ -84,8 +81,8 @@ def mcp_catalog(app: Any, group: str = ALL_GROUP) -> dict[str, Any]:
         "group": group,
         "connection": {
             "transport": "streamable-http",
-            "url": _url(port, group),
-            "groups": [{"name": n, "url": _url(port, n)} for n in [ALL_GROUP, *sorted(names)]],
+            "url": mcp_url(port, group),
+            "groups": [{"name": n, "url": mcp_url(port, n)} for n in [ALL_GROUP, *sorted(names)]],
             "auth": {"type": "Bearer", "header": "Authorization", "value": "Bearer ${SPILLWAY_TOKEN}",
                      "env": "SPILLWAY_TOKEN"},
             "stdio": {"command": "spillway", "args": ["mcp-stdio", "--group", group, "--port", str(port)],

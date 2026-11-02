@@ -58,6 +58,8 @@ from spillway.routing import (
     RouteOutcome,
     members_of,
 )
+from spillway.routing.target import normalize_selector
+from spillway.settings import MCP_ALL_GROUP
 from spillway.store import repo
 
 __all__ = [
@@ -68,7 +70,7 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-ALL_GROUP = "all"
+ALL_GROUP = MCP_ALL_GROUP   # 單一定義在 settings(終審 I1)
 
 _ERROR_PROPS: dict[str, Any] = {
     "error": {
@@ -389,7 +391,7 @@ def _quota_status(app: Any, group: str) -> types.CallToolResult:
             if g is None:
                 rows = []
             else:
-                sel = {k: list(g.selector.get(k) or []) for k in ("all", "any", "none")}
+                sel = normalize_selector(g.selector)
                 ids = {d.id for d in members_of({"tags": sel}, repo.list_deployments(conn))}
                 rows = [r for r in rows if r["id"] in ids]
     finally:

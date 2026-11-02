@@ -13,14 +13,16 @@ from spillway.api import ApiError, redact_echo
 from spillway.api.deps import request_conn
 from spillway.domain import Deployment
 from spillway.routing import members_of
+from spillway.routing.target import normalize_selector
+from spillway.settings import MCP_ALL_GROUP
 from spillway.store import repo
 from spillway.store.db import transaction
 
 from .common import _invalid, _not_found, router, tools_changed
 from .models import GroupIn, GroupUpdate
 
-# CHG-20261102-01 決策 22:保留給 `/mcp/all`、`mcp_catalog(app, "all")`
-RESERVED_GROUP_NAME = "all"
+# CHG-20261102-01 決策 22:保留給 `/mcp/all`、`mcp_catalog(app, "all")`(單一定義在 settings)
+RESERVED_GROUP_NAME = MCP_ALL_GROUP
 
 
 def _member_brief(d: Deployment) -> dict[str, Any]:
@@ -29,7 +31,7 @@ def _member_brief(d: Deployment) -> dict[str, Any]:
 
 
 def _group_out(g: repo.Group, deps: list[Deployment]) -> dict[str, Any]:
-    sel = {k: list(g.selector.get(k) or []) for k in ("all", "any", "none")}
+    sel = normalize_selector(g.selector)
     return {"name": g.name, "selector": sel,
             "members": [_member_brief(d) for d in members_of({"tags": sel}, deps)]}
 

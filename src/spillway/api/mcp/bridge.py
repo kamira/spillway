@@ -45,7 +45,8 @@ import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import quote
+
+from spillway.settings import DEFAULT_HOST, EXIT_SIGINT, mcp_url
 
 from .sdk_logging import install_sdk_root_log_filter
 
@@ -58,12 +59,11 @@ EXIT_OK = 0
 EXIT_ERROR = 1        # 閘道未啟動或其他傳輸錯誤
 EXIT_CONFIG = 2       # SPILLWAY_TOKEN / SPILLWAY_DEPTH 不合法(未連線)
 EXIT_REJECTED = 3     # 被閘道拒絕(401/403/404/503)
-EXIT_SIGINT = 130
 
 TOKEN_ENV = "SPILLWAY_TOKEN"
 DEPTH_ENV = "SPILLWAY_DEPTH"
 DEPTH_HEADER = "X-Spillway-Depth"
-HOST = "127.0.0.1"
+HOST = DEFAULT_HOST
 REJECT_CODES: dict[int, str] = {
     401: "unauthorized",
     403: "recursion_blocked",
@@ -88,7 +88,7 @@ def _say(message: str) -> None:
 
 
 def bridge_url(group: str, port: int) -> str:
-    return f"http://{HOST}:{port}/mcp/{quote(group, safe='')}"
+    return mcp_url(port, group)
 
 
 def build_headers(environ: Mapping[str, str]) -> dict[str, str]:
