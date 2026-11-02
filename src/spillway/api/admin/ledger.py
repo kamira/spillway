@@ -18,6 +18,7 @@ from starlette.types import Receive, Scope, Send
 from spillway.api import ApiError
 from spillway.api.deps import request_conn
 from spillway.clock import to_iso
+from spillway.configio import utc_stamp_filename
 from spillway.domain import LEDGER_STATUSES
 from spillway.ledger import LedgerNotFound, payload_status
 from spillway.store import repo
@@ -95,6 +96,7 @@ async def list_ledger(
 
 LEDGER_CSV_MAX_ROWS = 100_000
 LEDGER_CSV_BATCH = 1000
+LEDGER_CSV_FILENAME_FORMAT = "spillway-ledger-%Y%m%dT%H%M%SZ.csv"
 # 欄位與順序同 `_ledger_out`(`id` 在前,其餘為 `repo.LedgerRow` 欄位順序)
 LEDGER_CSV_COLUMNS = (
     "id", "ts", "route_name", "deployment_id", "effort", "tokens_in", "tokens_out", "cost_usd",
@@ -170,7 +172,7 @@ async def export_ledger_csv(
     if total > LEDGER_CSV_MAX_ROWS:
         raise _invalid("query", f"符合條件的帳本列有 {total} 列,超過上限 {LEDGER_CSV_MAX_ROWS} 列,"
                                 "請縮小範圍")
-    stamp = _clock(request).now().astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    filename = utc_stamp_filename(_clock(request).now(), LEDGER_CSV_FILENAME_FORMAT)
     factory = request.app.state.conn_factory
 
     async def body() -> AsyncIterator[str]:
@@ -190,7 +192,7 @@ async def export_ledger_csv(
 
     return _ClosingStreamingResponse(
         body(), media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="spillway-ledger-{stamp}.csv"',
+        headers={"Content-Disposition": f'attachment; filename="{filename}"',
                  "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 

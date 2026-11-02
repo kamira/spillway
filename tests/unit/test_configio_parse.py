@@ -496,3 +496,19 @@ def test_backup_removed_when_later_check_fails(conn, tmp_path):
 def test_merge_writes_no_backup(conn, tmp_path):
     r = _apply(conn, "version: 1\n", "merge", tmp_path=tmp_path)
     assert r.backup is None and not (tmp_path / "backups").exists()
+
+
+@pytest.mark.parametrize("name,shown", [
+    ("a​b", 'groups["a\\u200bb"]'),            # Cf 零寬空白
+    ("a‮b", 'groups["a\\u202eb"]'),            # Cf 方向控制
+    ("a b", 'groups["a\\u0020b"]'),                 # Zs
+    ("a　b", 'groups["a\\u3000b"]'),            # Zs 全形空白
+    ("a b", 'groups["a\\u2028b"]'),            # Zl
+    ("a\x7fb", 'groups["a\\u007fb"]'),              # Cc(JSON 不跳脫 DEL)
+    ("ab", 'groups["a\\ue000b"]'),            # Co
+    ("a\U000f0000b", 'groups["a\\udb80\\udc00b"]'),  # Co(補充平面,代理對)
+    ("中文", 'groups["中文"]'),                     # CJK 照原樣
+    ("é.x", 'groups["é.x"]'),
+])
+def test_format_path_escapes_invisible(name, shown):
+    assert configio.format_path(("groups", name)) == shown

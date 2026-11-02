@@ -241,10 +241,10 @@ def test_timeout_never_answers(fake_cli, tmp_path, name):
     try:
         with pytest.raises(subprocess.TimeoutExpired):
             proc.communicate(b"hi", timeout=1.0)
+        (rec,) = fake_cli.wait_for_records(name, 1)  # 已開始才殺(慢啟動時不競態)
     finally:
         os.killpg(proc.pid, signal.SIGKILL)
         proc.communicate()
-    (rec,) = fake_cli.wait_for_records(name, 1)
     assert rec["finished"] is False
 
 

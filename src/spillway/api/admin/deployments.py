@@ -86,7 +86,8 @@ def _load_dep(conn: sqlite3.Connection, dep_id: str) -> Deployment:
 
 def _check_cardinality(conn: sqlite3.Connection, registry: Any, dep: Deployment) -> None:
     """spec 7.6.5、2.1.4、決策 22:呼叫端必須已在 `transaction(conn)` 內(BEGIN IMMEDIATE 取得寫鎖,
-    查詢與寫入之間不會有別的連線插入成員)。"""
+    查詢與寫入之間不會有別的連線插入成員)。逐列檢查寫入前的狀態;設定檔匯入另在
+    `configio._apply_tx` 第 5 步檢查交易內的最終狀態(整批套用後才算數),兩者刻意分開(終審 I3)。"""
     if registry.cardinality_of(dep.provider, dep.kind) != "single":
         return
     others = repo.provider_member_ids(conn, dep.provider, exclude_id=dep.id)

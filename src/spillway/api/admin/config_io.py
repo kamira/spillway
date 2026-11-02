@@ -17,12 +17,17 @@
 - 解析與驗證:`config_file.parse`(全部錯誤,上限 20);套用:`configio.apply`(單一交易;
   `ImportConflict` → 422 / 409 `provider_single` / 500 `internal_error`,訊息經 `redact_echo`)。
 - 備份:`Path(app.state.db_path).parent / "backups"`;時間 `app.state.clock.now()`。
+- replace 的前置檢查(終審 U2,`check_restorable`):在寫鎖內、刪除之前,匯入前的設定須通過匯出的舊列
+  掃描(`_legacy_secret_hits`)與 `config_file.parse`(以它自己的 dump);否則 422 `validation_error`,
+  訊息以 `configio.RESTORE_PRECHECK_PREFIX` 開頭、只列位置與原因(不含值),不刪除、不寫備份;
+  dry_run 同樣回此 422。merge 不做此檢查。
 - 成功(非 dry_run)後:對 `affected_ids` 逐一 `router.invalidate_health(id)`,再 `tools_changed` 一次;
   dry_run 兩者都不做、不寫備份。
 - 回應 `{mode, dry_run, created, updated, deleted, backup, privileged}`。
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -33,6 +38,7 @@ from spillway import configio
 from spillway.configio import utc_stamp_filename
 from spillway.api import ApiError, redact_echo
 from spillway.api.deps import request_conn
+from spillway.domain import Deployment
 from spillway.store import repo
 
 from . import config_file
@@ -42,6 +48,7 @@ from .secrets import _secret_paths
 EXPORT_MEDIA_TYPE = "application/yaml; charset=utf-8"
 EXPORT_FILENAME_FORMAT = "spillway-config-%Y%m%dT%H%M%SZ.yaml"
 _SECRET_REASON = "疑似金鑰,請先以管理 API 改用 credential_ref 再匯出"
+_SECRET_REASON_REPLACE = "疑似金鑰,請先以管理 API 改用 credential_ref"
 
 
 def _legacy_secret_hits(deployments: list) -> list[str]:
@@ -87,6 +94,19 @@ IMPORT_MEDIA_TYPES = frozenset({"application/yaml", "application/x-yaml", "text/
 MAX_IMPORT_BYTES = 1_048_576
 BACKUP_DIRNAME = "backups"
 _CONTENT_TYPE_REASON = "Content-Type 必須為 application/yaml"
+
+
+def _restorable_problem(deployments: Sequence[Deployment], text: str) -> str | None:
+    """`configio.apply(check_restorable=…)`:匯入前的設定能否匯出(決策 5 的舊列掃描)且其 dump 能否
+    通過 `config_file.parse`;可以 → None,否則回傳只含位置與原因的說明(不含值)。"""
+    hits = _legacy_secret_hits(list(deployments))
+    if hits:
+        return "; ".join(f"{h}: {_SECRET_REASON_REPLACE}" for h in hits)
+    try:
+        config_file.parse(text)
+    except ApiError as exc:
+        return exc.message
+    return None
 
 
 def _bad_request(message: str) -> ApiError:
@@ -156,6 +176,7 @@ async def import_config(
                 backup_dir=Path(state.db_path).parent / BACKUP_DIRNAME,
                 now=state.clock.now(),
                 dry_run=dry_run,
+                check_restorable=_restorable_problem,
             )
         except configio.ImportConflict as exc:
             text = f"{exc.path}: {exc.message}" if exc.path else exc.message

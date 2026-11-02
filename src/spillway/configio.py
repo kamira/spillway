@@ -37,7 +37,8 @@ import os
 import re
 import sqlite3
 import stat
-from collections.abc import Callable, Iterable, Mapping
+import unicodedata
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -272,11 +273,31 @@ def dump(conn: sqlite3.Connection) -> str:
 MAX_DEPTH = 32                      # 巢狀深度上限(mapping/sequence 層數,決策 18)
 BACKUP_FILENAME_FORMAT = "config-%Y%m%dT%H%M%SZ.yaml"
 _PLAIN_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+# 與群組名稱規則(`api/admin/models.py` 的 `_BAD_NAME_CATEGORIES`,決策 11)拒絕的類別相同;本模組不可
+# import `spillway.api`,故另列一份。路徑中這些字元一律以 `\uXXXX` 顯示,CJK 等可見字元照原樣。
+_ESCAPED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp", "Zs"})
+
+
+def _escape_invisible(text: str) -> str:
+    out: list[str] = []
+    for ch in text:
+        if unicodedata.category(ch) not in _ESCAPED_CATEGORIES:
+            out.append(ch)
+            continue
+        cp = ord(ch)
+        if cp > 0xFFFF:                 # 與 JSON 相同,以 UTF-16 代理對表示
+            cp -= 0x10000
+            out.append(f"\\u{0xD800 + (cp >> 10):04x}\\u{0xDC00 + (cp & 0x3FF):04x}")
+        else:
+            out.append(f"\\u{cp:04x}")
+    return "".join(out)
 
 
 def format_path(parts: Iterable[str | int]) -> str:
     """欄位路徑(決策 6):list 索引為 0 起算 `[i]`;鍵符合 `^[A-Za-z0-9_-]+$` 時為 `.key`(開頭不加點),
-    否則為 `["..."]`(JSON 跳脫)。例:`deployments[1].kind`、`routes["a.b"].targets[0][1].deployment`。
+    否則為 `["..."]`(JSON 跳脫;另將 Unicode 類別 Cc、Cf、Cs、Co、Cn、Zl、Zp、Zs 的字元(含空白、
+    零寬字元、方向控制字元)寫成 `\\uXXXX`,CJK 等可見字元照原樣)。例:`deployments[1].kind`、
+    `routes["a.b"].targets[0][1].deployment`、`groups["a\\u200bb"]`。
     回顯的鍵名由介面層另經 `redact_echo` 遮罩(本模組不 import `spillway.api`)。"""
     out = ""
     for part in parts:
@@ -285,7 +306,7 @@ def format_path(parts: Iterable[str | int]) -> str:
         elif _PLAIN_KEY.fullmatch(str(part)):
             out += f".{part}" if out else str(part)
         else:
-            out += "[" + json.dumps(str(part), ensure_ascii=False) + "]"
+            out += "[" + _escape_invisible(json.dumps(str(part), ensure_ascii=False)) + "]"
     return out
 
 
@@ -448,6 +469,7 @@ class ImportResult:
     dry_run: bool
 
 
+RESTORE_PRECHECK_PREFIX = "匯入前的設定不符現行規則,replace 的備份將無法還原;請先以管理 API 修正:"
 _STATUS_OF_CODE = {"provider_single": 409, "validation_error": 422, "internal_error": 500}
 
 
@@ -563,12 +585,16 @@ def apply(
     backup_dir: Path,
     now: datetime,
     dry_run: bool = False,
+    check_restorable: Callable[[Sequence[Deployment], str], str | None] | None = None,
 ) -> ImportResult:
     """在單一 `transaction(conn)`(BEGIN IMMEDIATE)內套用設定檔(決策 7):
 
     1. targets 內每個成員必須存在於「檔案 ∪(merge 時)資料庫」,否則 `ImportConflict(validation_error)`
        (寫入 route_targets 之前檢查,不撞外鍵);
-    2. 只限 replace、非 dry_run:`dump` 目前設定並寫備份(寫鎖內、刪除之前);
+    2. 只限 replace(終審 U2):以 `check_restorable(匯入前的成員, 匯入前的 dump)` 檢查目前設定能否通過
+       匯出與匯入的規則(由介面層注入:決策 5 的憑證鍵名掃描與 `config_file.parse`;本模組不 import
+       `spillway.api`);回傳問題說明(只含位置與原因,不含值)→ `ImportConflict(validation_error)`,
+       未刪除、未寫備份;`dry_run` 同樣檢查。之後只限非 dry_run:把同一份 dump 寫成備份(寫鎖內、刪除之前);
     3. UPSERT 檔案內的成員、群組、route(`save_*`),每條 route 以 `replace_route_targets` 取代排序;
        settings 只覆寫檔案中出現的鍵;
     4. 只限 replace:刪除檔案外的 routes → groups → deployments(其 tags、budget、冷卻、route_targets
@@ -576,7 +602,7 @@ def apply(
        payload 不動;
     5. 最終狀態檢查:route `target.group` 存在(422);`cardinality_of(provider, kind) == "single"` 的 provider
        至多 1 個成員(409 `provider_single`);不檢查成員是否屬於 route 目標(stale targets 由 Router 過濾)。
-    任一步失敗 → ROLLBACK(本次寫的備份檔一併移除)並丟 `ImportConflict`。`dry_run=True` 時做完 1、3–5
+    任一步失敗 → ROLLBACK(本次寫的備份檔一併移除)並丟 `ImportConflict`。`dry_run=True` 時做完 1、2 的檢查、3–5
     後 ROLLBACK,回傳同樣的計數與 `privileged`(`backup` 為 None)。
     """
     if mode not in ("merge", "replace"):
@@ -586,7 +612,8 @@ def apply(
     try:
         with transaction(conn):
             result = _apply_tx(conn, plan, replace, cardinality_of=cardinality_of,
-                               backup_dir=backup_dir, now=now, dry_run=dry_run, written=written)
+                               backup_dir=backup_dir, now=now, dry_run=dry_run, written=written,
+                               check_restorable=check_restorable)
             if dry_run:
                 raise _DryRunRollback(result)
     except _DryRunRollback as rb:
@@ -608,6 +635,7 @@ def _apply_tx(
     now: datetime,
     dry_run: bool,
     written: list[Path],
+    check_restorable: Callable[[Sequence[Deployment], str], str | None] | None,
 ) -> ImportResult:
     before_deps = {d.id: d for d in repo.list_deployments(conn)}
     before_groups = {g.name for g in repo.list_groups(conn)}
@@ -626,11 +654,17 @@ def _apply_tx(
                     _route_path(route.name, "targets", t.slot - 1, t.position, "deployment"),
                     f"成員 {t.deployment_id} 不存在")
 
-    # 2. 備份(只限 replace、非 dry_run;寫鎖內、刪除之前)
+    # 2. replace:匯入前設定須可還原(終審 U2;dry_run 同樣檢查),再寫備份(非 dry_run;寫鎖內、刪除之前)
     backup: str | None = None
-    if replace and not dry_run:
-        backup = _write_backup(backup_dir, now, dump(conn))
-        written.append(backup_dir / backup)
+    if replace:
+        current = dump(conn)
+        if check_restorable is not None:
+            problem = check_restorable(tuple(before_deps.values()), current)
+            if problem:
+                raise ImportConflict("validation_error", "", RESTORE_PRECHECK_PREFIX + problem)
+        if not dry_run:
+            backup = _write_backup(backup_dir, now, current)
+            written.append(backup_dir / backup)
 
     # 3. UPSERT
     for dep in plan.deployments:
@@ -658,7 +692,8 @@ def _apply_tx(
         repo.delete_settings(conn, [k for k in repo.SETTING_DEFAULTS if k not in plan.settings])
         deleted = _counts(len(gone_deps), len(gone_groups), len(gone_routes))
 
-    # 5. 最終狀態檢查
+    # 5. 最終狀態檢查。single provider 的檢查看「交易內的最終狀態」(整批匯入後才算數);單筆管理 API
+    #    則在 `api/admin/deployments._check_cardinality` 逐列檢查寫入前的狀態——兩者刻意分開(終審 I3)。
     for route in repo.list_routes(conn):
         group = route.target.get("group")
         if group is not None and repo.get_group(conn, group) is None:

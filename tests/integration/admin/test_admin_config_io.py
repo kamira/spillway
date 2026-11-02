@@ -633,3 +633,79 @@ async def test_round_trip_stale_target_and_slot_gap(client, db, make_client, clo
     assert r.status_code == 200, r.text
     assert (await client.get(EXPORT)).content == exported
     assert [t.slot for t in repo.list_route_targets(db, "r")] == [1, 2]   # 空洞重新編號
+
+
+# ---------------------------------------------------------------- replace 前置檢查(終審 U2)
+
+ZWSP_GROUP = "a​b"          # 新規則拒絕(Cf);舊版本可能已寫入
+
+
+def _seed_legacy_secret(db) -> None:
+    db.execute(
+        "INSERT INTO deployments (id, model_name, kind, provider, model, params) "
+        "VALUES ('legacy', 'm', 'api', 'openai', 'gpt', ?)",
+        (json.dumps({"api_key": LEGACY_VALUE}),))
+
+
+def _seed_legacy_group(db) -> None:
+    repo.save_group(db, repo.Group(ZWSP_GROUP, {"all": ["t"], "any": [], "none": []}))
+
+
+def _no_backup(db_path: Path) -> bool:
+    backups = db_path.parent / "backups"
+    return not backups.exists() or list(backups.iterdir()) == []
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_replace_refused_on_legacy_secret(client, db, db_path, dry_run):
+    seed_golden(db)
+    _seed_legacy_secret(db)
+    before = _snapshot(db)
+    r = await _import(client, "version: 1\n", dry_run=dry_run)
+    msg = assert_error(r, 422, "validation_error")
+    assert msg.startswith(configio.RESTORE_PRECHECK_PREFIX), msg
+    assert "deployments[legacy].params.api_key" in msg
+    assert LEGACY_VALUE not in r.text            # 只列位置,不含值
+    assert _snapshot(db) == before               # 什麼都沒刪
+    assert _no_backup(db_path)                   # 也沒寫備份(不留明文副本)
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_replace_refused_on_legacy_group_name(client, db, db_path, dry_run):
+    seed_golden(db)
+    _seed_legacy_group(db)
+    assert (await client.get(EXPORT)).status_code == 200   # 匯出不擋群組名;是匯入規則拒絕
+    before = _snapshot(db)
+    r = await _import(client, _dump_doc(_golden_doc()), dry_run=dry_run)
+    msg = assert_error(r, 422, "validation_error")
+    assert msg.startswith(configio.RESTORE_PRECHECK_PREFIX), msg
+    assert 'groups["a\\u200bb"]' in msg          # 不可見字元以 \uXXXX 顯示
+    assert "​" not in msg
+    assert _snapshot(db) == before
+    assert _no_backup(db_path)
+
+
+async def test_merge_not_subject_to_restore_precheck(client, db, db_path):
+    seed_golden(db)
+    _seed_legacy_secret(db)
+    _seed_legacy_group(db)
+    r = await _import(client, _yaml(deployments=[_member("api-new")]), "merge")
+    assert r.status_code == 200, r.text
+    assert r.json()["created"] == {"deployments": 1, "groups": 0, "routes": 0}
+    assert repo.get_group(db, ZWSP_GROUP) is not None
+    assert json.loads(db.execute("SELECT params FROM deployments WHERE id = 'legacy'"
+                                 ).fetchone()[0]) == {"api_key": LEGACY_VALUE}
+    assert _no_backup(db_path)
+
+
+async def test_replace_backup_restorable(client, db, db_path):
+    seed_golden(db)
+    original = (await client.get(EXPORT)).content
+    rows = _config_rows(db)
+    r = await _import(client, "version: 1\n")
+    assert r.status_code == 200, r.text
+    backup = (db_path.parent / "backups" / r.json()["backup"]).read_bytes()
+    r = await client.post(IMPORT, params={"mode": "replace"}, content=backup, headers=YAML_CT)
+    assert r.status_code == 200, r.text                      # 以備份 replace 即還原
+    assert (await client.get(EXPORT)).content == original
+    assert _config_rows(db) == rows
