@@ -13,12 +13,11 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from fastapi import Request
 from fastapi.responses import Response
 
 from spillway import configio
+from spillway.configio import utc_stamp_filename
 from spillway.api import ApiError, redact_echo
 from spillway.api.deps import request_conn
 from spillway.store import repo
@@ -29,11 +28,6 @@ from .secrets import _secret_paths
 EXPORT_MEDIA_TYPE = "application/yaml; charset=utf-8"
 EXPORT_FILENAME_FORMAT = "spillway-config-%Y%m%dT%H%M%SZ.yaml"
 _SECRET_REASON = "疑似金鑰,請先以管理 API 改用 credential_ref 再匯出"
-
-
-def utc_stamp_filename(now: datetime, fmt: str) -> str:
-    """`now` 轉 UTC 後套 `fmt`(`strftime`);匯出檔名與備份檔名共用。"""
-    return now.astimezone(timezone.utc).strftime(fmt)
 
 
 def _legacy_secret_hits(deployments: list) -> list[str]:

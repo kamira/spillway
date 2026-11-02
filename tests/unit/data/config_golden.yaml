@@ -113,6 +113,7 @@ routes:
           effort: high
       - - deployment: api-a
           effort: medium
+          weight: low
         - deployment: api-b
           effort: none
           weight: high

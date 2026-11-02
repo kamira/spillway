@@ -8,15 +8,13 @@ L1:
 - 兩次匯出逐位元組相同;不含 token 雜湊、冷卻、帳本、payload。
 - 分層:`import spillway.configio` 之後 `"spillway.api" not in sys.modules`(子行程)。
 
-`seed_golden(conn)` 供 T4 的往返測試重用(黃金檔 replace 匯入空 DB 後的 DB 全表快照對照):
-slot 以 1 起算、position 以 0 起算(與 `PUT /api/routes/{name}/order` 的寫法一致)。
+黃金檔與 `seed_golden` 在 `tests/helpers/config_golden.py`(T4 的往返測試共用)。
 """
 from __future__ import annotations
 
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -26,67 +24,9 @@ from spillway import configio
 from spillway.domain import Budget, Deployment
 from spillway.store import db as store_db
 from spillway.store import repo
+from tests.helpers.config_golden import GOLDEN, TOKEN_HASH, seed_golden
 
-GOLDEN = Path(__file__).parent / "data" / "config_golden.yaml"
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TOKEN_HASH = "f" * 64
-NOW = datetime(2026, 11, 2, 12, 0, 0, tzinfo=timezone.utc)
-
-
-def seed_golden(conn) -> None:
-    """黃金檔對應的資料庫內容(另含不該出現在匯出檔的 token 雜湊、冷卻、帳本、payload)。"""
-    with store_db.transaction(conn):
-        repo.set_setting(conn, "record_context_default", False)
-        repo.set_setting(conn, "context_retention_days", 30)
-        repo.set_setting(conn, "context_max_bytes", 1048576)
-        repo.set_setting(conn, "access_token_sha256", TOKEN_HASH)
-        repo.save_deployment(conn, Deployment(
-            id="api-a", model_name="gpt-4o-mini", kind="api", provider="openai", model="gpt-4o-mini",
-            params={"api_base": "http://127.0.0.1:9/v1", "timeout": 30},
-            credential_ref="env:SPILLWAY_TEST_KEY",
-            capabilities={"ctx": 128000, "efforts": ["low", "medium", "high"], "tools": True,
-                          "vision": False},
-            enabled=False, tags=("coding", "review"),
-            budget=Budget(type="usd", limit_amount=30.0, window="monthly", reset_anchor=1)))
-        repo.save_deployment(conn, Deployment(
-            id="api-b", model_name="gpt-4.1-mini", kind="api", provider="openai",
-            model="gpt-4.1-mini", credential_ref="keyring:spillway:api-b", tags=("cheap", "coding"),
-            budget=Budget(type="credit_pool", limit_amount=100.0, window="weekly")))
-        repo.save_deployment(conn, Deployment(
-            id="bare", model_name="bare", kind="local", provider="hosted_vllm", model="local-model"))
-        repo.save_deployment(conn, Deployment(
-            id="claude-sub", model_name="sonnet", kind="cli", provider="claude-cli",
-            model="claude-sonnet-4-5",
-            params={"cwd": "/tmp/work", "extra_args": ["--verbose"], "nested": {"empty": {}}},
-            tags=("coding",), budget=Budget(type="none", limit_amount=None, window="none")))
-        repo.save_deployment(conn, Deployment(
-            id="qwen-local", model_name="qwen-coder", kind="local", provider="ollama",
-            model="qwen3-coder:30b", params={"api_base": "http://127.0.0.1:11434"},
-            capabilities={"ctx": 32768, "efforts": []}, tags=("coding", "private-ok")))
-        repo.save_group(conn, repo.Group("coding", {"all": ["coding"], "any": [], "none": []}))
-        repo.save_group(conn, repo.Group("mixed", {"all": ["coding"], "any": ["review", "cheap"],
-                                                   "none": ["private-ok"]}))
-        repo.save_group(conn, repo.Group("中文群組", {"all": [], "any": [], "none": []}))
-        repo.save_route(conn, repo.Route(
-            name="review", target={"group": "coding"}, mode="task", tags=("daily", "alpha", "daily"),
-            record_context=True, budget_precheck=True))
-        repo.replace_route_targets(conn, "review", [
-            repo.RouteTarget("claude-sub", slot=1, position=0, effort="high"),
-            repo.RouteTarget("api-a", slot=2, position=0, effort="medium"),
-            repo.RouteTarget("api-b", slot=2, position=1, effort="none", weight="high"),
-            repo.RouteTarget("qwen-local", slot=3, position=0, weight="low"),
-        ])
-        repo.save_route(conn, repo.Route(
-            name="quick", target={"tags": {"all": ["coding"], "any": [], "none": ["review"]}}))
-        repo.save_route(conn, repo.Route(
-            name="silent", target={"tags": {"all": [], "any": [], "none": []}},
-            record_context=False))
-        # 以下不可出現在匯出檔
-        repo.mark_cooldown(conn, "api-a", NOW, "rate_limited")
-        lid = repo.insert_ledger(conn, repo.LedgerRow(ts=NOW, status="ok", deployment_id="api-a",
-                                                      error="ledger-only-text"))
-        repo.insert_payload(conn, repo.Payload(ledger_id=lid, ts=NOW,
-                                               request_json='"payload-only-text"', bytes=19))
 
 
 @pytest.fixture
@@ -165,47 +105,47 @@ def test_deployment_key_order_and_sorting(conn):
 
 def test_deployment_omissions():
     dep = Deployment(id="d", model_name="m", kind="api", provider="p", model="x")
-    assert configio.deployment_doc(dep) == {"id": "d", "model_name": "m", "kind": "api",
+    assert configio._deployment_doc(dep) == {"id": "d", "model_name": "m", "kind": "api",
                                             "provider": "p", "model": "x"}
     dep2 = Deployment(id="d", model_name="m", kind="api", provider="p", model="x", enabled=False)
-    assert configio.deployment_doc(dep2)["enabled"] is False
+    assert configio._deployment_doc(dep2)["enabled"] is False
 
 
 def test_params_and_capabilities_not_stripped():
     dep = Deployment(id="d", model_name="m", kind="api", provider="p", model="x",
                      params={"a": {}, "b": [], "c": None, "d": False},
                      capabilities={"efforts": [], "tools": False})
-    out = configio.deployment_doc(dep)
+    out = configio._deployment_doc(dep)
     assert out["params"] == {"a": {}, "b": [], "c": None, "d": False}
     assert out["capabilities"] == {"efforts": [], "tools": False}
 
 
 def test_budget_rules():
-    assert configio.budget_doc(Budget(type="none", limit_amount=None, window="none")) == {
+    assert configio._budget_doc(Budget(type="none", limit_amount=None, window="none")) == {
         "type": "none", "window": "none"}
-    assert configio.budget_doc(Budget(type="usd", limit_amount=0.0, window="daily",
+    assert configio._budget_doc(Budget(type="usd", limit_amount=0.0, window="daily",
                                       reset_anchor=None)) == {
         "type": "usd", "limit_amount": 0.0, "window": "daily"}
-    assert list(configio.budget_doc(Budget(type="usd", limit_amount=5.0, window="monthly",
+    assert list(configio._budget_doc(Budget(type="usd", limit_amount=5.0, window="monthly",
                                            reset_anchor=28))) == list(configio.BUDGET_KEYS)
 
 
 def test_selector_and_target_rules():
-    assert configio.selector_doc({"all": [], "any": [], "none": []}) == {}
-    assert configio.selector_doc({"none": ["b", "a", "b"], "all": ["z"]}) == {
+    assert configio._selector_doc({"all": [], "any": [], "none": []}) == {}
+    assert configio._selector_doc({"none": ["b", "a", "b"], "all": ["z"]}) == {
         "all": ["z"], "none": ["b", "a", "b"]}
-    assert configio.target_doc({"group": "g"}) == {"group": "g"}
-    assert configio.target_doc({"tags": {"all": [], "any": [], "none": []}}) == {"tags": {}}
+    assert configio._target_doc({"group": "g"}) == {"group": "g"}
+    assert configio._target_doc({"tags": {"all": [], "any": [], "none": []}}) == {"tags": {}}
 
 
 def test_route_rules():
     r = repo.Route(name="r", target={"group": "g"})
-    assert configio.route_doc(r) == {"target": {"group": "g"}}
+    assert configio._route_doc(r) == {"target": {"group": "g"}}
     r = repo.Route(name="r", target={"group": "g"}, record_context=False)
-    assert configio.route_doc(r) == {"target": {"group": "g"}, "record_context": False}
+    assert configio._route_doc(r) == {"target": {"group": "g"}, "record_context": False}
     r = repo.Route(name="r", target={"group": "g"}, mode="task", tags=("b", "a", "b"),
                    record_context=True, budget_precheck=True)
-    out = configio.route_doc(r, [repo.RouteTarget("x", 1, 0)])
+    out = configio._route_doc(r, [repo.RouteTarget("x", 1, 0)])
     assert list(out) == list(configio.ROUTE_KEYS)
     assert out["tags"] == ["b", "a", "b"]
     assert out["targets"] == [[{"deployment": "x"}]]
@@ -218,12 +158,12 @@ def test_target_entry_rules():
         repo.RouteTarget("c", slot=7, position=0, effort="max", weight="medium"),
         repo.RouteTarget("d", slot=9, position=3, weight="low"),
     ]
-    assert configio.targets_doc(rows) == [
+    assert configio._targets_doc(rows) == [
         [{"deployment": "a", "effort": "none"}, {"deployment": "b", "weight": "high"}],
         [{"deployment": "c", "effort": "max"}],
         [{"deployment": "d", "weight": "low"}],
     ]
-    entry = configio.targets_doc([repo.RouteTarget("a", 1, 0, effort="low", weight="low")])[0][0]
+    entry = configio._targets_doc([repo.RouteTarget("a", 1, 0, effort="low", weight="low")])[0][0]
     assert list(entry) == list(configio.TARGET_ENTRY_KEYS)
 
 
@@ -240,8 +180,8 @@ def test_slot_holes_renumbered_in_dump(conn):
 
 
 def test_settings_only_non_default_in_fixed_order(conn):
-    assert configio.settings_doc({}) == {}
-    assert configio.settings_doc(dict(repo.SETTING_DEFAULTS)) == {}
+    assert configio._settings_doc({}) == {}
+    assert configio._settings_doc(dict(repo.SETTING_DEFAULTS)) == {}
     repo.set_setting(conn, "context_max_bytes", 2048)
     repo.set_setting(conn, "record_context_default", False)
     repo.set_setting(conn, "context_retention_days", 7)   # 等於預設:不輸出
@@ -269,6 +209,44 @@ def test_ambiguous_strings_round_trip_as_strings():
     text = configio.render(doc)
     assert "&" not in text and "*" not in text
     assert yaml.safe_load(text) == doc
+
+
+@pytest.mark.parametrize("ch", ["\x85", "\u2028", "\u2029"])
+def test_line_break_chars_double_quoted_and_round_trip(ch):
+    doc = {"groups": {f"g{ch}x": {"all": [f"a{ch}b", ch]}}, "s": f"{ch}lead", "t": f"trail{ch}"}
+    text = configio.render(doc)
+    assert ch not in text                     # 以 \N、\L、\P 跳脫,不原樣寫出
+    assert yaml.safe_load(text) == doc
+
+
+def test_line_break_chars_in_golden_db_round_trip(conn):
+    for ch in ("\x85", "\u2028", "\u2029"):
+        repo.save_group(conn, repo.Group(f"g{ch}", {"all": [f"t{ch}"]}))
+    doc = yaml.safe_load(configio.dump(conn))
+    assert doc["groups"] == {f"g{ch}": {"all": [f"t{ch}"]} for ch in ("\x85", "\u2028", "\u2029")}
+
+
+def test_utc_stamp_filename():
+    from datetime import datetime, timedelta, timezone
+
+    fmt = "spillway-config-%Y%m%dT%H%M%SZ.yaml"
+    tz = timezone(timedelta(hours=8))
+    assert configio.utc_stamp_filename(datetime(2026, 11, 2, 9, 5, 7, tzinfo=tz), fmt) == (
+        "spillway-config-20261102T010507Z.yaml")
+    assert configio.utc_stamp_filename(datetime(2026, 1, 1, tzinfo=timezone.utc),
+                                       "config-%Y%m%dT%H%M%SZ.yaml") == "config-20260101T000000Z.yaml"
+
+
+def test_setting_types_cover_defaults():
+    assert set(configio.SETTING_TYPES) == set(configio.SETTING_KEYS) == set(repo.SETTING_DEFAULTS)
+
+
+def test_public_surface():
+    assert set(configio.__all__) == {
+        "FORMAT_VERSION", "TOP_KEYS", "SETTING_KEYS", "SETTING_TYPES", "DEPLOYMENT_KEYS",
+        "BUDGET_KEYS", "SELECTOR_KEYS", "ROUTE_KEYS", "TARGET_ENTRY_KEYS", "DEFAULT_MODE",
+        "DEFAULT_WEIGHT", "DUMP_KWARGS", "dump", "render", "build_document", "utc_stamp_filename"}
+    assert all(hasattr(configio, n) for n in configio.__all__)
 
 
 def test_unicode_not_escaped():

@@ -203,7 +203,7 @@ CREATE TABLE settings (
 
 ### 3.2 範例
 
-範例是合法的匯入檔；匯出時省略預設值（例如 `record_context_default: true`、`context_retention_days: 7`、`enabled: true`），鍵順序與排序依 3.1 的匯出規則。
+範例是合法的匯入檔；匯出時省略預設值（例如 `record_context_default: true`、`context_retention_days: 7`、`enabled: true`）。範例鍵順序不代表匯出順序；匯出的鍵順序與排序依 3.1 的匯出規則。
 
 ```yaml
 version: 1

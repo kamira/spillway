@@ -7,22 +7,20 @@ L2:Content-Type、Content-Disposition(UTC 檔名,時間取自注入的 clock)、
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 
 import pytest
 
 from spillway import configio
 from spillway.store import repo
 
-from .helpers import KEY, api_member, assert_error
+from tests.helpers.config_golden import GOLDEN, seed_golden
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "unit"))
-from test_configio_dump import GOLDEN, seed_golden  # noqa: E402
+from .helpers import KEY, api_member, assert_error
 
 pytestmark = pytest.mark.anyio
 
 EXPORT = "/api/config/export"
+LEGACY_VALUE = "legacy-value-q9z7"   # 舊列中的假憑證值:不可出現在回應中
 
 
 def _snapshot(db) -> list[str]:
@@ -75,10 +73,11 @@ async def test_export_does_not_write(client, db):
 
 
 @pytest.mark.parametrize("column,value,path", [
-    ("params", {"access_token": "x"}, "deployments[legacy].params.access_token"),
-    ("params", {"nested": {"api-key": "x"}}, "deployments[legacy].params.nested.api-key"),
+    ("params", {"access_token": LEGACY_VALUE}, "deployments[legacy].params.access_token"),
+    ("params", {"nested": {"api-key": LEGACY_VALUE}}, "deployments[legacy].params.nested.api-key"),
     ("params", {"note": KEY}, "deployments[legacy].params.note"),
-    ("capabilities", {"ctx": 1, "secret": "x"}, "deployments[legacy].capabilities.secret"),
+    ("capabilities", {"ctx": 1, "secret": LEGACY_VALUE},
+     "deployments[legacy].capabilities.secret"),
 ])
 async def test_legacy_secret_rejected(client, db, column, value, path):
     db.execute(
@@ -90,7 +89,7 @@ async def test_legacy_secret_rejected(client, db, column, value, path):
     r = await client.get(EXPORT)
     msg = assert_error(r, 422, "validation_error")
     assert path in msg
-    assert "x" not in r.text          # 不回顯值(訊息與錯誤碼都不含字母 x)
+    assert LEGACY_VALUE not in r.text   # 不回顯值
     assert KEY not in r.text
     assert "content-disposition" not in r.headers
 
@@ -99,10 +98,11 @@ async def test_legacy_hits_all_listed(client, db):
     for dep_id in ("old-a", "old-b"):
         db.execute(
             "INSERT INTO deployments (id, model_name, kind, provider, model, params) "
-            "VALUES (?, 'm', 'api', 'openai', 'gpt', ?)", (dep_id, json.dumps({"password": "x"})))
+            "VALUES (?, 'm', 'api', 'openai', 'gpt', ?)", (dep_id, json.dumps({"password": LEGACY_VALUE})))
     msg = assert_error(await client.get(EXPORT), 422, "validation_error")
     assert "deployments[old-a].params.password" in msg
     assert "deployments[old-b].params.password" in msg
+    assert LEGACY_VALUE not in msg
 
 
 @pytest.mark.parametrize("headers", [

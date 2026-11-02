@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
 from typing import Any
 
 import yaml
@@ -44,9 +45,7 @@ from spillway.store import repo
 __all__ = [
     "FORMAT_VERSION", "TOP_KEYS", "SETTING_KEYS", "SETTING_TYPES", "DEPLOYMENT_KEYS", "BUDGET_KEYS",
     "SELECTOR_KEYS", "ROUTE_KEYS", "TARGET_ENTRY_KEYS", "DEFAULT_MODE", "DEFAULT_WEIGHT",
-    "DUMP_KWARGS", "dump", "render", "build_document", "setting_value",
-    "deployment_doc", "budget_doc", "selector_doc", "target_doc", "route_doc", "targets_doc",
-    "settings_doc",
+    "DUMP_KWARGS", "dump", "render", "build_document", "utc_stamp_filename",
 ]
 
 FORMAT_VERSION = 1
@@ -74,13 +73,13 @@ DUMP_KWARGS: dict[str, Any] = {
     "width": float("inf"),
 }
 
-assert set(SETTING_TYPES) == set(SETTING_KEYS), "SETTING_TYPES 必須涵蓋 SETTING_DEFAULTS 的每個鍵"
-
 
 class _Dumper(yaml.SafeDumper):
     """匯出用 Dumper:
     - 不產生 anchor/alias(同一物件出現兩次也展開;匯入的嚴格 loader 拒絕 alias,決策 18);
     - list 在 mapping 下縮排(`key:\\n  - item`),只影響排版。
+    - 含 U+0085、U+2028、U+2029 的字串一律以雙引號輸出並跳脫(`\\N`、`\\L`、`\\P`):單引號或
+      plain 風格會把它們原樣寫出,讀回時被當成換行折疊(U+0085 實測讀回不同)。
     字串若會被 YAML 1.1 解析成 bool、數字、日期或 null,SafeDumper 自動加引號,匯入時仍讀回字串。"""
 
     def ignore_aliases(self, data: Any) -> bool:
@@ -90,10 +89,28 @@ class _Dumper(yaml.SafeDumper):
         return super().increase_indent(flow, False)
 
 
+_LINE_BREAK_CHARS = ("\x85", "\u2028", "\u2029")
+
+
+def _represent_str(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
+    if any(ch in data for ch in _LINE_BREAK_CHARS):
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style='"')
+    return dumper.represent_str(data)
+
+
+_Dumper.add_representer(str, _represent_str)
+
+
+def utc_stamp_filename(now: datetime, fmt: str) -> str:
+    """`now` 轉 UTC 後套 `fmt`(`strftime`,例 `spillway-config-%Y%m%dT%H%M%SZ.yaml`);
+    匯出檔名(介面層)與匯入備份檔名(T4)共用。"""
+    return now.astimezone(timezone.utc).strftime(fmt)
+
+
 # ---------------------------------------------------------------- 各實體 → 文件片段(純函式)
 
 
-def setting_value(key: str, text: str) -> bool | int:
+def _setting_value(key: str, text: str) -> bool | int:
     """settings 表的字串值 → 檔案中的型別(`"1"`/`"0"` → bool;其餘 int),與
     `repo.get_context_settings` 的讀法一致。"""
     if SETTING_TYPES[key] is bool:
@@ -101,19 +118,19 @@ def setting_value(key: str, text: str) -> bool | int:
     return int(text)
 
 
-def settings_doc(stored: Mapping[str, str]) -> dict[str, bool | int]:
+def _settings_doc(stored: Mapping[str, str]) -> dict[str, bool | int]:
     """`stored`:鍵 → settings 表字串值(缺鍵視為預設)。只回與預設不同的鍵,順序 `SETTING_KEYS`。"""
     out: dict[str, bool | int] = {}
     for key in SETTING_KEYS:
-        default = setting_value(key, repo.SETTING_DEFAULTS[key])
+        default = _setting_value(key, repo.SETTING_DEFAULTS[key])
         raw = stored.get(key)
-        value = default if raw is None else setting_value(key, raw)
+        value = default if raw is None else _setting_value(key, raw)
         if value != default:
             out[key] = value
     return out
 
 
-def budget_doc(b: Budget) -> dict[str, Any]:
+def _budget_doc(b: Budget) -> dict[str, Any]:
     out: dict[str, Any] = {"type": b.type}
     if b.limit_amount is not None:
         out["limit_amount"] = b.limit_amount
@@ -123,7 +140,7 @@ def budget_doc(b: Budget) -> dict[str, Any]:
     return out
 
 
-def deployment_doc(dep: Deployment) -> dict[str, Any]:
+def _deployment_doc(dep: Deployment) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": dep.id,
         "model_name": dep.model_name,
@@ -142,24 +159,24 @@ def deployment_doc(dep: Deployment) -> dict[str, Any]:
     if dep.tags:
         out["tags"] = list(dep.tags)
     if dep.budget is not None:
-        out["budget"] = budget_doc(dep.budget)
+        out["budget"] = _budget_doc(dep.budget)
     return out
 
 
-def selector_doc(selector: Mapping[str, Any]) -> dict[str, list[str]]:
+def _selector_doc(selector: Mapping[str, Any]) -> dict[str, list[str]]:
     """`{all, any, none}`,空清單(或缺鍵)省略;清單保留存放順序。"""
     return {k: list(selector[k]) for k in SELECTOR_KEYS if selector.get(k)}
 
 
-def target_doc(target: Mapping[str, Any]) -> dict[str, Any]:
+def _target_doc(target: Mapping[str, Any]) -> dict[str, Any]:
     if "group" in target:
         return {"group": target["group"]}
     if "tags" in target:
-        return {"tags": selector_doc(target["tags"] or {})}
+        return {"tags": _selector_doc(target["tags"] or {})}
     return dict(target)   # 管理 API 不會寫入其他形狀;照原樣輸出,匯入時由檔案模型拒絕
 
 
-def targets_doc(rows: Iterable[repo.RouteTarget]) -> list[list[dict[str, Any]]]:
+def _targets_doc(rows: Iterable[repo.RouteTarget]) -> list[list[dict[str, Any]]]:
     """route_targets → list(slot)of list(position)。`rows` 須已依 (slot, position, deployment_id)
     排序;slot 依遞增分組,空洞(例如 1、3)輸出時自然重新編號。"""
     slots: list[list[dict[str, Any]]] = []
@@ -177,8 +194,8 @@ def targets_doc(rows: Iterable[repo.RouteTarget]) -> list[list[dict[str, Any]]]:
     return slots
 
 
-def route_doc(route: repo.Route, targets: Iterable[repo.RouteTarget] = ()) -> dict[str, Any]:
-    out: dict[str, Any] = {"target": target_doc(route.target)}
+def _route_doc(route: repo.Route, targets: Iterable[repo.RouteTarget] = ()) -> dict[str, Any]:
+    out: dict[str, Any] = {"target": _target_doc(route.target)}
     if route.mode != DEFAULT_MODE:
         out["mode"] = route.mode
     if route.tags:
@@ -187,7 +204,7 @@ def route_doc(route: repo.Route, targets: Iterable[repo.RouteTarget] = ()) -> di
         out["record_context"] = bool(route.record_context)
     if route.budget_precheck:
         out["budget_precheck"] = True
-    slots = targets_doc(targets)
+    slots = _targets_doc(targets)
     if slots:
         out["targets"] = slots
     return out
@@ -204,11 +221,11 @@ def build_document(
     """組出匯出文件(Python 物件,鍵順序即輸出順序)。排序在此處決定,與輸入順序無關。"""
     return {
         "version": FORMAT_VERSION,
-        "settings": settings_doc(settings),
-        "deployments": [deployment_doc(d) for d in sorted(deployments, key=lambda d: d.id)],
-        "groups": {g.name: selector_doc(g.selector) for g in sorted(groups, key=lambda g: g.name)},
+        "settings": _settings_doc(settings),
+        "deployments": [_deployment_doc(d) for d in sorted(deployments, key=lambda d: d.id)],
+        "groups": {g.name: _selector_doc(g.selector) for g in sorted(groups, key=lambda g: g.name)},
         "routes": {
-            r.name: route_doc(r, route_targets.get(r.name, ()))
+            r.name: _route_doc(r, route_targets.get(r.name, ()))
             for r in sorted(routes, key=lambda r: r.name)
         },
     }

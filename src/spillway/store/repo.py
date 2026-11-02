@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -764,14 +765,10 @@ def get_context_settings(conn: sqlite3.Connection) -> ContextSettings:
 
 # ---------------------------------------------------------------- config 匯出讀取(CHG-20261102-02 T3)
 # `spillway.configio.dump` 用:整份設定在同一個讀交易(快照)內讀出;本段只讀不寫。
-# 本段的 import 放在段內,以免與同波次其他 task 在檔頭的 import 衝突。
-
-from collections.abc import Iterator as _Iterator  # noqa: E402
-from contextlib import contextmanager as _contextmanager  # noqa: E402
 
 
-@_contextmanager
-def read_snapshot(conn: sqlite3.Connection) -> _Iterator[sqlite3.Connection]:
+@contextmanager
+def read_snapshot(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     """單一讀交易:已在交易內(含 `transaction(conn)` 的寫鎖)時沿用、不另開;否則 `BEGIN`(DEFERRED,
     不取寫鎖)… 結束時 `COMMIT`(例外時 `ROLLBACK`)。WAL 模式下區塊內的多條 SELECT 看到同一份快照。"""
     if conn.in_transaction:
