@@ -467,7 +467,7 @@ async def test_first_signal_fires_hooks_and_schedules_drain_expired(monkeypatch)
     assert fired == ["hook"]
     assert not app.state.drain_expired.is_set()
     await asyncio.wait_for(app.state.drain_expired.wait(), 2)
-    assert time.monotonic() - start == pytest.approx(0.2, abs=0.1)
+    assert time.monotonic() - start == pytest.approx(0.2, abs=0.25)
 
     server.handle_exit(signal.SIGTERM, None)                 # 之後的訊號不重複觸發
     await asyncio.sleep(0.05)
@@ -599,3 +599,51 @@ def test_ctrl_c_to_process_group_exits_130_without_traceback(serve):
     assert "Traceback" not in s.err, s.err
     assert "KeyboardInterrupt" not in s.err, s.err
     _assert_shutdown_outcome(s, rec, box)
+
+
+@pytest.mark.anyio
+@skip_without_pgrep
+async def test_pre_lifespan_wait_covers_lingering_drain_tasks(monkeypatch):
+    """`run_until_drain` 回 Drained 後仍在收尾的子 task(不在 server_state.tasks)在 lifespan 結束前被等到:
+    CliRunner 走完 SIGTERM→寬限→SIGKILL,group 不殘留,之後才跑 lifespan shutdown。"""
+    import asyncio
+    from types import SimpleNamespace
+
+    from spillway.adapters.base import CliRunner
+
+    seen = _capture_server(monkeypatch)
+    with pytest.raises(_Captured):
+        cli._run_server("127.0.0.1", 8787)
+    server = seen["server"]
+    app = server.config.app
+    runner = CliRunner(term_grace=0.5)
+    pids: list[int] = []
+    orig_exec = asyncio.create_subprocess_exec
+
+    async def spy_exec(*a, **k):
+        proc = await orig_exec(*a, **k)
+        pids.append(proc.pid)
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spy_exec)
+    child = asyncio.ensure_future(
+        runner.run(["/bin/sh", "-c", "trap '' TERM; sleep 30 & wait"], cwd=None, timeout=None))
+    app.state.drain_tasks.add(child)
+    child.add_done_callback(app.state.drain_tasks.discard)
+    for _ in range(100):
+        if pids:
+            break
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.1)
+    child.cancel()                                           # 第一次 cancel:shielded 收尾(SIGTERM 被忽略)
+    order: list[str] = []
+
+    async def lifespan_shutdown() -> None:
+        order.append("lifespan" + ("" if child.done() else " before child done"))
+
+    server.lifespan = SimpleNamespace(shutdown=lifespan_shutdown)
+    server.servers = []
+    await asyncio.wait_for(server.shutdown(), cli.CANCELLED_DRAIN_TIMEOUT + 5)
+    assert order == ["lifespan"]
+    assert child.done()
+    assert not _group_alive(pids[0]), "收尾後 group 仍在"

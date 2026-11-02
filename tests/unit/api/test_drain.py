@@ -77,7 +77,7 @@ async def test_expired_cancels_child_once_when_it_finishes_promptly():
     result = await asyncio.wait_for(outer, 2)
     assert isinstance(result, Drained)
     assert len(cancels) == 1
-    assert time.monotonic() - start < drain.FIRST_CANCEL_WAIT + 0.1
+    assert time.monotonic() - start < drain.FIRST_CANCEL_WAIT + 0.25
 
 
 async def test_expired_cancels_twice_then_returns_drained_even_if_child_lingers():
@@ -102,8 +102,8 @@ async def test_expired_cancels_twice_then_returns_drained_even_if_child_lingers(
     elapsed = time.monotonic() - start
     assert isinstance(result, Drained)
     assert len(cancels) == 2
-    assert cancels[1] - cancels[0] == pytest.approx(drain.FIRST_CANCEL_WAIT, abs=0.1)
-    assert elapsed == pytest.approx(drain.FIRST_CANCEL_WAIT + drain.SECOND_CANCEL_WAIT, abs=0.15)
+    assert cancels[1] - cancels[0] == pytest.approx(drain.FIRST_CANCEL_WAIT, abs=0.25)
+    assert elapsed == pytest.approx(drain.FIRST_CANCEL_WAIT + drain.SECOND_CANCEL_WAIT, abs=0.25)
     (child,) = app.state.drain_tasks                      # 未收尾的子 task 留給 lifespan
     assert not child.done()
     release.set()

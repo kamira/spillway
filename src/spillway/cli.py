@@ -24,15 +24,16 @@ serve:
   task(CliRunner 在取消路徑殺 process group、帳本記 `error="shutdown"`);lifespan 結束時
   `terminate_all(grace=5)` 為後備。停機中再收到 SIGINT 為 uvicorn 的 `force_exit`(略過 lifespan):立即
   取消進行中請求(CliRunner SIGKILL 子行程 group),並在 uvicorn 重送訊號之前於 `capture_signals` 內同步
-  `kill_all_sync()`;`_run_server` 的 `finally` 與 `atexit` 也呼叫它(force_exit 時帳本列可能不及寫入)。
+  `kill_all_sync()`;`_run_server` 的 `finally` 與 `atexit` 也呼叫它(force_exit 時帳本列可能不及寫入)。環境變數 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`
+  **僅供測試**縮短等待上限,正式使用不要設定。
 - 停機期滿與 MCP(CHG-20261102-01 決策 14、18):`_run_server` 在 `server.run()` 之前呼叫
   `sse_starlette` 的 `AppStatus.disable_automatic_graceful_drain()`(不設 `AppStatus.should_exit`)。第一個
   訊號時以 `call_soon_threadsafe` 觸發 `app.state.shutdown_hooks.fire`,並排定
   `call_later(max(grace*0.5, grace-1.5), app.state.drain_expired.set)`:經 `api.drain.run_until_drain` 的
   進行中請求在 uvicorn 期滿取消之前被取消(CliRunner 殺 group、帳本 `error="shutdown"`)並回 503
-  `shutting_down`。force_exit 的 `_cancel_inflight` 也取消 `app.state.drain_tasks`。
-  環境變數 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`
-  **僅供測試**縮短等待上限,正式使用不要設定。
+  `shutting_down`。被取消但尚未收尾的 `drain_tasks` 與期滿取消的請求一起在 lifespan 結束前有限等待;
+  force_exit 的 `_cancel_inflight` 也取消 `app.state.drain_tasks`。寬限小於約 1.2 秒(僅測試用範圍)時,
+  uvicorn 的期滿取消可能早於 drain 收尾。
 - uvicorn access log 保留(只有方法、路徑、狀態碼,不含 body)。
 
 init(決策 14、15):建立資料目錄與 `work/claude`、`work/codex`;在資料目錄鎖內開啟資料庫(執行
@@ -184,6 +185,7 @@ def _graceful_server(config: uvicorn.Config, app: FastAPI) -> uvicorn.Server:
             grace = self.config.timeout_graceful_shutdown
             if grace is None or self._loop is None:
                 return
+            # 寬限 < 約 1.2 秒(僅測試用)時 uvicorn 的期滿取消可能早於 drain 收尾
             self._loop.call_later(drain_expire_delay(grace), app.state.drain_expired.set)
 
         def _cancel_inflight(self) -> None:
@@ -209,7 +211,8 @@ def _graceful_server(config: uvicorn.Config, app: FastAPI) -> uvicorn.Server:
             lifespan_shutdown = self.lifespan.shutdown
 
             async def drain_then_lifespan_shutdown() -> None:
-                pending = [t for t in self.server_state.tasks if not t.done()]
+                # 期滿取消的請求 task + run_until_drain 留下、仍在收尾的子 task(決策 18)
+                pending = {t for t in (*self.server_state.tasks, *app.state.drain_tasks) if not t.done()}
                 if pending and not self.force_exit:
                     await asyncio.wait(pending, timeout=CANCELLED_DRAIN_TIMEOUT)
                 await lifespan_shutdown()

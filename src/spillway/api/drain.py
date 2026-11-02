@@ -6,7 +6,8 @@
   - 子 task 先完成 → 回傳它的結果(例外原樣往上丟)。
   - `drain_expired` 先到 → `child.cancel()` → 等 `FIRST_CANCEL_WAIT`(0.2 秒)→ 未結束再 `child.cancel()`
     (CliRunner 把重複取消視為「同步 SIGKILL 整個 group」)→ 再等最多 `SECOND_CANCEL_WAIT`(0.5 秒)→
-    不論子 task 是否收尾完畢都回 `Drained()`。未結束的子 task 留在登記表,由 lifespan 收尾。
+    不論子 task 是否收尾完畢都回 `Drained()`。未結束的子 task 留在登記表,由 `cli.py` 在 lifespan 結束前的
+    有限等待(`CANCELLED_DRAIN_TIMEOUT`)收尾;T3 的 lifespan 關閉順序第 2 步也會等它們。
 - 外層(呼叫端)被取消時:`finally` 取消子 task,把取消轉發下去;`CancelledError` 照常往上丟。
 
 呼叫端:`api/openai.py` 的 `/v1/chat/completions`(`Drained` → 503 `shutting_down`)與 MCP `ask`
@@ -14,7 +15,8 @@
 
 `drain_expired` 由 `spillway serve` 的訊號處理在第一個訊號時以
 `loop.call_later(max(grace*0.5, grace-1.5), ev.set)` 排定(見 `cli.py`);行程內的 app 預設永不設定,
-`run_until_drain` 等同直接 await `coro`。
+`run_until_drain` 等同直接 await `coro`。未結束的子 task 由 `cli.py` 在 lifespan 結束前有限等待
+(另見 T3 的 lifespan 關閉順序第 2 步)。寬限小於約 1.2 秒(僅測試用範圍)時 uvicorn 的期滿取消可能先到。
 
 `ShutdownHooks`:`app.state.shutdown_hooks` 的型別——回呼清單(`list` 子類別,`append` 登記),
 `fire()` 依序呼叫每個零參數回呼;回呼回傳 awaitable 時排成 task。`fire()` 只生效一次;單一回呼的例外
@@ -67,14 +69,18 @@ class ShutdownHooks(list):
                     self._tasks.add(task)
                     task.add_done_callback(self._tasks.discard)
             except Exception as exc:  # noqa: BLE001 — 單一掛鉤失敗不影響其他掛鉤與停機
-                _log.error("停機掛鉤失敗:%s", type(exc).__name__)
+                _log_hook_failure(exc)
+
+
+def _log_hook_failure(exc: BaseException) -> None:
+    _log.error("停機掛鉤失敗:%s", type(exc).__name__)   # 只記例外型別
 
 
 async def _guard(aw: Awaitable[Any]) -> None:
     try:
         await aw
-    except Exception as exc:  # noqa: BLE001
-        _log.error("停機掛鉤失敗:%s", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — async 掛鉤失敗同樣只記錄,不影響停機
+        _log_hook_failure(exc)
 
 
 def _retrieve(task: asyncio.Future[Any]) -> None:
