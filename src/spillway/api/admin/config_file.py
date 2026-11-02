@@ -97,7 +97,7 @@ def _name_errors(data: Mapping[str, Any]) -> list[str]:
     if isinstance(groups, Mapping):
         for name in groups:
             problem = group_name_problem(name)
-            if problem is None and not _ID_RE.match(name):
+            if problem is None and not _ID_RE.fullmatch(name):
                 problem = "不可含空白與 /"
             if problem is not None:
                 errors.append(_msg(configio.format_path(("groups", name)), problem))
@@ -107,7 +107,7 @@ def _name_errors(data: Mapping[str, Any]) -> list[str]:
             if not 1 <= len(name) <= _NAME_MAX:
                 errors.append(_msg(configio.format_path(("routes", name)),
                                    f"名稱長度必須為 1–{_NAME_MAX} 個字元"))
-            elif not _ROUTE_RE.match(name):
+            elif not _ROUTE_RE.fullmatch(name):
                 errors.append(_msg(configio.format_path(("routes", name)), "名稱不可含空白、/ 與 :"))
             if isinstance(value, Mapping) and "name" in value:
                 errors.append(_msg(configio.format_path(("routes", name, "name")),

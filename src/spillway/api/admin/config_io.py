@@ -100,6 +100,7 @@ def _check_content_type(value: str | None) -> None:
     if media not in IMPORT_MEDIA_TYPES:
         raise _bad_request(_CONTENT_TYPE_REASON)
     for param in params:
+        # "" 允許結尾多一個分號(`application/yaml;`):split 後的空參數不是 charset 宣告
         if param.replace(" ", "") not in ("charset=utf-8", "charset=\"utf-8\"", ""):
             raise _bad_request("Content-Type 的 charset 必須為 utf-8")
 

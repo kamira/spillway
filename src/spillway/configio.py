@@ -282,7 +282,7 @@ def format_path(parts: Iterable[str | int]) -> str:
     for part in parts:
         if isinstance(part, int) and not isinstance(part, bool):
             out += f"[{part}]"
-        elif _PLAIN_KEY.match(str(part)):
+        elif _PLAIN_KEY.fullmatch(str(part)):
             out += f".{part}" if out else str(part)
         else:
             out += "[" + json.dumps(str(part), ensure_ascii=False) + "]"
@@ -298,6 +298,15 @@ class ConfigSyntaxError(ValueError):
         super().__init__(f"{path}: {reason}")
         self.path = path
         self.reason = reason
+
+
+_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+
+def _scrub_problem(problem: Any) -> str:
+    """PyYAML 的 `problem` 文字會以引號帶出輸入片段(例:未定義的 tag handle `'!AIza…!'`、重複的
+    `%TAG` handle、未知的跳脫字元);引號內一律換成 `'…'`,輸入永不回顯(決策 18)。"""
+    return _QUOTED.sub("'…'", str(problem or "語法錯誤"))
 
 
 def _mark_reason(mark: Any, problem: str) -> str:
@@ -385,13 +394,17 @@ def load_yaml(text: str) -> Any:
         raise
     except yaml.MarkedYAMLError as exc:
         raise ConfigSyntaxError(
-            "yaml", _mark_reason(exc.problem_mark, str(exc.problem or "語法錯誤"))) from None
+            "yaml", _mark_reason(exc.problem_mark, _scrub_problem(exc.problem))) from None
     except yaml.reader.ReaderError as exc:
         raise ConfigSyntaxError("yaml", f"位置 {exc.position}: 不允許的字元") from None
     except yaml.YAMLError:
         raise ConfigSyntaxError("yaml", "語法錯誤") from None
     except RecursionError:
         raise ConfigSyntaxError("yaml", "巢狀過深") from None
+    except (ValueError, OverflowError) as exc:
+        # 純量建構失敗(例:超過 int 位數上限 4300 的整數)。ConfigSyntaxError 本身是 ValueError,
+        # 已在上方原樣丟出;這裡不用 str(exc)(可能帶出輸入片段)
+        raise ConfigSyntaxError("yaml", f"無法解析的值({type(exc).__name__})") from None
     finally:
         if loader is not None:
             loader.dispose()

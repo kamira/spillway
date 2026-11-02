@@ -144,6 +144,35 @@ def test_syntax_error_does_not_echo_line():
     assert "AIza" not in _parse_error(text)
 
 
+@pytest.mark.parametrize("text", [
+    f"version: 1\nx: !{FAKE_AIZA}!v 1\n",                                   # 未定義的 tag handle
+    f"%TAG !{FAKE_AIZA}! tag:a,2000:\n%TAG !{FAKE_AIZA}! tag:b,2000:\n---\nversion: 1\n",  # 重複 %TAG
+    f'version: 1\nx: "\\q{FAKE_AIZA}"\n',                                   # 未知的跳脫字元
+    f"version: 1\nx: {FAKE_AIZA}: [\n",
+])
+def test_parser_problem_does_not_echo_input(text):
+    with pytest.raises(configio.ConfigSyntaxError) as ei:
+        configio.load_yaml(text)
+    assert "AIza" not in str(ei.value)
+    assert "AIza" not in _parse_error(text)
+
+
+def test_scrub_problem_placeholder():
+    assert configio._scrub_problem("found undefined tag handle '!AIza-x!'") == (
+        "found undefined tag handle '…'")
+    assert configio._scrub_problem(None) == "語法錯誤"
+
+
+@pytest.mark.parametrize("text", ["version: 1\nx: " + "9" * 5000 + "\n",
+                                  "version: 1\nx: -" + "9" * 5000 + "\n"])
+def test_unconstructable_scalar_is_syntax_error(text):
+    with pytest.raises(configio.ConfigSyntaxError) as ei:
+        configio.load_yaml(text)
+    assert ei.value.path == "yaml"
+    assert "9999" not in str(ei.value) and "ffff" not in str(ei.value)
+    _parse_error(text)
+
+
 def test_golden_loads_to_plain_data():
     data = configio.load_yaml(GOLDEN.read_text(encoding="utf-8"))
     assert data == yaml.safe_load(GOLDEN.read_text(encoding="utf-8"))
@@ -157,6 +186,8 @@ def test_format_path():
     assert configio.format_path(("routes", "a.b", "targets", 0, 1, "deployment")) == (
         'routes["a.b"].targets[0][1].deployment')
     assert configio.format_path(("groups", "中文")) == 'groups["中文"]'
+    # 結尾換行不可當成 `.key`(`$` 會匹配結尾換行之前;須 fullmatch)
+    assert configio.format_path(("routes", "a\n")) == 'routes["a\\n"]'
 
 
 @pytest.mark.parametrize("top,path", [
@@ -178,6 +209,8 @@ def test_format_path():
     ({"routes": {"r": {"target": {"bogus": 1}}}}, "routes.r.target"),
     ({"routes": {"r": {"target": {"group": "g"}, "name": "other"}}}, "routes.r.name"),
     ({"routes": {"r:x": {"target": {"group": "g"}}}}, 'routes["r:x"]'),
+    ({"routes": {"a\n": {"target": {"group": "g"}}}}, 'routes["a\\n"]'),
+    ({"deployments": [_member("a\n")]}, "deployments[0].id"),
     ({"deployments": [_member("a"), _member("a")]}, "deployments[1].id"),
     ({"deployments": [{k: v for k, v in _member("a").items() if k != "id"}]}, "deployments[0].id"),
 ])
@@ -260,7 +293,9 @@ def _with(dep_id: str, **changes) -> list[dict]:
         d = {**d, "params": dict(d.get("params", {}))}
         if d["id"] == dep_id:
             for k, v in changes.items():
-                if k.startswith("params."):
+                if k.startswith("params.-"):           # 移除該鍵
+                    d["params"].pop(k[len("params.-"):], None)
+                elif k.startswith("params."):
                     d["params"][k[len("params."):]] = v
                 else:
                     d[k] = v
@@ -273,6 +308,15 @@ def _with(dep_id: str, **changes) -> list[dict]:
     ("api-x", {"params.base_url": "http://evil.example"}, ["api-x"]),
     ("api-x", {"params.proxy_url": "http://evil.example"}, ["api-x"]),
     ("api-x", {"params.endpoint": "http://evil.example"}, ["api-x"]),
+    ("api-x", {"params.url": "http://evil.example"}, ["api-x"]),
+    ("api-x", {"params.azure_base": "http://evil.example"}, ["api-x"]),
+    ("api-x", {"params.token_endpoint": "http://evil.example"}, ["api-x"]),
+    ("api-x", {"params.API_BASE": "http://evil.example"}, ["api-x"]),
+    ("api-x", {"credential_ref": None}, ["api-x"]),                 # 移除 credential_ref
+    ("api-x", {"params.api_base": None}, ["api-x"]),                # 值改為 null
+    ("api-x", {"params.-api_base": None}, ["api-x"]),               # 移除 api_base(見 _with)
+    ("plain", {"params.cwd": "/"}, []),                             # cwd 只對 CLI 成員列入
+    ("api-x", {"params.baseline": "x"}, []),                        # 不是 URL 類鍵名
     ("api-x", {"credential_ref": "env:OTHER_VAR"}, ["api-x"]),
     ("cli-x", {"params.extra_args": ["-b"]}, ["cli-x"]),
     ("cli-x", {"params.effort_args": {"high": ["-x"]}}, ["cli-x"]),

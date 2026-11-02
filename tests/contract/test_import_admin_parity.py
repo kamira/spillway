@@ -56,6 +56,7 @@ MEMBER_CASES = {
     "credential_ref_format": _member("a", credential_ref="plain-value"),
     "bad_kind": _member("a", kind="bogus"),
     "id_with_space": _member("a b"),
+    "id_trailing_newline": _member("a\n"),
     "budget_anchor": _member("a", budget={"type": "usd", "reset_anchor": 29}),
 }
 
@@ -103,6 +104,22 @@ async def test_group_name_rules_match(tmp_path, clock, name):
         imported = await _import(c, {"groups": {name: {}}})
     assert _code(admin) == (422, "validation_error"), admin.text
     assert _code(imported) == _code(admin), imported.text
+
+
+ROUTE_NAME_CASES = ["a\n", "a b", "a/b", "a:b", "a" * 201, "\ta"]
+
+
+@pytest.mark.parametrize("name", ROUTE_NAME_CASES)
+async def test_route_name_rules_match(tmp_path, clock, name):
+    target = {"tags": {"all": [], "any": [], "none": []}}
+    async with _client(tmp_path / "a.db", clock) as c:
+        admin = await c.post("/api/routes", json={"name": name, "target": target})
+    async with _client(tmp_path / "b.db", clock) as c:
+        before = await _snapshot(tmp_path / "b.db")
+        imported = await _import(c, {"routes": {name: {"target": target}}})
+    assert _code(admin) == (422, "validation_error"), admin.text
+    assert _code(imported) == _code(admin), imported.text
+    assert await _snapshot(tmp_path / "b.db") == before
 
 
 async def test_single_rule_matches(tmp_path, clock):

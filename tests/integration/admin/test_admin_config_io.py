@@ -339,6 +339,19 @@ async def test_syntax_error_with_key_not_echoed(client, caplog):
     assert "AIza" not in caplog.text
 
 
+@pytest.mark.parametrize("text", [
+    f"version: 1\nx: !{FAKE_AIZA}!v 1\n",
+    f"%TAG !{FAKE_AIZA}! tag:a,2000:\n%TAG !{FAKE_AIZA}! tag:b,2000:\n---\nversion: 1\n",
+    "version: 1\nx: " + "9" * 5000 + "\n",
+])
+async def test_parser_problem_not_echoed(client, caplog, text):
+    caplog.set_level(logging.DEBUG)
+    r = await _import(client, text)
+    assert_error(r, 422, "validation_error")
+    assert "AIza" not in r.text and "9999" not in r.text
+    assert "AIza" not in caplog.text
+
+
 async def test_field_errors_all_paths_and_no_change(client, db):
     seed_golden(db)
     before = _snapshot(db)
@@ -492,6 +505,26 @@ async def test_replace_preserves_runtime_state(make_app, make_client, db, db_pat
     assert content == expected_backup                             # 內容等於匯入前匯出
     for needle in (KEY, "f" * 64, "ledger-only-text", "payload-only-text"):
         assert needle not in content
+
+
+@pytest.mark.parametrize("mutate,status,code,path", [
+    # route review 仍指向 coding,但檔案沒有 coding → replace 已刪除群組後的最終檢查失敗
+    (lambda doc: doc["groups"].pop("coding"), 422, "validation_error", "routes.review.target.group"),
+    # 兩個 claude-cli 成員:刪除 bare 之後才在最終檢查發現
+    (lambda doc: doc["deployments"].__setitem__(2, {**_cli("claude-2")}), 409, "provider_single",
+     "deployments"),
+])
+async def test_replace_fails_after_deletes_db_unchanged(client, db, db_path, mutate, status, code,
+                                                        path):
+    seed_golden(db)
+    before = _snapshot(db)              # 全 DB iterdump(含帳本、payload、token、冷卻)
+    doc = _golden_doc()
+    mutate(doc)
+    msg = assert_error(await _import(client, _dump_doc(doc)), status, code)
+    assert msg.startswith(f"{path}: "), msg
+    assert _snapshot(db) == before
+    backups = db_path.parent / "backups"
+    assert not backups.exists() or list(backups.iterdir()) == []   # 失敗時不留備份
 
 
 async def test_replace_backup_not_overwritten(client, db_path):
