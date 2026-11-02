@@ -3,7 +3,11 @@
 `seed_nfr_dataset(conn, now, fake_base_url, *, members=100, rows=10_000, seed=7) -> NfrDataset`
 
 - 成員 100 個(id `m000`–`m099`,全部帶 tag `nfr`):
-  - 70 個 openai api(模型輪流取自價格表內的 `OPENAI_MODELS`,`api_base` 指向假上游 `/v1`);
+  - 68 個 openai api(模型輪流取自價格表內的 `OPENAI_MODELS`,`api_base` 指向假上游 `/v1`);
+  - 2 個 cli(CHG-20261101-03 T9):`m000` provider `claude-cli`(`claude-sonnet-5-5`,credit_pool 每月)、
+    `m001` provider `codex-cli`(`gpt-5.5`,額度類型 none);`params.max_concurrency` 1;
+    route `nfr` 為 chat mode,兩者在候選篩選第 2 條(`mode_chat_excludes_cli`)即被篩除,
+    不會走到冷卻與併發名額的檢查;dashboard 仍照常計算它們的額度列;量測期間不起任何子行程;
   - 20 個 anthropic api(`claude-sonnet-4-5`,`api_base` 指向假上游);
   - 10 個 local(provider `hosted_vllm`,決策 10)。
   api 成員憑證一律 `env:SPILLWAY_TEST_KEY`。額度依序輪替:usd 每月(reset_anchor 1–28 輪替)、
@@ -30,6 +34,7 @@ ROUTE = "nfr"
 TAG = "nfr"
 OPENAI_MODELS = ("gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "gpt-4.1-nano")
 ANTHROPIC_MODEL = "claude-sonnet-4-5"
+CLI_MEMBERS = (("claude-cli", "claude-sonnet-5-5"), ("codex-cli", "gpt-5.5"))   # m000、m001
 STATUSES = ("ok",) * 17 + ("error", "rate_limited", "quota_exhausted")
 
 
@@ -39,6 +44,7 @@ class NfrDataset:
     member_ids: tuple[str, ...]
     local_ids: tuple[str, ...]
     ledger_rows: int
+    cli_ids: tuple[str, ...] = ()
 
 
 def _budget(i: int) -> Budget | None:
@@ -61,7 +67,17 @@ def _members(fake_base_url: str, n: int) -> list[Deployment]:
     for i in range(n):
         dep_id = f"m{i:03d}"
         caps = {"ctx": 128000, "tools": True, "vision": False, "efforts": ["low", "medium", "high"]}
-        if i >= n - n_local:
+        if i < len(CLI_MEMBERS):
+            provider, model = CLI_MEMBERS[i]
+            budget = (Budget(type="credit_pool", limit_amount=20.0, window="monthly", reset_anchor=1)
+                      if provider == "claude-cli" else Budget(type="none", limit_amount=None, window="none"))
+            out.append(Deployment(
+                id=dep_id, model_name=dep_id, kind="cli", provider=provider, model=model,
+                params={"max_concurrency": 1}, credential_ref=None,
+                capabilities={"ctx": 272000, "tools": False, "vision": False,
+                              "efforts": ["low", "medium", "high"]},
+                tags=(TAG,), budget=budget))
+        elif i >= n - n_local:
             out.append(Deployment(
                 id=dep_id, model_name=dep_id, kind="local", provider="hosted_vllm",
                 model="local-model", params={"api_base": f"{fake_base_url}/v1"}, credential_ref=None,
@@ -103,9 +119,11 @@ def seed_nfr_dataset(conn: sqlite3.Connection, now: datetime, fake_base_url: str
         ok = status == "ok"
         tokens_out = 20 + int(rng.random() * 4000) if ok else None
         cost = 0.0 if dep.kind == "local" else (round(rng.random() * 0.0002, 8) if ok else None)
+        if dep.provider == "codex-cli" and ok:
+            cost = None   # spec 5.2.3:codex 花費為 NULL
         values.append((
             to_iso(ts), ROUTE, dep.id, None, 100 if ok else None, tokens_out, cost, status,
-            2 if dep.kind == "api" else 3, 0, 120 if status != "skipped_precheck" else None,
+            {"api": 2, "cli": 1}.get(dep.kind, 3), 0, 120 if status != "skipped_precheck" else None,
             100, 500, 2000, 0.001 if dep.kind != "local" else None,
             None if ok or status == "skipped_precheck" else "upstream error",
         ))
@@ -118,4 +136,5 @@ def seed_nfr_dataset(conn: sqlite3.Connection, now: datetime, fake_base_url: str
             values,
         )
     return NfrDataset(route=ROUTE, member_ids=tuple(d.id for d in deps),
-                      local_ids=tuple(d.id for d in deps if d.kind == "local"), ledger_rows=rows)
+                      local_ids=tuple(d.id for d in deps if d.kind == "local"), ledger_rows=rows,
+                      cli_ids=tuple(d.id for d in deps if d.kind == "cli"))

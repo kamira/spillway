@@ -1,0 +1,13 @@
+# claude_cli 可用模型清單(spec 7.6.4;design D12)。
+# id 原樣交給 `claude -p --model <id>`(CLI 也接受 opus、sonnet 等別名,可在 UI 以「其他」手動輸入)。
+# tools、vision 一律 false:含 tools 或圖片的請求不送往 CLI 成員(spec 7.5.2)。
+# efforts:經 params.effort_args(預設 ["--effort", "{effort}"])傳給 `claude --effort`。
+- id: claude-opus-5-5
+  label: Claude Opus 5.5(Claude Code 訂閱)
+  capabilities: {ctx: 1000000, tools: false, vision: false, efforts: [low, medium, high, max]}
+- id: claude-sonnet-5-5
+  label: Claude Sonnet 5.5(Claude Code 訂閱)
+  capabilities: {ctx: 1000000, tools: false, vision: false, efforts: [low, medium, high, max]}
+- id: claude-haiku-5-5
+  label: Claude Haiku 5.5(Claude Code 訂閱)
+  capabilities: {ctx: 1000000, tools: false, vision: false, efforts: [low, medium, high, max]}

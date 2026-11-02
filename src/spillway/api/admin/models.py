@@ -6,7 +6,6 @@ CHG-20261101-02 決策 1、4、9)。
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -110,12 +109,12 @@ class DeploymentIn(BaseModel):
                 raise ValueError(redact_echo(exc)) from None
         return v
 
-    def to_deployment(self, dep_id: str, exhausted_until: datetime | None) -> Deployment:
+    def to_deployment(self, dep_id: str) -> Deployment:
         budget = None
         if self.budget is not None:
             b = self.budget
             budget = Budget(type=b.type, limit_amount=b.limit_amount, window=b.window,
-                            reset_anchor=b.reset_anchor, exhausted_until=exhausted_until)
+                            reset_anchor=b.reset_anchor)
         return Deployment(
             id=dep_id, model_name=self.model_name, kind=self.kind, provider=self.provider,
             model=self.model, params=dict(self.params), credential_ref=self.credential_ref,

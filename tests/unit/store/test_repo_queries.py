@@ -178,12 +178,16 @@ def test_dashboard_members_matches_old_join(db):
     repo.save_deployment(db, _dep("b", budget=Budget(type="usd", limit_amount=5.0, window="daily")))
     repo.save_deployment(db, _dep("a"))
     repo.save_deployment(db, _dep("c"))
-    repo.mark_exhausted_until(db, "c", NOW + timedelta(hours=1))   # type=none 冷卻列(決策 59)
+    # schema v2(CHG-20261101-03 決策 4):v1 留下的 type=none 暫行列保留;冷卻改存 cooldowns
+    repo.save_budget(db, "c", Budget(type="none", limit_amount=None, window="none"))
+    repo.mark_cooldown(db, "c", NOW + timedelta(hours=1), "rate_limited")
     old = db.execute(
         "SELECT d.id, d.model_name, d.kind, d.provider, d.enabled, b.type AS b_type, "
-        "b.limit_amount, b.window, b.reset_anchor, b.exhausted_until, "
-        "b.deployment_id IS NOT NULL AS has_budget "
-        "FROM deployments d LEFT JOIN budgets b ON b.deployment_id = d.id ORDER BY d.id"
+        "b.limit_amount, b.window, b.reset_anchor, "
+        "b.deployment_id IS NOT NULL AS has_budget, "
+        "c.exhausted_until AS cooling_until, c.reason AS cooling_reason "
+        "FROM deployments d LEFT JOIN budgets b ON b.deployment_id = d.id "
+        "LEFT JOIN cooldowns c ON c.deployment_id = d.id ORDER BY d.id"
     ).fetchall()
     got = repo.dashboard_members(db)
     assert [dict(r) for r in got] == [dict(r) for r in old]
@@ -192,6 +196,9 @@ def test_dashboard_members_matches_old_join(db):
     assert by_id["a"]["has_budget"] == 0 and by_id["a"]["b_type"] is None
     assert by_id["c"]["has_budget"] == 1 and by_id["c"]["b_type"] == "none"
     assert by_id["c"]["window"] == "none" and by_id["c"]["limit_amount"] is None
+    assert by_id["a"]["cooling_until"] is None and by_id["a"]["cooling_reason"] is None
+    assert by_id["c"]["cooling_until"] == "2026-10-30T13:00:00Z"
+    assert by_id["c"]["cooling_reason"] == "rate_limited"
 
 
 def _old_spend_by_dep(db, start, end) -> dict[str, float]:

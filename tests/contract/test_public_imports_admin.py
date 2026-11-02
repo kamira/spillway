@@ -42,6 +42,8 @@ EXPECTED_OPENAPI: dict[str, dict[str, tuple[str, ...]]] = {
     "/api/routes/{name}/dry-run": {"post": ("200", "422")},
     "/api/routes/{name}/order": {"delete": ("204", "422"), "put": ("200", "422")},
     "/api/settings/context": {"get": ("200",), "put": ("200", "422")},
+    # CHG-20261101-03 T7(決策 14;允許清單「rotate 路徑」)
+    "/api/settings/token/rotate": {"post": ("200",)},
     "/v1/chat/completions": {"post": ("200", "422")},
     "/v1/models": {"get": ("200",)},
 }

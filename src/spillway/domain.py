@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 KINDS = ("cli", "api", "local")
@@ -20,6 +19,10 @@ COOLING_STATUSES = ("quota_exhausted", "rate_limited")
 STATUS_SKIPPED_PRECHECK = "skipped_precheck"
 # 契約清單 `usage_ledger.status`(CHG-20261101-02 決策 6:型別維持 frozenset)
 LEDGER_STATUSES = frozenset({*CALL_STATUSES, STATUS_SKIPPED_PRECHECK})
+# 排除原因(CHG-20261101-03):CLI 成員進行中子行程數已達 `params.max_concurrency`(決策 7);
+# 停機中不開始新嘗試(決策 16)。兩者都不寫帳本,只出現在 excluded / dry-run / 503 body
+EXCLUDE_CONCURRENCY_FULL = "concurrency_full"
+EXCLUDE_SHUTTING_DOWN = "shutting_down"
 
 
 @dataclass(frozen=True)
@@ -28,7 +31,6 @@ class Budget:
     limit_amount: float | None
     window: str = "monthly"         # monthly | weekly | daily | none
     reset_anchor: int | None = None  # monthly 的重置日,1–28
-    exhausted_until: datetime | None = None
 
 
 @dataclass(frozen=True)

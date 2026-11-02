@@ -35,14 +35,6 @@ def _dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _iso(dt: datetime | None) -> str | None:
-    return None if dt is None else to_iso(dt)
-
-
-def _dt(s: str | None) -> datetime | None:
-    return None if s is None else from_iso(s)
-
-
 def _bool_or_none(v: int | None) -> bool | None:
     return None if v is None else bool(v)
 
@@ -174,64 +166,81 @@ def get_budget(conn: sqlite3.Connection, dep_id: str) -> Budget | None:
         limit_amount=row["limit_amount"],
         window=row["window"],
         reset_anchor=row["reset_anchor"],
-        exhausted_until=_dt(row["exhausted_until"]),
     )
 
 
 def save_budget(conn: sqlite3.Connection, dep_id: str, budget: Budget | None) -> None:
-    """新增或取代成員的 budgets 列;`None` 刪除該列。"""
+    """新增或取代成員的 budgets 列;`None` 刪除該列(冷卻在 `cooldowns`,不受影響)。"""
     with transaction(conn):
         if budget is None:
             conn.execute("DELETE FROM budgets WHERE deployment_id = ?", (dep_id,))
             return
         conn.execute(
             """
-            INSERT INTO budgets (deployment_id, type, limit_amount, window, reset_anchor, exhausted_until)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO budgets (deployment_id, type, limit_amount, window, reset_anchor)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(deployment_id) DO UPDATE SET
               type = excluded.type,
               limit_amount = excluded.limit_amount,
               window = excluded.window,
-              reset_anchor = excluded.reset_anchor,
-              exhausted_until = excluded.exhausted_until
+              reset_anchor = excluded.reset_anchor
             """,
-            (
-                dep_id,
-                budget.type,
-                budget.limit_amount,
-                budget.window,
-                budget.reset_anchor,
-                _iso(budget.exhausted_until),
-            ),
+            (dep_id, budget.type, budget.limit_amount, budget.window, budget.reset_anchor),
         )
 
 
-def set_exhausted_until(conn: sqlite3.Connection, dep_id: str, when: datetime | None) -> bool:
-    """設定或清除(None)冷卻期限;成員沒有 budgets 列時不建立,回傳 False。"""
-    with transaction(conn):
-        cur = conn.execute(
-            "UPDATE budgets SET exhausted_until = ? WHERE deployment_id = ?",
-            (_iso(when), dep_id),
-        )
-    return cur.rowcount > 0
+# ---------------------------------------------------------------- cooldowns(schema v2;CHG-20261101-03 決策 3、6)
+# exhausted_until 固定為 `%Y-%m-%dT%H:%M:%SZ`(clock.to_iso),字串比較即時間比較。
 
 
-def mark_exhausted_until(conn: sqlite3.Connection, dep_id: str, when: datetime) -> None:
-    """單一原子敘述設定冷卻;沒有 budgets 列時插入 type=none、window=none 的列,
-    已有列時只改 exhausted_until(不動 type、limit_amount、window、reset_anchor)。
+@dataclass(frozen=True)
+class Cooldown:
+    until: datetime
+    reason: str          # quota_exhausted | rate_limited
 
-    冷卻只延長、不縮短(末端審查 M27):既有值較晚時保留既有值。exhausted_until 固定為
-    `%Y-%m-%dT%H:%M:%SZ`,字串比較即時間比較。手動清除走 `set_exhausted_until(None)`,不受影響。"""
+
+def _cooldown_from_row(row: sqlite3.Row) -> Cooldown:
+    return Cooldown(until=from_iso(row["exhausted_until"]), reason=row["reason"])
+
+
+def get_cooldown(conn: sqlite3.Connection, dep_id: str) -> Cooldown | None:
+    """成員的冷卻列(不論是否已到期);沒有時 None。"""
+    row = conn.execute(
+        "SELECT exhausted_until, reason FROM cooldowns WHERE deployment_id = ?", (dep_id,)
+    ).fetchone()
+    return None if row is None else _cooldown_from_row(row)
+
+
+def list_cooldowns(conn: sqlite3.Connection) -> dict[str, Cooldown]:
+    """所有冷卻列(不論是否已到期),單一查詢;`{deployment_id: Cooldown}`。"""
+    return {
+        r["deployment_id"]: _cooldown_from_row(r)
+        for r in conn.execute("SELECT deployment_id, exhausted_until, reason FROM cooldowns")
+    }
+
+
+def mark_cooldown(conn: sqlite3.Connection, dep_id: str, until: datetime, reason: str) -> None:
+    """單一原子敘述設定冷卻;冷卻只延長、不縮短(末端審查 M27):既有期限較晚(或相同)時整列保留,
+    否則期限與原因一起改為新值。不建立、不修改 budgets 列(決策 6,取代決策 59 的暫行列)。
+    成員不存在時外鍵違反(`sqlite3.IntegrityError`)。"""
     with transaction(conn):
         conn.execute(
             """
-            INSERT INTO budgets (deployment_id, type, limit_amount, window, exhausted_until)
-            VALUES (?, 'none', NULL, 'none', ?)
+            INSERT INTO cooldowns (deployment_id, exhausted_until, reason) VALUES (?, ?, ?)
             ON CONFLICT(deployment_id) DO UPDATE SET
-              exhausted_until = MAX(COALESCE(budgets.exhausted_until, ''), excluded.exhausted_until)
+              exhausted_until = excluded.exhausted_until,
+              reason = excluded.reason
+            WHERE excluded.exhausted_until > cooldowns.exhausted_until
             """,
-            (dep_id, _iso(when)),
+            (dep_id, to_iso(until), reason),
         )
+
+
+def clear_cooldown(conn: sqlite3.Connection, dep_id: str) -> bool:
+    """刪除成員的冷卻列(spec 5.3.3);回傳是否有刪到。"""
+    with transaction(conn):
+        cur = conn.execute("DELETE FROM cooldowns WHERE deployment_id = ?", (dep_id,))
+    return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------- groups
@@ -550,14 +559,17 @@ def recent_tokens_out(
 
 
 def dashboard_members(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """每個現存成員一列(依 id),LEFT JOIN budgets。欄位:`id`、`model_name`、`kind`、`provider`、
-    `enabled`、`b_type`、`limit_amount`、`window`、`reset_anchor`、`exhausted_until`
-    (budgets 欄位為原始值,沒有 budgets 列時為 NULL)、`has_budget`(0/1)。"""
+    """每個現存成員一列(依 id),LEFT JOIN budgets 與 cooldowns(仍為單一查詢)。欄位:`id`、
+    `model_name`、`kind`、`provider`、`enabled`、`b_type`、`limit_amount`、`window`、`reset_anchor`
+    (budgets 欄位為原始值,沒有 budgets 列時為 NULL)、`has_budget`(0/1)、`cooling_until`、
+    `cooling_reason`(cooldowns 原始值,不論是否到期;沒有冷卻列時為 NULL)。"""
     return conn.execute(
         "SELECT d.id, d.model_name, d.kind, d.provider, d.enabled, b.type AS b_type, "
-        "b.limit_amount, b.window, b.reset_anchor, b.exhausted_until, "
-        "b.deployment_id IS NOT NULL AS has_budget "
-        "FROM deployments d LEFT JOIN budgets b ON b.deployment_id = d.id ORDER BY d.id"
+        "b.limit_amount, b.window, b.reset_anchor, "
+        "b.deployment_id IS NOT NULL AS has_budget, "
+        "c.exhausted_until AS cooling_until, c.reason AS cooling_reason "
+        "FROM deployments d LEFT JOIN budgets b ON b.deployment_id = d.id "
+        "LEFT JOIN cooldowns c ON c.deployment_id = d.id ORDER BY d.id"
     ).fetchall()
 
 

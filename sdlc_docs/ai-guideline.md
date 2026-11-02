@@ -3,9 +3,9 @@
 - 專案:spillway
 - 分支(Branch):main
 - 帳本落點(Ledger root):`sdlc_docs/` ← `docs/` 已存放專案自己的企劃書、規格書與 UI 設計稿,帳本不寫入該目錄
-- 版本:v1.4
-- 日期:2026-10-29(UTC+0)
-- 狀態:已確認(2026-10-29,使用者)
+- 版本:v1.5
+- 日期:2026-11-01(UTC+0)
+- 狀態:已確認(2026-10-29,使用者);v1.5 記錄使用者於 2026-11-01 決定的 M3 拆分(CHG-20261101-03 決策 1)
 - Skill:ai-sdlc v1.67
 
 ## 0. 需求來源與優先序
@@ -32,7 +32,7 @@
 |--------|------|------|
 | M1 規格定案 | 企劃書、規格書、UI layout | 規格審閱通過(**已完成**,文件已在 `docs/`) |
 | M2 路由核心 | SQLite schema 與帳本、路由器與額度計算、LiteLLM adapter(api、local)、OpenAI 相容 HTTP API、管理 API | 路由測試全過(G3、G4) |
-| M3 CLI 與 MCP | claude-cli、codex-cli adapter;MCP server(Streamable HTTP + stdio 橋接);MCP 設定產生器 | 4 種工具可連線(G1、G6) |
+| M3 CLI 與 MCP | 拆為兩筆 CHG(使用者決定 2026-11-01):**M3a**(CHG-20261101-03)claude-cli、codex-cli adapter 與子行程執行器 CliRunner、CLI 併發上限、schema v2(冷卻獨立成 `cooldowns` 表)與 v1→v2 migration、存取 token 與 `spillway init`、graceful shutdown;**M3b** MCP server(Streamable HTTP + stdio 橋接 `mcp-stdio`)、MCP 設定產生器 | 4 種工具可連線(G1、G6);閘門於 M3b 結束時驗收 |
 | M4 Web UI | 7 個畫面、設定匯入匯出、首次設定精靈 | 空 DB 首呼 ≤ 10 分(G2、G5、G7) |
 
 ### 不納入(明確排除)
@@ -110,7 +110,7 @@
 以規格書第 12 節為準,依里程碑分組:
 
 - [ ] M2 閘門:AC-3、AC-4、AC-5、AC-7、AC-13、AC-14、AC-15、AC-18、AC-19 通過;NFR-1、NFR-2、NFR-3、NFR-5 量測達標。4.2.5、4.2.6 的邏輯先以 api 成員驗證。
-- [ ] M3 閘門:AC-1、AC-2、AC-9、AC-11、AC-12、AC-16、AC-17 通過(前置條件皆用到 claude-sub);NFR-6 量測達標。
+- [ ] M3 閘門:AC-1、AC-2、AC-9、AC-11、AC-12、AC-16、AC-17 通過(前置條件皆用到 claude-sub);NFR-6 量測達標。閘門於 M3b 結束時驗收;M3a 先以假執行檔驗證 AC-1、AC-2、AC-12、AC-16 與 AC-17 的 CLI 版、NFR-6,並由擁有者以真實 claude、codex 各冒煙一次(記入 ACC-20261101-02);AC-9、AC-11 屬 M3b。
 - [ ] M4 閘門:AC-6、AC-8、AC-10、AC-20、AC-21 通過;NFR-4 對資料庫、匯出檔、日誌三者搜尋命中數為 0。
 - [ ] 全部:每個閘門在 macOS 通過,並附擁有者的真實冒煙結果(Q1);Linux、Windows 標「未涵蓋」(Q2)。
 
@@ -123,6 +123,7 @@
 | v1.2 | 2026-10-29 | 使用者追加:訂閱 CLI 與 API 為不同模組;模組宣告唯一或多個(FR-25) |
 | v1.3 | 2026-10-29 | CHG-20261029-01:FR-11、FR-23–25 已寫入規格書,改引條文編號;AC-19 列入 M2、AC-20–21 列入 M4 |
 | v1.4 | 2026-10-29 | CHG-20261029-02:已推上公開 repo kamira/spillway;CI 仍未建立 |
+| v1.5 | 2026-11-01 | CHG-20261101-03(使用者決定 2026-11-01,決策 1):M3 拆為 M3a(CLI 成員、schema v2、存取 token 與 init、graceful shutdown)與 M3b(MCP server、`mcp-stdio`、設定輸出);M3 閘門仍於 M3b 結束時驗收 |
 
 ## 8. AI 開發約定
 

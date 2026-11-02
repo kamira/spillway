@@ -81,7 +81,7 @@ def test_unrelated_table_is_kept_and_v1_applied(tmp_path: Path) -> None:
 
     conn = connect(path)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
         tables = _tables(conn)
         assert {"my_notes", "deployments", "usage_ledger", "settings"} <= tables
         assert [tuple(r) for r in conn.execute("SELECT k, v FROM my_notes")] == [("a", "1")]

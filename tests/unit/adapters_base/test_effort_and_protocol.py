@@ -79,9 +79,10 @@ def test_protocol_methods_are_async():
 
 def test_adapter_context_fields():
     names = [f.name for f in dataclasses.fields(AdapterContext)]
-    assert names == ["credentials", "clock", "cli_runner"]
+    assert names == ["credentials", "clock", "cli_runner", "data_dir"]
     ctx = AdapterContext(credentials=lambda ref: "sk-test-0000", clock=FakeClock())
     assert ctx.cli_runner is None
+    assert ctx.data_dir is None
     assert ctx.credentials("env:SPILLWAY_TEST_KEY") == "sk-test-0000"
     with pytest.raises(dataclasses.FrozenInstanceError):
         ctx.cli_runner = object()  # type: ignore[misc]

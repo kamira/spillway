@@ -27,20 +27,21 @@ async def dashboard(request: Request) -> dict[str, Any]:
     回應 `{generated_at, deployments: [...]}`,每個成員(依 id,只列現存成員;孤兒帳本列不計):
     `id`、`model_name`、`kind`、`provider`、`enabled`、`budget_type`、`limit_amount`、`window`、
     `period_start`、`next_reset`、`period_spend`、`remaining`、`unlimited`、`ratio`、`cooling`、
-    `cooling_until`、`requests_24h`、`est_days_left`。
+    `cooling_until`、`cooling_reason`、`requests_24h`、`est_days_left`。
 
     - 本期花費 = 帳本該成員 `ts` ∈ [period_start, next_reset) 的 `cost_usd` 加總(不分 status,
       NULL 不計),與 `QuotaService.remaining()` 相同;window `none` 為累計(period_start、next_reset
       為 null)。沒有 budgets 列的成員以日曆月(1 日起)計本期花費,`window` 為 null。
-      只為記錄冷卻而存在的列(`type=none`、`window=none`、`limit_amount` NULL;U10 (a))比照沒有
-      budgets 列:日曆月計、`budget_type` 與 `window` 為 null;冷卻欄位照實回傳。
+      舊版留下的暫行列(`type=none`、`window=none`、`limit_amount` NULL;U10 (a)、決策 59;schema v2
+      migration 保留這些列)比照沒有 budgets 列:日曆月計、`budget_type` 與 `window` 為 null。
     - 無上限(無 budgets 列、type `none`、`limit_amount` NULL):`remaining` null、`unlimited` true、
       `ratio` 1。否則 `remaining = limit − 本期花費`(可為負)、`ratio` 夾在 0–1、上限 0 時 0。
-    - `cooling_until`:`exhausted_until` 尚未到期時的值,否則 null;`cooling` 為其布林。
+    - `cooling_until`、`cooling_reason`:`cooldowns` 列尚未到期時的期限與原因,否則 null;`cooling` 為其布林
+      (CHG-20261101-03 決策 6)。
     - `requests_24h`:近 24 小時(`ts ≥ now − 24h`)帳本列數,不含 `skipped_precheck`(沒有送出請求)。
     - `est_days_left`(5.4.6):`max(remaining, 0) ÷ (近 7 天實際花費 ÷ 7)`;無上限或近 7 天無花費時 null。
 
-    效能(NFR-2):查詢數與成員數無關——成員與 budgets 一次 JOIN、每種相異期間一次 GROUP BY 加總、
+    效能(NFR-2):查詢數與成員數無關——成員、budgets 與 cooldowns 一次 JOIN、每種相異期間一次 GROUP BY 加總、
     近 24 小時請求數與近 7 天花費合併一次 GROUP BY(`repo.dashboard_members`、`repo.spend_by_deployment`、
     `repo.recent_activity`;不用 `QuotaService` 的逐成員加總)。
     """
@@ -87,8 +88,9 @@ async def dashboard(request: Request) -> dict[str, Any]:
             limit = float(r["limit_amount"])
             remaining = limit - spend
             ratio = 0.0 if limit <= 0 else min(1.0, max(0.0, remaining / limit))
-        until = r["exhausted_until"]
+        until = r["cooling_until"]
         cooling_until = until if until is not None and until > to_iso(now) else None
+        cooling_reason = r["cooling_reason"] if cooling_until is not None else None
         n24, spend7 = recent.get(r["id"], (0, 0.0))
         days_left = None
         if remaining is not None and spend7 > 0:
@@ -102,6 +104,7 @@ async def dashboard(request: Request) -> dict[str, Any]:
             "period_start": key[0], "next_reset": key[1], "period_spend": spend,
             "remaining": remaining, "unlimited": unlimited, "ratio": ratio,
             "cooling": cooling_until is not None, "cooling_until": cooling_until,
+            "cooling_reason": cooling_reason,
             "requests_24h": n24, "est_days_left": days_left,
         })
     return {"generated_at": to_iso(now), "deployments": out}

@@ -129,7 +129,7 @@ def test_acceptance_operation(tmp_path):
         assert calls_slot1_after_first == 1
         first_rows = _ledger(gw, deployment=SLOT1)["items"]
         assert first_rows[0]["status"] == "rate_limited"
-        cooling = gw.request("GET", f"/api/deployments/{SLOT1}").json()["budget"]["exhausted_until"]
+        cooling = gw.request("GET", f"/api/deployments/{SLOT1}").json()["cooling_until"]
         assert cooling is not None
 
         r2 = gw.chat(ROUTE)

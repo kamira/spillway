@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 from spillway.adapters.base.types import CallResult, ChatRequest, Deployment
@@ -30,6 +31,8 @@ class AdapterContext:
       並把結果明確傳給 `litellm_call(api_key=...)`。
     - `clock`:`spillway.clock.Clock` 實例(業務時間一律經它取得)。
     - `cli_runner`:子行程執行器;M2 為 None,M3 補上。
+    - `data_dir`:閘道資料目錄(資料庫所在目錄);CLI 模組以它推得預設工作目錄
+      `work/<模組>`(CHG-20261101-03 施工審議補記);未注入時為 None。
 
     新增欄位不算破壞契約、不升 `contract_version`(決策 13)。
     """
@@ -37,3 +40,4 @@ class AdapterContext:
     credentials: CredentialResolver
     clock: "Clock"
     cli_runner: Any = None
+    data_dir: Path | None = None

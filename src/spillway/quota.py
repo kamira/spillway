@@ -43,8 +43,8 @@ class QuotaService:
 
     慣例:
     - 各方法的 `now` 可省略,省略時取 `clock.now()`;一律需帶時區,內部換成 UTC。
-    - 預算狀態以資料庫 budgets 列為準(`repo.get_budget(conn, dep.id)`),不用 `dep.budget`
-      快照——冷卻可能由其他請求剛設定。
+    - 額度設定以資料庫 budgets 列為準(`repo.get_budget(conn, dep.id)`)、冷卻以 cooldowns 列為準
+      (`repo.get_cooldown`),不用 `dep.budget` 快照——兩者都可能由其他請求剛改過。
     - monthly 的 `reset_anchor` 為 NULL 時以 1 計;超過該月天數時取該月最後一天。
     - window `none` 的 `period_start` 回 None(累計,不設起點)。
     - 無上限(決策 6 / D19):無 budgets 列、`type = none`、或 `limit_amount` 為 NULL 時
@@ -133,25 +133,29 @@ class QuotaService:
 
     # ------------------------------------------------------------ 冷卻(4.5.2、5.3.2、5.3.3、4.2.6)
 
+    # 冷卻存在 `cooldowns` 表(schema v2;CHG-20261101-03 決策 3、6),與額度設定(budgets)分開。
+
+    def _cooldown(self, dep: Deployment) -> repo.Cooldown | None:
+        with use_conn(self._conn_src) as conn:
+            return repo.get_cooldown(conn, dep.id)
+
     def is_cooling(self, dep: Deployment, now: datetime | None = None) -> bool:
-        """`exhausted_until` 尚未到期為 True;到期即自動恢復(4.2.6)。"""
+        """冷卻期限尚未到期為 True;到期即自動恢復(4.2.6)。"""
         now = self._now(now)
-        budget = self._budget(dep)
-        return bool(budget and budget.exhausted_until and budget.exhausted_until > now)
+        cd = self._cooldown(dep)
+        return bool(cd and cd.until > now)
 
     def mark(self, dep: Deployment, status: str, now: datetime | None = None) -> datetime | None:
-        """依 4.5.2 設冷卻並回傳寫入後的 `exhausted_until`(冷卻只延長不縮短)。
+        """依 4.5.2 設冷卻並回傳寫入後的冷卻期限(冷卻只延長不縮短)。
 
-        `quota_exhausted` 設為下一重置點(5.3.2;window none 為現在 + 1 小時),
-        `rate_limited` 設為現在 + 60 秒;其他 status 不動,回傳目前值。
-        成員沒有 budgets 列時,冷卻仍須生效(4.5.2):建立 `type=none`、`window=none` 的列
-        只為記錄冷卻;依決策 6 這等同「無上限」,不改變額度判斷(施工審議代決)。
+        `quota_exhausted` 設為下一重置點(5.3.2;沒有 budgets 列時以 window none 計,為現在 + 1 小時),
+        `rate_limited` 設為現在 + 60 秒;其他 status 不動,回傳目前值(沒有冷卻列時 None)。
+        冷卻寫入 `cooldowns`(原因即 status);不建立、不修改 budgets 列(決策 6)。
         """
         now = self._now(now)
         if status not in COOLING_STATUSES:
-            budget = self._budget(dep)
-            return budget.exhausted_until if budget else None
-        # 讀不到 budget 時視為 window none;寫入用單一原子敘述,不覆寫其他欄位(審查 M12)
+            cd = self._cooldown(dep)
+            return cd.until if cd else None
         budget = self._budget(dep) or Budget(type="none", limit_amount=None, window="none")
         if status == "quota_exhausted":
             until = self.next_reset(budget, now)
@@ -159,12 +163,12 @@ class QuotaService:
             until = now + RATE_LIMIT_COOLDOWN
         until = until.replace(microsecond=0)  # 存到秒(spec 2.1.2)
         with use_conn(self._conn_src) as conn:
-            repo.mark_exhausted_until(conn, dep.id, until)
+            repo.mark_cooldown(conn, dep.id, until, status)
             # 冷卻只延長不縮短(M27):回傳寫入後讀回的實際值
-            stored = repo.get_budget(conn, dep.id)
-        return stored.exhausted_until if stored else until
+            stored = repo.get_cooldown(conn, dep.id)
+        return stored.until if stored else until
 
     def clear(self, dep: Deployment) -> None:
-        """手動清除冷卻(5.3.3)。"""
+        """手動清除冷卻(5.3.3):刪除 cooldowns 列。"""
         with use_conn(self._conn_src) as conn:
-            repo.set_exhausted_until(conn, dep.id, None)
+            repo.clear_cooldown(conn, dep.id)

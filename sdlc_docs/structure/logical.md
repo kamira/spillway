@@ -1,7 +1,7 @@
 # 邏輯結構 — Spillway
 
-- 專案:spillway · 分支:main · 版本:v1.2(2026-11-01,CHG-20261101-02:`api.admin` 改為套件、新增 `api.deps`、`routing.outcome`、`adapters.base.api_adapter`、SQL 只在 store、LiteLLM 相關 logger 的 INFO 下限;使用者於 CHG 確認閘確認,2026-11-01) · 前版 v1.1 已確認(2026-10-30,CHG-20261030-02) · 前前版 v1.0 已確認(2026-10-29,使用者) · 日期:2026-11-01(UTC+0)
-- 依據:sdlc_docs/ai-guideline.md v1.0;docs/spec.md
+- 專案:spillway · 分支:main · 版本:v1.3(2026-11-01,CHG-20261101-03:`adapters.base.cli_runner`、`adapters.base.cli_prompt`、`claude_cli`/`codex_cli` 模組、`cli` 的 `init` 與停機、Router 的 CLI 守門與停機旗標、冷卻改存 `cooldowns`、`settings` 讀寫 token 雜湊;使用者於 CHG 確認閘確認,2026-11-01) · 前版 v1.2 已確認(2026-11-01,CHG-20261101-02:`api.admin` 改為套件、新增 `api.deps`、`routing.outcome`、`adapters.base.api_adapter`、SQL 只在 store、LiteLLM 相關 logger 的 INFO 下限;使用者於 CHG 確認閘確認,2026-11-01) · 前前版 v1.1 已確認(2026-10-30,CHG-20261030-02) · v1.0 已確認(2026-10-29,使用者) · 日期:2026-11-01(UTC+0)
+- 依據:sdlc_docs/ai-guideline.md v1.5;docs/spec.md
 
 ## 分層 / 模組
 
@@ -13,22 +13,22 @@
 | 介面層 | `mcp.server`(M3) | `/mcp/<group>` Streamable HTTP;`ask`/`list_routes`/`quota_status`;遞迴防護 | `routing`、`quota`、`store` | FR-18 |
 | 介面層 | `mcp.bridge`(M3) | `spillway mcp-stdio`:stdio ↔ HTTP 轉發,`SPILLWAY_DEPTH` → header | (只依 HTTP) | FR-18 |
 | 介面層 | `web`(M4) | 7 個畫面(伺服端渲染 + 少量 JS),只呼叫 `/api/*` | `api.admin`(經 HTTP) | FR-20、FR-22 |
-| 介面層 | `cli` | `spillway serve`(M2)/ `mcp-stdio`、`init`(M3) | `app`、`mcp.bridge` | — |
-| 應用層 | `routing` | 請求解析 → 候選篩選 → 順序決定 → slot 內選擇 → 呼叫與 fallback;回傳型別(`RouteOutcome`、`AttemptInfo`、`Plan`、`PlanSlot`、`PlanEntry`、`PlanExcluded`)在 `routing.outcome`(CHG-20261101-02 決策 10,`spillway.routing` 與 `routing.router` 轉匯出);健康快取失效 `Router.invalidate_health` | `quota`、`estimate`、`effort`、`adapters`、`ledger`、`store`、`credentials`(當次憑證值作遮罩用)、`redact`、`domain`、`clock` | FR-2–FR-7 |
-| 應用層 | `quota` | 計算期間、剩餘額度與比例、冷卻設定與清除(上游訊號判定已移至 `adapters.base` 的 `classify`) | `store`、`clock` | FR-8 |
+| 介面層 | `cli` | `spillway serve`(M2;M3a 加啟動前置檢查 `_preflight`——埠試綁、取得 `spillway.lock`——與 graceful shutdown,design D28、D31)、`spillway init [--rotate]`(M3a:資料目錄、`work/claude`、`work/codex`、migration、存取 token,design D30)/ `mcp-stdio`(M3b) | `app`、`settings`、`store`(`db.connect`、資料目錄鎖)、`adapters.base`(停機常數)、`mcp.bridge`〔M3b〕 | FR-17、FR-18 |
+| 應用層 | `routing` | 請求解析 → 候選篩選 → 順序決定 → slot 內選擇 → 呼叫與 fallback;回傳型別(`RouteOutcome`、`AttemptInfo`、`Plan`、`PlanSlot`、`PlanEntry`、`PlanExcluded`)在 `routing.outcome`(CHG-20261101-02 決策 10,`spillway.routing` 與 `routing.router` 轉匯出);健康快取失效 `Router.invalidate_health`;CLI 成員的併發名額篩選(`concurrency_full`)與共用守門 `Router.cli_attempt`(停機拒絕、取名額、成員 env 憑證移除與遮罩;管理 API test-call 也經它)、停機旗標 `shutting_down`(CHG-20261101-03,design D29、D31) | `quota`、`estimate`、`effort`、`adapters`、`ledger`、`store`、`credentials`(當次憑證值作遮罩用)、`redact`、`domain`、`clock` | FR-2–FR-7 |
+| 應用層 | `quota` | 計算期間、剩餘額度與比例(讀 `budgets`)、冷卻設定與清除(讀寫 `cooldowns`,schema v2;上游訊號判定已移至 `adapters.base` 的 `classify`) | `store`、`clock` | FR-8 |
 | 應用層 | `estimate` | token 與花費預估(P50/P90) | `store`、`adapters.base`(`model_string`、`load_litellm`)、LiteLLM | FR-9 |
 | 應用層 | `effort` | 五級 effort 的來源優先序與降級;`normalize_effort`、`InvalidEffort`(CHG-20261101-02 決策 8) | `domain` | FR-10 |
 | 應用層 | `ledger` | 每次嘗試寫入 `usage_ledger`;context 記錄(截斷、遮罩)與保存清理 | `store`、`redact`、`clock` | FR-7、FR-14 |
 | 應用層 | `configio`(M4) | YAML 匯入(merge/replace、單一交易)與匯出 | `store` | FR-21 |
 | 應用層 | `mcpconf`(M4) | 依群組與工具產生 MCP 設定(模板) | `store` | FR-19 |
-| 整合層 | `adapters.base` | `Adapter` 介面、`AdapterContext`、`AdapterManifest`、自動發現的註冊表、上游訊號歸類 `classify`、effort 上游值轉換 `effort_to_upstream`、共用 LiteLLM 呼叫 `litellm_call`、local 健康探測 `probe_http`(httpx)、經 LiteLLM 呼叫上游的共用 adapter 基底 `api_adapter.LiteLLMApiAdapter`(CHG-20261101-02 決策 11)、`CliRunner`〔M3〕(含 CLI 並行上限) | `clock`、`domain`(憑證解析器經 `AdapterContext` 注入,不 import `credentials`) | FR-11、FR-17 |
-| 整合層 | `adapters.<module>` | 一種 AI、一種接入方式一個模組:訂閱 CLI(claude_cli、codex_cli;M3)、API(anthropic_api、openai_api)、通用後備(litellm);各宣告唯一或多個;各帶 manifest(effort 對應、訊號預設、能力預設)與可用模型清單 | 只依 `adapters.base` | FR-12、FR-15、FR-16、FR-23 |
+| 整合層 | `adapters.base` | `Adapter` 介面、`AdapterContext`、`AdapterManifest`、自動發現的註冊表、上游訊號歸類 `classify`、effort 上游值轉換 `effort_to_upstream`、共用 LiteLLM 呼叫 `litellm_call`、local 健康探測 `probe_http`(httpx)、經 LiteLLM 呼叫上游的共用 adapter 基底 `api_adapter.LiteLLMApiAdapter`(CHG-20261101-02 決策 11)、子行程執行器 `cli_runner.CliRunner`(M3a:獨立 process group、逾時/取消/停機殺 group、併發名額計數 `try_acquire`/`release`/`in_flight`、`extra_env_remove`、`terminate_all`/`kill_all_sync`;design D29、D31)、messages 轉 CLI prompt 的單一實作 `cli_prompt.messages_to_prompt`(M3a;spec 7.5.1);子行程禁用規則 `contract.layering_violations` | `clock`、`domain`(憑證解析器經 `AdapterContext` 注入,不 import `credentials`;資料目錄經 `AdapterContext.data_dir` 注入) | FR-11、FR-15、FR-16、FR-17 |
+| 整合層 | `adapters.<module>` | 一種 AI、一種接入方式一個模組:訂閱 CLI(claude_cli、codex_cli;M3a,只經 `AdapterContext.cli_runner` 起子行程,固定附加隔離旗標)、API(anthropic_api、openai_api)、通用後備(litellm);各宣告唯一或多個;各帶 manifest(effort 對應、訊號預設、能力預設)與可用模型清單 | 只依 `adapters.base` | FR-12、FR-15、FR-16、FR-23 |
 | 基礎層 | `domain` | 跨層共用的值物件:`Deployment`、`Budget`、`ChatRequest`、`CallResult`(CHG-20261030-02 審查修正;`adapters.base` 轉匯出);共用常數 `KINDS`、`CLOUD_KINDS`、`CALL_STATUSES`、`LEDGER_STATUSES`、`COOLING_STATUSES`、`STATUS_SKIPPED_PRECHECK`(CHG-20261101-02 決策 6) | — | FR-1、FR-11 |
 | 基礎層 | `store` | SQLite 連線(WAL、外鍵)、schema 建立與版本、各表存取;連線取得 `db.ConnSource` / `db.use_conn`(不關閉連線,design D27);全專案唯一放 SQL 的位置 | `domain`、`clock` | FR-1 |
 | 基礎層 | `credentials` | 解析 `credential_ref`(`env:`、`keyring:`) | — | FR-1、NFR-4 |
 | 基礎層 | `redact` | 疑似金鑰遮罩規則(已解析的憑證值由呼叫端以 `extra_secrets` 傳入);共用實例 `REDACTOR` | — | FR-14、NFR-4 |
 | 基礎層 | `clock` / `rng` | 可注入的時間與亂數來源 | — | AC-4、AC-14、AC-17、NFR-5 |
-| 基礎層 | `settings` | 資料目錄、埠號、綁定位址;存取 token 雜湊(M3) | M2 不依賴 `store`;M3 讀 settings 表 | NFR-3 |
+| 基礎層 | `settings` | 資料目錄、埠號、綁定位址(M3 仍只允許 127.0.0.1);存取 token 的產生、雜湊與讀寫(M3a:`ensure_access_token`、`rotate_access_token`,design D30) | `store`(`repo.get_setting`/`set_setting`、`transaction`;M3a 起);`store` 不可反向 import 本模組 | NFR-3 |
 
 ## 架構圖
 
@@ -53,9 +53,9 @@ flowchart TD
     MCF[mcpconf<br/>M4]
   end
   subgraph 整合層
-    AD[adapters.base<br/>registry · manifest · AdapterContext<br/>classify · effort_to_upstream · litellm_call<br/>CliRunner〔M3〕]
-    AM2[adapters.claude_cli<br/>訂閱 · single · M3]
-    AM3[adapters.codex_cli<br/>訂閱 · single · M3]
+    AD[adapters.base<br/>registry · manifest · AdapterContext<br/>classify · effort_to_upstream · litellm_call<br/>CliRunner〔M3a〕]
+    AM2[adapters.claude_cli<br/>訂閱 · single · M3a]
+    AM3[adapters.codex_cli<br/>訂閱 · single · M3a]
     AM4[adapters.anthropic_api<br/>API · multiple]
     AM5[adapters.openai_api<br/>API · multiple]
     AM1[adapters.litellm<br/>通用後備 · multiple]
@@ -73,6 +73,8 @@ flowchart TD
   BR -. HTTP .-> MCPS
   CLI --> OAI & ADM & MCPS
   CLI --> BR
+  CLI -->|init · 鎖 · migration| ST
+  CLI --> SE
   OAI --> RT
   OAI & ADM --> DEP
   DEP -. conn_factory .-> ST
@@ -114,16 +116,19 @@ sequenceDiagram
   alt local/ 前綴
     R->>A: 直接呼叫該 local 成員(無 fallback)
   else route / model_name
-    R->>R: 候選篩選(enabled、能力、mode、健康)
-    R->>Q: 剩餘額度、冷卻
+    R->>R: 候選篩選(enabled、能力、mode、CLI 併發名額、健康)
+    R->>Q: 剩餘額度(budgets)、冷卻(cooldowns)
     R->>E: 預估(budget_precheck 時比較 P90)
     R->>R: 順序決定(手動 slot 或預設層級)
     loop 每個 slot,slot 內加權選雲端,再依 position 試 local
+      opt cli 成員
+        R->>R: cli_attempt:停機或名額已滿則排除(不寫帳本、換下一位),否則設 extra_env_remove
+      end
       R->>A: call(dep, req, effort)
       A-->>R: CallResult
       R->>L: 寫一列 usage_ledger(+ payload)
       alt quota_exhausted / rate_limited
-        R->>Q: 設 exhausted_until
+        R->>Q: mark:寫 cooldowns(exhausted_until、reason)
       end
     end
   end
@@ -131,7 +136,7 @@ sequenceDiagram
   O-->>C: 200 + X-Spillway-Served-By / Slot / Est-Cost,或 503
 ```
 
-錯誤路徑:找不到 route → 404 `route_not_found`;全部 slot 失敗 → 503 `no_candidate`,body 列每次嘗試。
+錯誤路徑:找不到 route → 404 `route_not_found`;全部 slot 失敗 → 503 `no_candidate`,body 列每次嘗試。停機中(`shutting_down`)不開始新嘗試,回 503 `no_candidate`(excluded 原因 `shutting_down`);停機期滿被取消的嘗試寫帳本 `error="shutdown"`(design D31)。
 
 ### 流程 2:MCP `ask` 與遞迴防護
 
@@ -141,7 +146,7 @@ flowchart LR
   M -->|X-Spillway-Depth ≥ 1| X[拒絕 recursion_blocked]
   M -->|深度 0| R[routing]
   R --> A[claude-cli adapter]
-  A -->|子行程:SPILLWAY_DEPTH=1、--strict-mcp-config、清除 ANTHROPIC_API_KEY| CC[claude -p]
+  A -->|子行程:SPILLWAY_DEPTH=1、--strict-mcp-config、清除 API 金鑰與改道變數(design D29)| CC[claude -p]
   CC -.若仍呼叫本閘道.-> M
 ```
 
@@ -150,11 +155,12 @@ flowchart LR
 ```mermaid
 stateDiagram-v2
   [*] --> 可用
-  可用 --> 冷卻: 上游回報用完(exhausted_until = 下一個重置點)
-  可用 --> 冷卻: 429(exhausted_until = 現在 + 60s)
+  可用 --> 冷卻: 上游回報用完(cooldowns.exhausted_until = 下一個重置點,reason quota_exhausted)
+  可用 --> 冷卻: 429(cooldowns.exhausted_until = 現在 + 60s,reason rate_limited)
   可用 --> 可用: budget_precheck 跳過(skipped_precheck,不設冷卻)
-  冷卻 --> 可用: clock.now ≥ exhausted_until
-  冷卻 --> 可用: 使用者手動清除
+  可用 --> 可用: CLI 名額已滿(concurrency_full,本次排除,不設冷卻)
+  冷卻 --> 可用: clock.now ≥ cooldowns.exhausted_until(列保留,API 的 cooling_until 為 null)
+  冷卻 --> 可用: 使用者手動清除(刪除 cooldowns 列)
 ```
 
 ## 相依方向

@@ -150,8 +150,8 @@ async def test_quota_exhausted_when_remaining_le_zero(db, clock, stub):
 
 
 async def test_cooling_member_excluded_and_recovers(db, clock, stub):
-    make_dep(db, "hot", tags=("r",), budget=Budget("usd", 10.0, "daily",
-                                                     exhausted_until=clock.now() + timedelta(seconds=60)))
+    make_dep(db, "hot", tags=("r",), budget=Budget("usd", 10.0, "daily"))
+    repo.mark_cooldown(db, "hot", clock.now() + timedelta(seconds=60), "rate_limited")
     f = make_filter(db, clock, stub)
     t = route(db)
     assert reasons(await f.filter(t, req())) == {"hot": "cooling"}
@@ -161,7 +161,8 @@ async def test_cooling_member_excluded_and_recovers(db, clock, stub):
 
 async def test_local_skips_quota_and_cooling(db, clock, stub):
     make_dep(db, "loc", kind="local", tags=("r",),
-             budget=Budget("usd", 0.0, "daily", exhausted_until=clock.now() + timedelta(hours=1)))
+             budget=Budget("usd", 0.0, "daily"))
+    repo.mark_cooldown(db, "loc", clock.now() + timedelta(hours=1), "quota_exhausted")
     res = await make_filter(db, clock, stub).filter(route(db), req())
     assert cand_ids(res) == ["loc"]
 

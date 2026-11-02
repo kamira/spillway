@@ -1,0 +1,11 @@
+# codex_cli 可用模型清單(spec 7.6.4;design D12)。
+# id 為 `codex exec -m <id>` 接受的模型名;訂閱方案實際可用的模型以擁有者的 Codex 帳號為準,
+# 清單外的模型可在 UI 以「其他(手動輸入)」填入。
+# tools、vision 為 false:CLI 成員只收純文字 prompt(spec 7.5.2)。
+# efforts:none 對應 minimal(spec 6.3),新版模型不一定接受,所以不宣告;max 對應 xhigh。
+- id: gpt-5.5
+  label: GPT-5.5(Codex)
+  capabilities: {ctx: 272000, tools: false, vision: false, efforts: [low, medium, high, max]}
+- id: gpt-5.4-mini
+  label: GPT-5.4 mini(Codex)
+  capabilities: {ctx: 272000, tools: false, vision: false, efforts: [low, medium, high]}

@@ -29,7 +29,8 @@ async def test_create_get_list_roundtrip_with_tags_and_budget(client, db):
     out = r.json()
     assert out["id"] == "a" and out["tags"] == ["fast", "r"]
     assert out["budget"] == {"type": "usd", "limit_amount": 10.0, "window": "monthly",
-                             "reset_anchor": 5, "exhausted_until": None}
+                             "reset_anchor": 5}
+    assert out["cooling_until"] is None and out["cooling_reason"] is None   # 決策 6:頂層
     assert out["credential_ref"] == "env:SPILLWAY_TEST_KEY"
 
     got = (await client.get("/api/deployments/a")).json()
@@ -52,7 +53,7 @@ async def test_put_replaces_fields_and_keeps_cooldown(client, db, clock):
     await client.post("/api/deployments", json=api_member(
         "a", budget={"type": "usd", "limit_amount": 5, "window": "monthly", "reset_anchor": 1}))
     until = clock.now() + timedelta(hours=1)
-    repo.set_exhausted_until(db, "a", until)
+    repo.mark_cooldown(db, "a", until, "quota_exhausted")
     body = api_member("a", tags=["x"], model="gpt-4.1-mini",
                       budget={"type": "usd", "limit_amount": 7, "window": "daily"})
     body.pop("id")
@@ -61,7 +62,9 @@ async def test_put_replaces_fields_and_keeps_cooldown(client, db, clock):
     out = r.json()
     assert out["model"] == "gpt-4.1-mini" and out["tags"] == ["x"]
     assert out["budget"]["limit_amount"] == 7 and out["budget"]["window"] == "daily"
-    assert out["budget"]["exhausted_until"] == "2026-10-30T13:00:00Z"   # 編輯不清掉冷卻
+    assert "exhausted_until" not in out["budget"]
+    assert out["cooling_until"] == "2026-10-30T13:00:00Z"   # 編輯不清掉冷卻
+    assert out["cooling_reason"] == "quota_exhausted"
 
 
 async def test_put_id_mismatch_is_422(client):
@@ -218,11 +221,12 @@ async def test_single_provider_put_change_provider_409(single_app, make_client, 
 async def test_clear_cooldown(client, db, clock):
     await client.post("/api/deployments", json=api_member(
         "a", budget={"type": "usd", "limit_amount": 5}))
-    repo.set_exhausted_until(db, "a", clock.now() + timedelta(hours=1))
+    repo.mark_cooldown(db, "a", clock.now() + timedelta(hours=1), "rate_limited")
     r = await client.post("/api/deployments/a/clear-cooldown")
     assert r.status_code == 200, r.text
-    assert r.json()["budget"]["exhausted_until"] is None
-    assert repo.get_budget(db, "a").exhausted_until is None
+    assert r.json()["cooling_until"] is None and r.json()["cooling_reason"] is None
+    assert repo.get_cooldown(db, "a") is None
+    assert repo.get_budget(db, "a") is not None          # 額度設定不受影響
 
 
 async def test_test_call_ok_writes_ledger(client, db, fake_api):
@@ -246,7 +250,7 @@ async def test_test_call_rate_limited_sets_cooldown_and_hides_key(client, db, fa
     fake_api.set_mode("*", "http_429")
     out = (await client.post("/api/deployments/a/test")).json()
     assert out["status"] == "rate_limited" and out["ok"] is False
-    assert repo.get_budget(db, "a").exhausted_until == clock.now() + timedelta(seconds=60)
+    assert repo.get_cooldown(db, "a").until == clock.now() + timedelta(seconds=60)
     fake_api.set_mode("*", "echo_auth")
     r = await client.post("/api/deployments/a/test")
     assert r.json()["status"] == "error"
@@ -269,3 +273,86 @@ async def test_local_member_create(client):
     r = await client.post("/api/deployments", json=local_member("q"))
     assert r.status_code == 201, r.text
     assert r.json()["credential_ref"] is None
+
+
+# ---------------------------------------------------------------- 冷卻形狀(CHG-20261101-03 決策 6)
+
+
+async def test_cooling_fields_top_level_in_get_list_and_after_budget_null(client, db, clock):
+    await client.post("/api/deployments", json=api_member(
+        "a", budget={"type": "usd", "limit_amount": 5, "window": "daily"}))
+    await client.post("/api/deployments", json=api_member("b"))
+    repo.mark_cooldown(db, "a", clock.now() + timedelta(seconds=60), "rate_limited")
+
+    got = (await client.get("/api/deployments/a")).json()
+    assert got["cooling_until"] == "2026-10-30T12:01:00Z" and got["cooling_reason"] == "rate_limited"
+    assert got["budget"] == {"type": "usd", "limit_amount": 5.0, "window": "daily", "reset_anchor": None}
+    lst = {d["id"]: d for d in (await client.get("/api/deployments")).json()["deployments"]}
+    assert lst["a"]["cooling_until"] == "2026-10-30T12:01:00Z"
+    assert lst["b"]["cooling_until"] is None and lst["b"]["cooling_reason"] is None
+
+    # PUT budget: null 只刪除 budgets 列;冷卻仍可見
+    body = api_member("a", budget=None)
+    body.pop("id")
+    out = (await client.put("/api/deployments/a", json=body)).json()
+    assert out["budget"] is None
+    assert out["cooling_until"] == "2026-10-30T12:01:00Z" and out["cooling_reason"] == "rate_limited"
+    assert repo.get_budget(db, "a") is None
+    assert count(db, "SELECT COUNT(*) FROM budgets") == 0
+
+    # 到期後不再呈現(與 /api/dashboard 同口徑),cooldowns 列仍在
+    clock.advance(seconds=61)
+    got = (await client.get("/api/deployments/a")).json()
+    assert got["cooling_until"] is None and got["cooling_reason"] is None
+    assert repo.get_cooldown(db, "a") is not None
+
+
+async def test_test_call_429_without_budget_creates_no_budget_row(client, db, fake_api, clock):
+    await client.post("/api/deployments", json=api_member("a", fake_api=fake_api))
+    fake_api.set_mode("*", "http_429")
+    await client.post("/api/deployments/a/test")
+    assert repo.get_budget(db, "a") is None                       # 決策 6:不再建暫行列
+    out = (await client.get("/api/deployments/a")).json()
+    assert out["cooling_reason"] == "rate_limited" and out["cooling_until"] is not None
+
+
+async def test_put_budget_null_on_migrated_placeholder_keeps_cooldown(tmp_path, make_client, clock):
+    """v1 暫行列(決策 59)經 migration 保留;PUT budget: null 只刪 budgets 列,冷卻仍在頂層。"""
+    import sqlite3
+
+    from spillway.app import create_app
+    from spillway.clock import SeqRng
+    from spillway.store import db as store_db
+
+    path = tmp_path / "v1" / "spillway.db"
+    path.parent.mkdir()
+    raw = sqlite3.connect(str(path), isolation_level=None)
+    raw.execute("BEGIN")
+    for stmt in store_db._split_statements(store_db.MIGRATIONS[0][1]):
+        raw.execute(stmt)
+    raw.execute("PRAGMA user_version = 1")
+    raw.execute("INSERT INTO deployments(id, model_name, kind, provider, model, credential_ref, "
+                "capabilities) VALUES ('a', 'a', 'api', 'openai', 'gpt-4o-mini', "
+                "'env:SPILLWAY_TEST_KEY', '{}')")
+    raw.execute("INSERT INTO budgets(deployment_id, type, limit_amount, window, exhausted_until) "
+                "VALUES ('a', 'none', NULL, 'none', '2026-10-30T13:00:00Z')")
+    raw.execute("INSERT INTO usage_ledger(ts, deployment_id, status) "
+                "VALUES ('2026-10-30T11:59:00Z', 'a', 'rate_limited')")
+    raw.execute("COMMIT")
+    raw.close()
+
+    app = create_app(clock=clock, rng=SeqRng([0.0]), db_path=path)
+    async with make_client(app) as c:
+        got = (await c.get("/api/deployments/a")).json()
+        assert got["budget"] == {"type": "none", "limit_amount": None, "window": "none",
+                                 "reset_anchor": None}
+        assert got["cooling_until"] == "2026-10-30T13:00:00Z"
+        assert got["cooling_reason"] == "rate_limited"
+        body = {k: v for k, v in got.items() if k not in ("id", "cooling_until", "cooling_reason")}
+        body["budget"] = None
+        r = await c.put("/api/deployments/a", json=body)
+        assert r.status_code == 200, r.text
+        out = r.json()
+        assert out["budget"] is None
+        assert out["cooling_until"] == "2026-10-30T13:00:00Z" and out["cooling_reason"] == "rate_limited"
+    assert (path.parent / "spillway.db.v1.bak").exists()

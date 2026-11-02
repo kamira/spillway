@@ -1,4 +1,4 @@
-"""T2 L1:schema v1 與 spec 2.3 一致、連線 PRAGMA、migration 冪等、外鍵串聯。"""
+"""T2 L1(CHG-20261101-03 T1 改為 v2):schema 與 spec 2.3 一致、連線 PRAGMA、migration 冪等、外鍵串聯。"""
 from __future__ import annotations
 
 import re
@@ -16,6 +16,7 @@ TABLES = (
     "deployments",
     "deployment_tags",
     "budgets",
+    "cooldowns",
     "groups",
     "routes",
     "route_targets",
@@ -47,7 +48,11 @@ EXPECTED_COLUMNS = {
         ("limit_amount", "REAL", 0, None, 0),
         ("window", "TEXT", 1, "'monthly'", 0),
         ("reset_anchor", "INTEGER", 0, None, 0),
-        ("exhausted_until", "TEXT", 0, None, 0),
+    ],
+    "cooldowns": [
+        ("deployment_id", "TEXT", 0, None, 1),
+        ("exhausted_until", "TEXT", 1, None, 0),
+        ("reason", "TEXT", 1, None, 0),
     ],
     "groups": [
         ("name", "TEXT", 0, None, 1),
@@ -141,7 +146,9 @@ def _normalized_sql(conn: sqlite3.Connection) -> dict[str, str]:
     out = {}
     for name, sql in rows:
         sql = re.sub(r"--[^\n]*", "", sql)
-        out[name] = re.sub(r"\s+", " ", sql).strip()
+        sql = re.sub(r"\s+", " ", sql).strip()
+        # ALTER TABLE DROP COLUMN 改寫的 CREATE 敘述在 ")" 前不留空白;只正規化括號旁的空白
+        out[name] = re.sub(r"\s*\)", ")", re.sub(r"\(\s*", "(", sql))
     return out
 
 
@@ -161,17 +168,17 @@ def fresh(tmp_path: Path) -> sqlite3.Connection:
 def test_pragmas_on_new_file(fresh):
     assert fresh.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert fresh.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    assert fresh.execute("PRAGMA user_version").fetchone()[0] == 1
-    assert SCHEMA_VERSION == 1
+    assert fresh.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert SCHEMA_VERSION == 2
 
 
 def test_connect_sets_row_factory(fresh):
     assert fresh.row_factory is sqlite3.Row
 
 
-def test_nine_tables_match_spec_columns(fresh):
+def test_ten_tables_match_spec_columns(fresh):
     assert _user_tables(fresh) == set(TABLES)
-    assert len(TABLES) == 9
+    assert len(TABLES) == 10
     for table in TABLES:
         assert _columns(fresh, table) == EXPECTED_COLUMNS[table], table
 
@@ -210,6 +217,7 @@ def test_foreign_keys_and_cascade_declared(fresh):
     }
     assert fks["deployment_tags"] == {("deployments", "deployment_id", "id", "CASCADE")}
     assert fks["budgets"] == {("deployments", "deployment_id", "id", "CASCADE")}
+    assert fks["cooldowns"] == {("deployments", "deployment_id", "id", "CASCADE")}
     assert fks["route_targets"] == {
         ("routes", "route_name", "name", "CASCADE"),
         ("deployments", "deployment_id", "id", "CASCADE"),
@@ -230,7 +238,7 @@ def test_reconnect_does_not_rebuild(tmp_path):
 
     c2 = connect(path)
     try:
-        assert c2.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert c2.execute("PRAGMA user_version").fetchone()[0] == 2
         assert c2.execute("SELECT value FROM settings WHERE key='k'").fetchone()[0] == "v"
         assert c2.execute("SELECT COUNT(*) FROM deployments").fetchone()[0] == 1
         assert c2.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -313,7 +321,7 @@ def test_check_constraints_enforced(fresh):
 
 
 def test_db_fixture_is_migrated(db):
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert db.execute("PRAGMA user_version").fetchone()[0] == 2
     assert _user_tables(db) == set(TABLES)
 
 
@@ -342,7 +350,7 @@ def test_concurrent_first_connect_migrates_once(tmp_path):
         assert errors == [], f"round {r}: {errors!r}"
         raw = sqlite3.connect(path)
         try:
-            assert raw.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 1
+            assert raw.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
             assert _user_tables(raw) == set(TABLES)
         finally:
             raw.close()
@@ -377,7 +385,8 @@ def test_migration_waits_for_lock_and_rereads_version(tmp_path):
     raw.execute("COMMIT")
     t.join()
     raw.close()
-    assert result == [1]
+    # 等鎖後重讀為 v1(非空舊版庫)→ 不重套 v1,改走升級路徑(鎖、備份)只套 v2
+    assert result == [SCHEMA_VERSION]
 
 
 def test_split_statements_ignores_semicolons_in_comments_and_strings():

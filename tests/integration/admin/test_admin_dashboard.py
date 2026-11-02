@@ -40,7 +40,7 @@ async def test_dashboard_matches_quota_service(client, db, clock):
     spend(db, clock, "u", 0.25, hours_ago=30)
     spend(db, clock, "ghost", 100.0, hours_ago=1)     # 孤兒列(成員已刪)
     spend(db, clock, "a", None, hours_ago=1, status="skipped_precheck")
-    repo.set_exhausted_until(db, "d", clock.now() + timedelta(minutes=5))
+    repo.mark_cooldown(db, "d", clock.now() + timedelta(minutes=5), "rate_limited")
 
     r = await client.get("/api/dashboard")
     assert r.status_code == 200, r.text
@@ -66,9 +66,10 @@ async def test_dashboard_matches_quota_service(client, db, clock):
     assert a["period_spend"] == pytest.approx(2.0) and a["remaining"] == pytest.approx(8.0)
     assert a["period_start"] == "2026-10-25T00:00:00Z" and a["next_reset"] == "2026-11-25T00:00:00Z"
     assert a["requests_24h"] == 3                   # ok、error、ok(skipped_precheck 不算);6 天前不算
-    assert a["cooling_until"] is None and a["cooling"] is False
+    assert a["cooling_until"] is None and a["cooling"] is False and a["cooling_reason"] is None
     assert rows["d"]["period_spend"] == pytest.approx(0.75)
     assert rows["d"]["cooling_until"] == "2026-10-30T12:05:00Z" and rows["d"]["cooling"] is True
+    assert rows["d"]["cooling_reason"] == "rate_limited"
     assert rows["u"]["requests_24h"] == 0 and rows["u"]["limit_amount"] is None
     assert rows["q"]["kind"] == "local" and rows["q"]["unlimited"] is True
     # 5.4.6:剩餘 ÷ 近 7 天日均實際花費;a 的近 7 天實際花費 = 1.5 + 0.5 + 4.0 = 6.0
@@ -80,9 +81,10 @@ async def test_dashboard_matches_quota_service(client, db, clock):
 async def test_expired_cooldown_not_reported(client, db, clock):
     await client.post("/api/deployments", json=api_member(
         "a", budget={"type": "usd", "limit_amount": 1}))
-    repo.set_exhausted_until(db, "a", clock.now() - timedelta(seconds=1))
+    repo.mark_cooldown(db, "a", clock.now() - timedelta(seconds=1), "quota_exhausted")
     (row,) = (await client.get("/api/dashboard")).json()["deployments"]
     assert row["cooling"] is False and row["cooling_until"] is None
+    assert row["cooling_reason"] is None
 
 
 async def test_zero_limit_and_window_none(client, db, clock):
@@ -132,3 +134,6 @@ async def test_dashboard_query_count_is_constant(client, db, clock, make_app, ma
         r = await c.get("/api/dashboard")
     assert len(r.json()["deployments"]) == 100
     assert len(seen) <= few + 3        # 期間種類變多時最多多幾個彙總查詢,不隨成員數成長
+    # CHG-20261101-03 決策 6:冷卻併入成員查詢(LEFT JOIN cooldowns),不多一個查詢
+    cooldown_queries = [q for q in seen if "cooldowns" in q]
+    assert len(cooldown_queries) == 1 and "FROM deployments d" in cooldown_queries[0]

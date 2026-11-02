@@ -29,7 +29,8 @@ async def test_builtin_modules_listed_with_models(client):
     for m in mods.values():
         assert set(m) == FIELDS
         assert m["available"] is True and m["unavailable_reason"] is None
-        assert m["cardinality"] == "multiple"
+        # spec 7.6.9:訂閱 CLI 模組為 single,其餘為 multiple(CHG-20261101-03 施工審議補列)
+        assert m["cardinality"] == ("single" if m["module"] in ("claude_cli", "codex_cli") else "multiple")
         for model in m["models"]:
             assert {"id", "label", "capabilities"} <= set(model)
             assert set(model["capabilities"]["efforts"]) <= {"none", "low", "medium", "high",

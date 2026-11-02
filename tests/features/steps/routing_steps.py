@@ -20,7 +20,7 @@ def step_two_cooling(context, a, b):
 
     with gw.db() as conn:
         for dep_id in (a, b):
-            repo.mark_exhausted_until(conn, dep_id, until)
+            repo.mark_cooldown(conn, dep_id, until, "quota_exhausted")
         for dep_id in (a, b):
             assert QuotaService(conn, gw.clock).is_cooling(repo.load_deployment(conn, dep_id))
     for dep_id in (a, b):
