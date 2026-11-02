@@ -148,10 +148,11 @@ class McpRuntime:
         self.task: asyncio.Task[None] | None = None
 
     @classmethod
-    async def start(cls, app: Any) -> McpRuntime:
+    async def start(cls, app: Any, max_sessions: int = MAX_SESSIONS) -> McpRuntime:
+        """`max_sessions`:同時開啟的 session 上限(`create_app(mcp_max_sessions=…)` 傳入;CHG-20261102-02 決策 19)。"""
         manager = StreamableHTTPSessionManager(
             app=app.state.mcp_server, json_response=False, stateless=False,
-            security_settings=None, max_sessions=MAX_SESSIONS)
+            security_settings=None, max_sessions=max_sessions)
         rt = cls(app, manager)
         rt.task = asyncio.create_task(rt._hold(), name="spillway-mcp-manager")
         ready = asyncio.ensure_future(rt._ready.wait())

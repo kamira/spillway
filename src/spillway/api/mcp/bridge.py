@@ -13,14 +13,20 @@
   不可取消,被閘道拒絕時要等到 stdin 下一行才結束);stdout 以 `os.write(1)` 寫出(錯誤回應在 SDK 的
   stdio context 結束之後仍可寫出)。stdout 只寫 JSON-RPC。
 - 兩個 read stream 吐出 `Exception` 物件(解析失敗等)時,只在 stderr 記類型,不轉送。
-- 錯誤對應層:記錄從 stdin 進來、尚未回應的 request id。閘道對 POST 回 401/403/404/503 時(回應 hook 記下
-  狀態碼並丟 `httpx.HTTPStatusError`——SDK 對 POST 的 404 不丟例外、只回「Session terminated」,所以由
-  hook 統一丟出),以 `except* httpx.HTTPStatusError` 捕捉並依狀態碼對應:401 `unauthorized`、
-  403 `recursion_blocked`(bridge 固定 Host 且不送 Origin,403 只可能是這個)、404 `not_found`、
-  503 `shutting_down`;對每個 pending id 寫出
+- 錯誤對應層(CHG-20261102-02 決策 12,AM-13):記錄從 stdin 進來、尚未回應的 request id。POST 的回應
+  狀態碼 ≥ 400 時,回應 hook(`_inspect_response`)讀 body(上限 `ERROR_BODY_LIMIT` = 64 KiB;
+  Content-Type 必須為 `application/json`;2xx 絕不讀,3xx 交給 SDK 的同 origin redirect 處理)、以
+  `gateway_code` 判斷是否為閘道的 spec 9.1.2 拒絕(`error.code` 為 str,且與狀態碼成對,見
+  `REJECT_CODES`:401 `unauthorized`;403 `recursion_blocked`|`host_not_allowed`|`origin_not_allowed`;
+  404 `not_found`;503 `shutting_down`),記下後丟 `httpx.HTTPStatusError`(SDK 對 POST 的 404 不丟例外、
+  只回「Session terminated」,所以由 hook 統一丟出),以 `except* httpx.HTTPStatusError` 捕捉。
+  符合時對每個 pending id 寫出
   `{"jsonrpc":"2.0","id":<id>,"error":{"code":-32000,"message":"<code>: rejected by gateway (HTTP <s>)",
-  "data":{"code":"<code>","http_status":<s>}}}`,stderr 印一行固定字串,結束碼 3。其他 HTTP 狀態碼、
-  `httpx.ConnectError`(閘道未啟動)與其他傳輸錯誤 → 對 pending id 寫出錯誤(不帶 `data.code`),結束碼 1。
+  "data":{"code":"<code>","http_status":<s>}}}`,stderr 印一行固定字串,結束碼 3。其他一律(SDK 自己的
+  503「Too many open sessions」、404「Session not found」、整數錯誤碼的 JSON-RPC body、非 JSON、狀態碼與
+  錯誤碼不成對、body 超過上限、其他狀態碼)→ `{"code":-32000,"message":"gateway error (HTTP <s>)",
+  "data":{"http_status":<s>}}`(不帶 `data.code`),結束碼 1;一律不轉印對方的 `message`。
+  `httpx.ConnectError`(閘道未啟動)與其他傳輸錯誤 → 錯誤不帶 `data`,結束碼 1。
 - token:`SPILLWAY_TOKEN` 先 `strip()`;未設定、空值或含 CR/LF → 結束碼 2,不連線。
 - depth:`SPILLWAY_DEPTH` 為空或未設定時不送 header;有值時原樣放進 `X-Spillway-Depth`(spec 8.1.6);
   含 CR/LF → 結束碼 2。
@@ -46,30 +52,30 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from spillway.settings import DEFAULT_HOST, EXIT_SIGINT, mcp_url
+from spillway.settings import DEFAULT_HOST, DEPTH_ENV, DEPTH_HEADER, EXIT_SIGINT, TOKEN_ENV, mcp_url
 
 from .sdk_logging import install_sdk_root_log_filter
 
 __all__ = [
     "EXIT_OK", "EXIT_ERROR", "EXIT_CONFIG", "EXIT_REJECTED", "EXIT_SIGINT", "REJECT_CODES",
-    "TOKEN_ENV", "DEPTH_ENV", "DEPTH_HEADER", "HOST", "bridge_url", "build_headers", "run",
+    "ERROR_BODY_LIMIT", "TOKEN_ENV", "DEPTH_ENV", "DEPTH_HEADER", "HOST", "bridge_url", "build_headers",
+    "gateway_code", "run",
 ]
 
 EXIT_OK = 0
 EXIT_ERROR = 1        # 閘道未啟動或其他傳輸錯誤
 EXIT_CONFIG = 2       # SPILLWAY_TOKEN / SPILLWAY_DEPTH 不合法(未連線)
-EXIT_REJECTED = 3     # 被閘道拒絕(401/403/404/503)
+EXIT_REJECTED = 3     # 被閘道拒絕(spec 9.1.2 body,且狀態碼與錯誤碼成對)
 
-TOKEN_ENV = "SPILLWAY_TOKEN"
-DEPTH_ENV = "SPILLWAY_DEPTH"
-DEPTH_HEADER = "X-Spillway-Depth"
 HOST = DEFAULT_HOST
-REJECT_CODES: dict[int, str] = {
-    401: "unauthorized",
-    403: "recursion_blocked",
-    404: "not_found",
-    503: "shutting_down",
+# 狀態碼 → 閘道以 spec 9.1.2 回應時可能的錯誤碼(決策 12;Host/Origin 的 403 由 HostOriginMiddleware 回)
+REJECT_CODES: dict[int, frozenset[str]] = {
+    401: frozenset({"unauthorized"}),
+    403: frozenset({"recursion_blocked", "host_not_allowed", "origin_not_allowed"}),
+    404: frozenset({"not_found"}),
+    503: frozenset({"shutting_down"}),
 }
+ERROR_BODY_LIMIT = 64 * 1024   # 非 2xx 回應 body 的讀取上限(bytes);超過視為不是閘道的拒絕
 JSONRPC_SERVER_ERROR = -32000
 EOF_DRAIN_TIMEOUT = 5.0     # stdin EOF 後等待進行中 request 回應的上限(秒);逾時對其餘 id 寫出錯誤
 STDIN_DRAIN_TIMEOUT = 1.0   # 閘道端結束後,收集 stdin 已送出、尚未轉送的 request id 的上限(秒)
@@ -191,16 +197,82 @@ class _Stdout:
 @dataclass
 class _State:
     pending: dict[Any, None] = field(default_factory=dict)   # 保留順序的集合
-    rejected_status: int | None = None
+    rejected_status: int | None = None   # POST 回應 hook 記下的非 2xx 狀態碼(最先的一個)
+    rejected_code: str | None = None     # 與 rejected_status 成對的閘道錯誤碼;不是閘道的拒絕時為 None
     eof: bool = False          # stdin 已 EOF
     http_ended: bool = False   # 閘道端的串流自行結束(例如 SDK 吞掉被拒絕的通知 POST 並關閉 read stream)
 
 
-def _rejection(status: int) -> tuple[str, dict[str, Any]]:
-    code = REJECT_CODES[status]
-    return code, {"code": JSONRPC_SERVER_ERROR,
-                  "message": f"{code}: rejected by gateway (HTTP {status})",
-                  "data": {"code": code, "http_status": status}}
+def gateway_code(status: int, content_type: str | None, body: bytes | None) -> str | None:
+    """非 2xx 回應是否為閘道的 spec 9.1.2 拒絕:是則回錯誤碼,否則 None(決策 12)。
+
+    條件:Content-Type 的 media type 為 `application/json`;body 不為 None(未超過上限)且可解析為
+    `{"error": {"code": <str>, ...}}`;錯誤碼屬於 `REJECT_CODES[status]`。"""
+    allowed = REJECT_CODES.get(status)
+    if allowed is None or body is None or content_type is None:
+        return None
+    if content_type.split(";", 1)[0].strip().lower() != "application/json":
+        return None
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
+    if isinstance(code, str) and code in allowed:
+        return code
+    return None
+
+
+async def _read_limited(response: Any, limit: int = ERROR_BODY_LIMIT) -> bytes | None:
+    """讀串流回應的 body,至多 `limit` bytes;`Content-Length` 或實際內容超過上限時回 None(不再讀)。"""
+    length = response.headers.get("content-length")
+    if length is not None:
+        try:
+            if int(length) > limit:
+                return None
+        except ValueError:
+            return None
+    buf = bytearray()
+    async for chunk in response.aiter_raw():
+        buf += chunk
+        if len(buf) > limit:
+            return None
+    return bytes(buf)
+
+
+async def _inspect_response(response: Any, state: _State) -> None:
+    """httpx 回應 hook:POST 的狀態碼 ≥ 400 時讀 body 判斷、記下狀態並丟 `HTTPStatusError`。
+
+    2xx 絕不讀 body(SDK 自己讀);3xx 不處理(SDK 跟隨同 origin redirect,其他 redirect 由 SDK 丟出);
+    GET 通知串流與 DELETE 由 SDK 自行處理。"""
+    import httpx
+
+    if response.request.method != "POST" or response.status_code < 400:
+        return
+    status = response.status_code
+    code: str | None = None
+    if status in REJECT_CODES:
+        try:
+            body = await _read_limited(response)
+        except httpx.HTTPError:
+            body = None
+        code = gateway_code(status, response.headers.get("content-type"), body)
+    if state.rejected_status is None:
+        state.rejected_status, state.rejected_code = status, code
+    raise httpx.HTTPStatusError("rejected by gateway", request=response.request, response=response)
+
+
+def _rejection(status: int, code: str) -> dict[str, Any]:
+    return {"code": JSONRPC_SERVER_ERROR,
+            "message": f"{code}: rejected by gateway (HTTP {status})",
+            "data": {"code": code, "http_status": status}}
+
+
+def _http_failure(status: int) -> dict[str, Any]:
+    """不是閘道拒絕的 HTTP 錯誤:只帶狀態碼,不轉印對方的 message(決策 12)。"""
+    return {"code": JSONRPC_SERVER_ERROR, "message": f"gateway error (HTTP {status})",
+            "data": {"http_status": status}}
 
 
 def _write_errors(out: _Stdout, state: _State, error: dict[str, Any]) -> None:
@@ -237,9 +309,7 @@ async def _bridge(url: str, headers: dict[str, str]) -> int:
 
     async def on_response(response: httpx.Response) -> None:
         # 只看 POST(GET 通知串流與 DELETE 由 SDK 自行處理);404 也要丟,SDK 對它不丟例外
-        if response.request.method == "POST" and response.status_code in REJECT_CODES:
-            state.rejected_status = response.status_code
-            raise httpx.HTTPStatusError("rejected by gateway", request=response.request, response=response)
+        await _inspect_response(response, state)
 
     def track(item: Any) -> bool:
         """記錄 request id;解析失敗的項目只在 stderr 記類型,回傳 False(不轉送)。"""
@@ -314,15 +384,19 @@ async def _bridge(url: str, headers: dict[str, str]) -> int:
 
     if status is None:
         status = state.rejected_status
-    if status in REJECT_CODES:
-        code, error = _rejection(status)
-        _write_errors(out, state, error)
+    # 錯誤碼只在狀態碼與 hook 記下的那一個相同時採用(SDK 自己丟的其他狀態碼不帶碼)
+    code = state.rejected_code if status is not None and status == state.rejected_status else None
+    if status is not None and code is not None:
+        _write_errors(out, state, _rejection(status, code))
         _say(f"被閘道拒絕:{code}(HTTP {status})")
         return EXIT_REJECTED
-    if status is not None or transport_error is not None:
-        message = transport_error or f"閘道回應 HTTP {status}"
+    if status is not None:
+        _write_errors(out, state, _http_failure(status))
+        _say(f"閘道回應 HTTP {status}(不是閘道的拒絕回應)")
+        return EXIT_ERROR
+    if transport_error is not None:
         _write_errors(out, state, {"code": JSONRPC_SERVER_ERROR, "message": "gateway unavailable"})
-        _say(message)
+        _say(transport_error)
         return EXIT_ERROR
     if state.http_ended:   # 閘道端意外結束(無論是否仍有未回應的 request)
         _write_errors(out, state, {"code": JSONRPC_SERVER_ERROR, "message": "gateway connection closed"})

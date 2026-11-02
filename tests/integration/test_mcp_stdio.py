@@ -12,6 +12,12 @@ L1:成功路徑;token 未設定 / 空白 / 含 CR-LF → 2 且未連線;serve �
 `shutting_down`。
 L2:`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` 指向本機計數 listener,斷言 0 個連線;stderr 不含 token、prompt 與
 回應文字;stdout 只有 JSON-RPC;不建立資料目錄;SIGINT → 130、無 traceback。
+
+CHG-20261102-02 T2(決策 12,AM-13;允許清單 ③):以本機假 HTTP 端點回各種非 2xx——閘道 9.1.2 body 且狀態碼
+與錯誤碼成對 → `data.code`、結束碼 3;SDK 的 503「Too many open sessions」、404「Session not found」、
+整數錯誤碼的 JSON-RPC body、非 JSON、不成對、超過 64 KiB → `data` 只有 `http_status`、結束碼 1、不轉印
+`message`;2xx 不讀 body(回應 hook 的單元測試)。L2:子行程 serve 設 `SPILLWAY_TEST_MCP_MAX_SESSIONS=1`,
+第二個 mcp-stdio 回 `data.http_status` 503、結束碼 1。
 """
 from __future__ import annotations
 
@@ -460,3 +466,302 @@ def test_stdin_eof_drain_timeout_writes_errors(gateway: LiveGateway, fake_api: A
     assert rc == 1
     _assert_clean_stderr(stderr, gateway.token, PROMPT)
     _assert_jsonrpc_only(lines)
+
+
+# ---------------------------------------------------------------------------- CHG-20261102-02 T2:錯誤對應(決策 12)
+
+REMOTE_MESSAGE = "remote-message-must-not-be-relayed-5e2a"
+
+
+class FakeHttpEndpoint:
+    """本機假 HTTP 端點:每個 POST 都回設定好的 (狀態碼, Content-Type, body);其他方法回 405。"""
+
+    def __init__(self) -> None:
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        endpoint = self
+        self.status = 500
+        self.content_type: str | None = "application/json"
+        self.body = b""
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args: Any) -> None:
+                pass
+
+            def do_POST(self) -> None:
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.send_response(endpoint.status)
+                if endpoint.content_type is not None:
+                    self.send_header("Content-Type", endpoint.content_type)
+                self.send_header("Content-Length", str(len(endpoint.body)))
+                self.end_headers()
+                self.wfile.write(endpoint.body)
+
+            def _not_allowed(self) -> None:
+                self.send_response(405)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            do_GET = do_DELETE = _not_allowed
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        self._thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self._thread.start()
+
+    def respond(self, status: int, body: Any, content_type: str | None = "application/json") -> None:
+        if isinstance(body, str):
+            raw = body.encode()
+        else:
+            raw = json.dumps(body).encode()
+        self.status, self.content_type, self.body = status, content_type, raw
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture
+def fake_http():
+    ep = FakeHttpEndpoint()
+    try:
+        yield ep
+    finally:
+        ep.close()
+
+
+def _spec_body(code: Any) -> dict[str, Any]:
+    return {"error": {"code": code, "message": REMOTE_MESSAGE}}
+
+
+def _sdk_body(message: str, code: int) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": "server-error", "error": {"code": code, "message": message}}
+
+
+@pytest.mark.parametrize("status,code", [
+    (401, "unauthorized"),
+    (403, "recursion_blocked"),
+    (403, "host_not_allowed"),
+    (403, "origin_not_allowed"),
+    (404, "not_found"),
+    (503, "shutting_down"),
+])
+def test_paired_spec_body_exit_3(fake_http: FakeHttpEndpoint, tmp_path: Path, bridges, status, code):
+    fake_http.respond(status, _spec_body(code), "application/json; charset=utf-8")
+    b = bridges(_env(tmp_path, token="spw_x"), "coding", fake_http.port)
+    b.send(INIT)
+    msg = b.recv_id(1)
+    assert msg["error"] == {"code": -32000, "message": f"{code}: rejected by gateway (HTTP {status})",
+                            "data": {"code": code, "http_status": status}}
+    rc, stderr, lines = b.finish(close_stdin=False)
+    assert rc == 3
+    assert code in stderr
+    _assert_clean_stderr(stderr, "spw_x", REMOTE_MESSAGE)
+    _assert_jsonrpc_only(lines)
+    assert all(REMOTE_MESSAGE.encode() not in x for x in lines)
+
+
+_BIG = {"error": {"code": "shutting_down", "message": "x" * (64 * 1024)}}
+
+
+@pytest.mark.parametrize("case,status,body,content_type", [
+    ("sdk_too_many_sessions", 503, _sdk_body(f"Too many open sessions {REMOTE_MESSAGE}", -32603),
+     "application/json"),
+    ("sdk_session_not_found", 404, _sdk_body(f"Session not found {REMOTE_MESSAGE}", -32600),
+     "application/json"),
+    ("integer_code", 401, _spec_body(-32000), "application/json"),
+    ("not_json", 401, f"unauthorized {REMOTE_MESSAGE}", "application/json"),
+    ("not_json_content_type", 401, _spec_body("unauthorized"), "text/plain"),
+    ("no_content_type", 401, _spec_body("unauthorized"), None),
+    ("unpaired", 503, _spec_body("unauthorized"), "application/json"),
+    ("unpaired_403", 403, _spec_body("not_found"), "application/json"),
+    ("over_64k", 503, _BIG, "application/json"),
+    ("other_status", 500, _spec_body("internal_error"), "application/json"),
+    ("not_a_dict", 404, ["not_found"], "application/json"),
+])
+def test_non_gateway_rejection_exit_1_with_http_status_only(fake_http: FakeHttpEndpoint, tmp_path: Path,
+                                                             bridges, case, status, body, content_type):
+    fake_http.respond(status, body, content_type)
+    b = bridges(_env(tmp_path, token="spw_x"), "coding", fake_http.port)
+    b.send(INIT)
+    msg = b.recv_id(1)
+    assert msg["error"] == {"code": -32000, "message": f"gateway error (HTTP {status})",
+                            "data": {"http_status": status}}
+    rc, stderr, lines = b.finish(close_stdin=False)
+    assert rc == 1
+    _assert_clean_stderr(stderr, "spw_x", REMOTE_MESSAGE)
+    _assert_jsonrpc_only(lines)
+    assert all(REMOTE_MESSAGE.encode() not in x for x in lines)
+
+
+def test_gateway_code_pairs():
+    from spillway.api.mcp.bridge import gateway_code
+
+    ok = json.dumps(_spec_body("unauthorized")).encode()
+    assert gateway_code(401, "application/json", ok) == "unauthorized"
+    assert gateway_code(401, "Application/JSON; charset=utf-8", ok) == "unauthorized"
+    assert gateway_code(401, "application/json", None) is None          # 超過上限
+    assert gateway_code(401, "application/jsonx", ok) is None
+    assert gateway_code(401, None, ok) is None
+    assert gateway_code(503, "application/json", ok) is None            # 不成對
+    assert gateway_code(500, "application/json", ok) is None
+    assert gateway_code(401, "application/json", b"\xff\xfe") is None
+    assert gateway_code(401, "application/json", b'{"error": "unauthorized"}') is None
+
+
+def _tracking_stream(chunks: list[bytes]) -> Any:
+    """httpx 的 async 串流:`read` 記錄讀了幾個 chunk。"""
+    import httpx
+
+    class _TrackingStream(httpx.AsyncByteStream):
+        def __init__(self) -> None:
+            self.read = 0
+
+        async def __aiter__(self):
+            for chunk in chunks:
+                self.read += 1
+                yield chunk
+
+    return _TrackingStream()
+
+
+def _response(status: int, chunks: list[bytes], headers: dict[str, str] | None = None,
+              method: str = "POST") -> tuple[Any, Any]:
+    import httpx
+
+    stream = _tracking_stream(chunks)
+    req = httpx.Request(method, "http://127.0.0.1:1/mcp/coding")
+    return httpx.Response(status, headers=headers or {}, stream=stream, request=req), stream
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", [200, 202, 204, 307])
+async def test_hook_never_reads_2xx_or_redirect_body(status):
+    from spillway.api.mcp.bridge import _inspect_response, _State
+
+    state = _State()
+    resp, stream = _response(status, [json.dumps(_spec_body("unauthorized")).encode()],
+                             {"content-type": "application/json"})
+    await _inspect_response(resp, state)
+    assert stream.read == 0
+    assert state.rejected_status is None
+
+
+@pytest.mark.anyio
+async def test_hook_records_paired_code_and_raises():
+    import httpx
+
+    from spillway.api.mcp.bridge import _inspect_response, _State
+
+    state = _State()
+    resp, _ = _response(401, [json.dumps(_spec_body("unauthorized")).encode()],
+                        {"content-type": "application/json"})
+    with pytest.raises(httpx.HTTPStatusError):
+        await _inspect_response(resp, state)
+    assert (state.rejected_status, state.rejected_code) == (401, "unauthorized")
+
+
+@pytest.mark.anyio
+async def test_hook_stops_reading_past_limit_without_content_length():
+    import httpx
+
+    from spillway.api.mcp.bridge import ERROR_BODY_LIMIT, _inspect_response, _State
+
+    assert ERROR_BODY_LIMIT == 64 * 1024
+    chunks = [b'{"error": {"code": "shutting_down", "message": "'] + [b"x" * 16384] * 8 + [b'"}}']
+    state = _State()
+    resp, stream = _response(503, chunks, {"content-type": "application/json"})
+    with pytest.raises(httpx.HTTPStatusError):
+        await _inspect_response(resp, state)
+    assert (state.rejected_status, state.rejected_code) == (503, None)
+    assert stream.read < len(chunks)   # 超過上限即停止讀取
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("method", ["GET", "DELETE"])
+async def test_hook_ignores_get_and_delete(method):
+    from spillway.api.mcp.bridge import _inspect_response, _State
+
+    state = _State()
+    resp, stream = _response(401, [b"{}"], {"content-type": "application/json"}, method=method)
+    await _inspect_response(resp, state)
+    assert stream.read == 0 and state.rejected_status is None
+
+
+# ---------------------------------------------------------------------------- CHG-20261102-02 T2:max_sessions(L2)
+
+def test_test_mcp_max_sessions_env_parsing(monkeypatch):
+    from spillway import cli
+
+    assert cli.TEST_MCP_MAX_SESSIONS_ENV == "SPILLWAY_TEST_MCP_MAX_SESSIONS"
+    for raw, expected in [(None, None), ("", None), ("x", None), ("0", None), ("-1", None), ("1", 1),
+                          ("7", 7)]:
+        if raw is None:
+            monkeypatch.delenv(cli.TEST_MCP_MAX_SESSIONS_ENV, raising=False)
+        else:
+            monkeypatch.setenv(cli.TEST_MCP_MAX_SESSIONS_ENV, raw)
+        assert cli._test_mcp_max_sessions() == expected
+
+
+def test_create_app_default_max_sessions():
+    import inspect
+
+    from spillway.api.mcp.server import MAX_SESSIONS
+    from spillway.app import create_app
+
+    assert inspect.signature(create_app).parameters["mcp_max_sessions"].default == MAX_SESSIONS
+
+
+def _wait_port(port: int, proc: subprocess.Popen, timeout: float = 60.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            pytest.fail(f"serve 提前結束 rc={proc.returncode}")
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return
+        except OSError:
+            time.sleep(0.2)
+    pytest.fail("serve 未在時限內開始監聽")
+
+
+def test_serve_max_sessions_1_second_bridge_gets_503_exit_1(tmp_path: Path, bridges):
+    from spillway import settings
+    from spillway.store.db import connect
+
+    home = tmp_path / "serve-home"
+    home.mkdir()
+    conn = connect(home / "spillway.db")   # migration + token(serve 看到已有雜湊就不印)
+    try:
+        token = settings.rotate_access_token(conn)
+    finally:
+        conn.close()
+    port = _free_port()
+    env = _env(tmp_path, SPILLWAY_TEST_MCP_MAX_SESSIONS="1")
+    env["SPILLWAY_HOME"] = str(home)
+    with (tmp_path / "serve.log").open("w") as log:
+        proc = subprocess.Popen([sys.executable, "-m", "spillway", "serve", "--port", str(port)], env=env,
+                                cwd=str(REPO_ROOT), stdout=log, stderr=subprocess.STDOUT)
+        try:
+            _wait_port(port, proc)
+            first = bridges(_env(tmp_path, token=token), "all", port)
+            _handshake(first)   # 第一個 session 保持開啟
+            second = bridges(_env(tmp_path, token=token), "all", port)
+            second.send(INIT)
+            msg = second.recv_id(1)
+            assert msg["error"] == {"code": -32000, "message": "gateway error (HTTP 503)",
+                                    "data": {"http_status": 503}}
+            rc, stderr, lines = second.finish(close_stdin=False)
+            assert rc == 1
+            _assert_clean_stderr(stderr, token, "Too many open sessions")
+            _assert_jsonrpc_only(lines)
+            rc_first, _, _ = first.finish()
+            assert rc_first == 0
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(15)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()

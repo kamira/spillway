@@ -83,7 +83,7 @@ from spillway.api.host_origin import HostOriginMiddleware
 from spillway.api.mcp import McpEndpoint, McpRuntime, SpillwayServer
 from spillway.api.mcp.events import McpEvents
 from spillway.api.mcp.sdk_logging import install_sdk_root_log_filter
-from spillway.api.mcp.server import install_shutdown_hook
+from spillway.api.mcp.server import MAX_SESSIONS, install_shutdown_hook
 from spillway.api.drain import CANCELLED_DRAIN_TIMEOUT, SECOND_CANCEL_WAIT, ShutdownHooks
 from spillway.clock import Clock, Rng, SystemClock, SystemRng
 from spillway.ledger import RetentionJob
@@ -213,6 +213,7 @@ def create_app(
     retention_poll_seconds: float = DEFAULT_RETENTION_POLL_SECONDS,
     issue_token: bool = False,
     port: int = 8787,
+    mcp_max_sessions: int = MAX_SESSIONS,   # CHG-20261102-02 決策 19:MCP session 上限
 ) -> FastAPI:
     clk: Clock = clock if clock is not None else SystemClock()
     rnd: Rng = rng if rng is not None else SystemRng()
@@ -245,7 +246,7 @@ def create_app(
         retention.start()
         # CHG-20261102-01 T2(決策 9、AM-4):每次 lifespan 新建 MCP session manager 與專用持有 task
         try:
-            mcp_runtime = await McpRuntime.start(app)
+            mcp_runtime = await McpRuntime.start(app, max_sessions=mcp_max_sessions)
         except BaseException:
             await retention.stop()
             raise

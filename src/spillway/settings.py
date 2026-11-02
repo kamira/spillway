@@ -2,7 +2,8 @@
 CHG-20261101-03 決策 14、17)。
 
 - 資料目錄、埠號、綁定位址只有常數與環境變數(另有 MCP 端點 `mcp_url`、保留群組名 `MCP_ALL_GROUP`、
-  SIGINT 結束碼 `EXIT_SIGINT` 的單一定義,CHG-20261102-01 終審);settings 表的 `bind_host`、`port` 鍵仍不讀(D16 不變)。
+  SIGINT 結束碼 `EXIT_SIGINT` 的單一定義,CHG-20261102-01 終審;
+  `TOKEN_ENV`、`DEPTH_ENV`、`DEPTH_HEADER`,CHG-20261102-02 決策 15);settings 表的 `bind_host`、`port` 鍵仍不讀(D16 不變)。
 - settings 表只讀寫 `access_token_sha256`(`ACCESS_TOKEN_KEY`):存取 token 由
   `secrets.token_urlsafe(32)` 產生,資料庫只存 SHA-256 十六進位;明文只回給呼叫端一次
   (`spillway init`、serve 首次啟動的 stderr 一行、`POST /api/settings/token/rotate`)。
@@ -34,6 +35,11 @@ ALLOWED_HOSTS = frozenset({"127.0.0.1"})
 MCP_ALL_GROUP = "all"
 # CHG-20261102-01 決策 15、19:serve 與 mcp-stdio 被 Ctrl-C(SIGINT)結束時的結束碼
 EXIT_SIGINT = 130
+# CHG-20261102-02 決策 15:存取 token 與遞迴深度的環境變數名、遞迴深度 header 名(單一定義;
+# api.mcp、mcp_config、catalog 引用;adapters 依分層規則保留字面值,由 tests/contract/test_env_names.py 釘住)
+TOKEN_ENV = "SPILLWAY_TOKEN"
+DEPTH_ENV = "SPILLWAY_DEPTH"
+DEPTH_HEADER = "X-Spillway-Depth"
 
 ACCESS_TOKEN_KEY = "access_token_sha256"
 ACCESS_TOKEN_BYTES = 32   # secrets.token_urlsafe(32) → 43 個字元
