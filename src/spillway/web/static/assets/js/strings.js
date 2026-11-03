@@ -80,6 +80,8 @@ export const TEXT = Object.freeze({
   tag_add: "+ tag",
   tag_remove: "移除",
   tag_none: "未設定",
+  copied: "已複製到剪貼簿",
+  copy_failed: "無法寫入剪貼簿(權限被拒或不支援)。已選取文字,請按 ⌘C(macOS)或 Ctrl+C 複製。",
 });
 
 export function label(table, value) {

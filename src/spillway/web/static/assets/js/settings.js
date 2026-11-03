@@ -9,7 +9,8 @@
 import { getJSON, request, sendJSON } from "./api.js";
 import { byId, h, setText } from "./dom.js";
 import { TEXT } from "./strings.js";
-import { clearMessage, confirmDialog, fmtInt, initShell, showError, showMessage, withBusy } from "./ui.js";
+import { clearMessage, confirmDialog, copyToClipboard, fmtInt, initShell, showError, showMessage,
+  withBusy } from "./ui.js";
 import { mountImport } from "./import-dialog.js";
 
 export const KB = 1024;
@@ -27,8 +28,6 @@ const T = Object.freeze({
   issued: "已產生",
   not_issued: "未產生",
   copy: "複製",
-  copied: "已複製到剪貼簿",
-  copy_failed: "無法寫入剪貼簿(權限被拒或不支援)。已選取文字,請按 ⌘C(macOS)或 Ctrl+C 複製。",
   stats: (n, size) => `目前 ${fmtInt(n)} 筆 · ${size}`,
   ctx_saved: "已儲存 context 設定",
   err_days: "保存天數必須是 0 以上的整數",
@@ -60,38 +59,6 @@ function fmtBytes(n) {
   if (v < KB) return `${v} B`;
   if (v < KB * KB) return `${(v / KB).toFixed(1)} KB`;
   return `${(v / (KB * KB)).toFixed(1)} MB`;
-}
-
-function selectText(el) {
-  if (el instanceof HTMLInputElement) {
-    el.focus();
-    el.select();
-    return;
-  }
-  const sel = window.getSelection();
-  if (!sel) return;
-  sel.removeAllRanges();
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  sel.addRange(range);
-  el.focus();
-}
-
-// Clipboard API;失敗時選取文字並顯示提示。回傳是否成功寫入。
-async function copyText(text, el, hint) {
-  if (hint) hint.hidden = true;
-  try {
-    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("no clipboard");
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    selectText(el);
-    if (hint) {
-      setText(hint, T.copy_failed);
-      hint.hidden = false;
-    }
-    return false;
-  }
 }
 
 // ---- ① 總覽 ---------------------------------------------------------------------------------
@@ -294,9 +261,9 @@ function openTokenDialog(initialToken, { rotated }) {
 
     copyBtn.addEventListener("click", async () => {
       if (token === null) return;
-      if (await copyText(token, input, hint)) {
+      if (await copyToClipboard(token, input, hint)) {
         copied = true;
-        showMessage(T.copied, "ok");
+        showMessage(TEXT.copied, "ok");
       }
     });
     closeBtn.addEventListener("click", requestClose);
@@ -347,7 +314,7 @@ async function rotateToken() {
 function init() {
   byId("serve-copy").addEventListener("click", async () => {
     const el = byId("serve-cmd");
-    if (await copyText(el.textContent, el, byId("serve-copy-hint"))) showMessage(T.copied, "ok");
+    if (await copyToClipboard(el.textContent, el, byId("serve-copy-hint"))) showMessage(TEXT.copied, "ok");
   });
   byId("ctx-days").addEventListener("input", syncDaysNote);
   byId("export-link").addEventListener("click", exportConfig);

@@ -9,8 +9,9 @@
 
 import { getJSON, withQuery } from "./api.js";
 import { byId, clear, h, setText } from "./dom.js";
-import { clearMessage, codeLabel, fillGroupSelect, initShell, latest, setLoading, showError, showMessage } from "./ui.js";
-import { label } from "./strings.js";
+import { clearMessage, codeLabel, copyToClipboard, fillGroupSelect, initShell, latest, setLoading, showError,
+  showMessage } from "./ui.js";
+import { TEXT, label } from "./strings.js";
 
 const TOOLS = Object.freeze([
   ["claude-code", "Claude Code"],
@@ -27,8 +28,6 @@ const SEVERITY = Object.freeze({ info: "說明", warn: "注意" });
 const T = Object.freeze({
   copy: "複製",
   download: "下載檔案",
-  copied: "已複製到剪貼簿",
-  copy_failed: "無法寫入剪貼簿(權限被拒或不支援)。已選取文字,請按 ⌘C(macOS)或 Ctrl+C 複製。",
   run_in_terminal: "在終端機執行",
   place_at: "放置位置",
   file: "檔名",
@@ -59,27 +58,8 @@ function downloadText(filename, content) {
   }
 }
 
-function selectText(el) {
-  const sel = window.getSelection();
-  if (!sel) return;
-  sel.removeAllRanges();
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  sel.addRange(range);
-}
-
 async function copyContent(pre, content, hint) {
-  hint.hidden = true;
-  try {
-    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("no clipboard");
-    await navigator.clipboard.writeText(content);
-    showMessage(T.copied, "ok");
-  } catch {
-    selectText(pre);
-    setText(hint, T.copy_failed);
-    hint.hidden = false;
-    pre.focus();
-  }
+  if (await copyToClipboard(content, pre, hint)) showMessage(TEXT.copied, "ok");
 }
 
 function variantCard(v, index) {

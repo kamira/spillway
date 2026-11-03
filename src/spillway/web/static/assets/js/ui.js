@@ -8,6 +8,7 @@
 // - confirmDialog({title, body, confirmLabel, cancelLabel, danger}) → Promise<boolean>:<dialog> 實作,
 //   預設焦點在「取消」,Esc 等於取消。
 // - 載入中:setLoading(el, on);送出中停用按鈕:withBusy(button, fn)。
+// - 剪貼簿:copyToClipboard(text, el, hint) → Promise<boolean>(失敗時選取 el 的文字並在 hint 顯示提示)。
 // - 格式化:toIsoZ(date)、fmtLocal(iso)、fmtUTC(iso)、timeEl(iso)、fmtUSD(n)(負值 -$x)、fmtInt(n);
 //   代碼標籤:codeLabel(table, value)、kindBadge(kind)、statusBadge(status)。
 // - 表單與清單:field(label, control, {hint, id})、parseList(text)、tagInput({...})、fillGroupSelect(select, {...})、
@@ -153,6 +154,43 @@ export async function withBusy(button, fn) {
   } finally {
     button.disabled = false;
     button.removeAttribute("aria-busy");
+  }
+}
+
+// ---- 剪貼簿 ---------------------------------------------------------------------------------
+
+// 選取 el 的文字並把焦點移到 el(input/textarea 用 select(),其他元素用 Range)。
+function selectText(el) {
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    el.focus();
+    el.select();
+    return;
+  }
+  const sel = window.getSelection();
+  if (sel) {
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.addRange(range);
+  }
+  el.focus();
+}
+
+// Clipboard API;失敗或權限被拒時選取 el 的文字,並在 hint(可省略)顯示 TEXT.copy_failed。
+// 回傳是否成功寫入;成功訊息(TEXT.copied)由呼叫端決定是否顯示。
+export async function copyToClipboard(text, el, hint = null) {
+  if (hint) hint.hidden = true;
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("no clipboard");
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    selectText(el);
+    if (hint) {
+      setText(hint, TEXT.copy_failed);
+      hint.hidden = false;
+    }
+    return false;
   }
 }
 

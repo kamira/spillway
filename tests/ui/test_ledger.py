@@ -16,7 +16,8 @@ from playwright.sync_api import Page, Request, Response, expect
 
 from spillway.clock import FakeClock
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import MakeGw, NewPage, add_member, add_route, api, goto, guard_of, query_of, wait_loaded
+from tests.helpers.ui import (CLIP, MakeGw, NewPage, add_member, add_route, api, goto, guard_of, query_of,
+                               wait_loaded)
 from tests.helpers.ui_ledger import bulk_ledger, insert_ledger, insert_payload
 
 
@@ -188,7 +189,7 @@ def test_payload_panel(new_page: NewPage, gw: LiveGateway) -> None:
                   latency_ms=18400, slot=1, effort="high")
     insert_payload(gw, 7, ts, req_text, resp_text, truncated=True, redacted=True)
     retention = api(gw, "GET", "/api/settings/context").json()["context_retention_days"]
-    page = open_ledger(new_page, gw, permissions=["clipboard-read", "clipboard-write"])
+    page = open_ledger(new_page, gw, permissions=CLIP)
     r = page.locator('#ledger-body tr[data-ledger-id="7"]')
     expect(r.locator("td").nth(6)).to_have_text("3,120 / 842")
     expect(r.locator("td").nth(8)).to_have_text("$0.0214")

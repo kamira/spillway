@@ -14,7 +14,7 @@ import pytest
 from playwright.sync_api import Route, expect
 
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import MakeGw, NewPage, api, goto, guard_of, seed_group
+from tests.helpers.ui import CLIP, MakeGw, NewPage, api, goto, guard_of, seed_group
 from tests.helpers.ui_mcp import (BLOB_SPY, DENY_CLIPBOARD, TOOLS, mcp_config, mcp_variants, open_mcp,
                                   select_mcp)
 
@@ -66,7 +66,7 @@ def test_query_selects_initial_group_and_tool(new_page: NewPage, gw: LiveGateway
 
 
 def test_copy_writes_variant_content_to_clipboard(new_page: NewPage, gw: LiveGateway) -> None:
-    page = new_page(permissions=["clipboard-read", "clipboard-write"])
+    page = new_page(permissions=CLIP)
     open_mcp(page, gw, group="coding", tool="codex")
     cfg = mcp_config(gw, "coding", "codex")
     for i, v in enumerate(cfg["variants"]):

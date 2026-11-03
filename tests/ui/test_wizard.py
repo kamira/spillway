@@ -13,11 +13,9 @@ from playwright.sync_api import Locator, Page, expect
 
 from tests.helpers import TEST_KEY, TEST_KEY_ENV, dead_base
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import MakeGw, NewPage, add_route, api, goto, guard_of
+from tests.helpers.ui import CLIP, MakeGw, NewPage, add_route, api, goto, guard_of
 from tests.helpers.ui_members import MemberForm, requests_of, seed_member
 from tests.helpers.ui_settings import open_wizard, wizard_step
-
-CLIP = ["clipboard-read", "clipboard-write"]
 
 
 @pytest.fixture

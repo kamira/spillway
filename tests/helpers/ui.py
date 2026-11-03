@@ -26,6 +26,9 @@
   (之後以 `page.evaluate("… window.__mods['api.js'] …")` 呼叫)。
 - `wait_loaded(page, selector)`:等到 `selector` 的元素帶 `data-loaded="true"`(頁面完成一次載入)。
 - `query_of(url) -> dict[str, str]`:網址的 query(單值)。
+- `CLIP`:剪貼簿讀寫權限(`new_page(permissions=CLIP)`)。
+- `confirm_dialog(page) -> Locator`:`ui.confirmDialog()` 開出的確認對話框(以 `#confirm-dialog-title` 辨識)。
+- `drag(page, src, dst)`:HTML5 拖曳(先把來源與目標一起捲進視窗再 `drag_to`;AM-9)。
 - 型別別名:`NewPage`(`new_page` fixture)、`MakeGw`(`make_ui_gateway` fixture)。
 
 種資料與 DB(單一 adapter 層)
@@ -49,21 +52,24 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
-from playwright.sync_api import (Browser, BrowserContext, ConsoleMessage, Dialog, Error, Page, Request, Route,
-                                 expect)
+from playwright.sync_api import (Browser, BrowserContext, ConsoleMessage, Dialog, Error, Locator, Page, Request,
+                                 Route, expect)
 
 from tests.helpers import TEST_KEY_ENV
 
 if TYPE_CHECKING:
     from tests.helpers.live_gateway import LiveGateway
 
-__all__ = ["NAV", "PAGES", "MakeGw", "NewPage", "PageSpec", "PageGuard", "add_member", "add_route", "api",
-           "db_execute", "db_snapshot", "close_and_collect", "goto", "guard_of", "import_module", "is_local_url",
-           "member_body", "open_context", "query_of", "seed_group", "wait_loaded"]
+__all__ = ["CLIP", "NAV", "PAGES", "MakeGw", "NewPage", "PageSpec", "PageGuard", "add_member", "add_route", "api",
+           "db_execute", "db_snapshot", "close_and_collect", "confirm_dialog", "drag", "goto", "guard_of",
+           "import_module", "is_local_url", "member_body", "open_context", "query_of", "seed_group", "wait_loaded"]
 
 # fixture 的型別別名(tests/ui/conftest.py 的 new_page 與 make_ui_gateway)
 NewPage = Callable[..., Page]
 MakeGw = Callable[..., "LiveGateway"]
+
+# 剪貼簿讀寫權限(new_page(permissions=CLIP))
+CLIP: list[str] = ["clipboard-read", "clipboard-write"]
 
 # 導覽 8 項:鏡像 web/static/assets/js/strings.js 的正式清單 NAV(決策 20);各 HTML 的 <nav> 須與此一致
 NAV: list[tuple[str, str]] = [
@@ -250,6 +256,27 @@ def import_module(page: Page, name: str) -> list[str]:
 def wait_loaded(page: Page, selector: str) -> None:
     """等到 `selector` 的元素帶 `data-loaded="true"`。"""
     expect(page.locator(f'{selector}[data-loaded="true"]')).to_have_count(1)
+
+
+def confirm_dialog(page: Page) -> Locator:
+    """`ui.confirmDialog()` 開出的確認對話框。"""
+    return page.locator("dialog").filter(has=page.locator("#confirm-dialog-title"))
+
+
+def drag(page: Page, source: Locator, target: Locator) -> None:
+    """HTML5 拖曳。拖曳目標在 dragstart 之前就必須可見且有尺寸(AM-9);拖曳中途捲動會讓 Chromium 取消拖曳,
+    所以先把來源與目標一起捲進視窗(兩者的中點置中)再 `drag_to`。
+
+    限制:來源頂端到目標底端的距離不可超過視窗高度(1280×800 的 context 為 800 px),否則兩者無法同時
+    在視窗內,拖曳會失敗;需要更遠的移動時改用鍵盤替代(「移到…」選單、上移/下移)。"""
+    expect(source).to_be_visible()
+    expect(target).to_be_visible()
+    src_box, dst_box = source.bounding_box(), target.bounding_box()
+    assert src_box and dst_box and dst_box["height"] > 0 and dst_box["width"] > 0
+    top = min(src_box["y"], dst_box["y"])
+    bottom = max(src_box["y"] + src_box["height"], dst_box["y"] + dst_box["height"])
+    page.evaluate("(mid) => window.scrollBy(0, mid - window.innerHeight / 2)", (top + bottom) / 2)
+    source.drag_to(target)
 
 
 def query_of(url: str) -> dict[str, str]:

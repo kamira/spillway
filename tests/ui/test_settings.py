@@ -16,7 +16,8 @@ import yaml
 from playwright.sync_api import Locator, Page, Request, Route, expect
 
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import MakeGw, NewPage, api, db_execute, db_snapshot, goto, guard_of, import_module
+from tests.helpers.ui import (CLIP, MakeGw, NewPage, api, confirm_dialog, db_execute, db_snapshot, goto, guard_of,
+                               import_module)
 from tests.helpers.ui_members import seed_member
 from tests.helpers.ui_settings import (
     choose_import,
@@ -27,8 +28,6 @@ from tests.helpers.ui_settings import (
     page_leaks,
     token_hash,
 )
-
-CLIP = ["clipboard-read", "clipboard-write"]
 
 
 @pytest.fixture
@@ -403,10 +402,6 @@ def test_import_too_large_not_sent(new_page: NewPage, gw: LiveGateway) -> None:
 
 def token_dialog(page: Page) -> Locator:
     return page.locator("#token-dialog")
-
-
-def confirm_dialog(page: Page) -> Locator:
-    return page.locator("dialog").filter(has=page.locator("#confirm-dialog-title"))
 
 
 def test_token_first_generate_copy_and_wipe(new_page: NewPage, make_ui_gateway: MakeGw) -> None:

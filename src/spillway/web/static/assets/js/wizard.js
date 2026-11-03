@@ -12,7 +12,7 @@
 import { getJSON, sendJSON } from "./api.js";
 import { byId, clear, h, setText } from "./dom.js";
 import { STATUS, TEXT, label } from "./strings.js";
-import { errorText, initShell, latest, showError, showMessage, withBusy } from "./ui.js";
+import { copyToClipboard, errorText, initShell, latest, showError, showMessage, withBusy } from "./ui.js";
 import { mountMemberForm } from "./member-form.js";
 
 const T = Object.freeze({
@@ -30,8 +30,6 @@ const T = Object.freeze({
   done_lead: (name) => `route「${name}」已就緒。以下列指令送出第一次呼叫:`,
   not_member: (name, id) => `route「${name}」不包含剛加入的成員 ${id}(target 或 mode 不符),範例呼叫不會用到它;請到 Route 頁調整,或回上一步改用其他名稱`,
   check_failed: "無法確認 route 是否包含此成員",
-  copied: "已複製到剪貼簿",
-  copy_failed: "無法寫入剪貼簿(權限被拒或不支援)。已選取文字,請按 ⌘C(macOS)或 Ctrl+C 複製。",
 });
 
 const state = {
@@ -279,24 +277,7 @@ function enterDone() {
 
 async function copyCurl() {
   const pre = byId("curl-example");
-  const hint = byId("curl-copy-hint");
-  hint.hidden = true;
-  try {
-    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("no clipboard");
-    await navigator.clipboard.writeText(pre.textContent);
-    showMessage(T.copied, "ok");
-  } catch {
-    const sel = window.getSelection();
-    if (sel) {
-      sel.removeAllRanges();
-      const range = document.createRange();
-      range.selectNodeContents(pre);
-      sel.addRange(range);
-    }
-    setText(hint, T.copy_failed);
-    hint.hidden = false;
-    pre.focus();
-  }
+  if (await copyToClipboard(pre.textContent, pre, byId("curl-copy-hint"))) showMessage(TEXT.copied, "ok");
 }
 
 // ---- 續作與啟動 -----------------------------------------------------------------------------
