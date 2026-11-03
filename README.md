@@ -8,7 +8,7 @@
 
 ## 狀態
 
-M2 路由核心已完成(CHG-20261030-02、整理 CHG-20261101-02)。M3 分兩部分：M3a（CHG-20261101-03）加入訂閱 CLI 成員（claude-cli、codex-cli）、CLI 併發上限、schema v2、存取 token 與 `spillway init`、graceful shutdown；M3b（CHG-20261102-01）加入 MCP server、`mcp-stdio`、MCP 設定輸出與全端點 Host／Origin 檢查，M3 閘門已通過（ACC-20261102-01）。M4 分兩部分：M4a（CHG-20261102-02，後端）加入設定匯入匯出（含 `dry_run` 預覽與 replace 自動備份）、帳本 CSV 匯出、設定總覽與群組名稱規則；M4b（Web UI 8 個畫面與首次設定精靈）尚未開始。
+M2 路由核心已完成(CHG-20261030-02、整理 CHG-20261101-02)。M3 分兩部分：M3a（CHG-20261101-03）加入訂閱 CLI 成員（claude-cli、codex-cli）、CLI 併發上限、schema v2、存取 token 與 `spillway init`、graceful shutdown；M3b（CHG-20261102-01）加入 MCP server、`mcp-stdio`、MCP 設定輸出與全端點 Host／Origin 檢查，M3 閘門已通過（ACC-20261102-01）。M4 分兩部分：M4a（CHG-20261102-02，後端）加入設定匯入匯出（含 `dry_run` 預覽與 replace 自動備份）、帳本 CSV 匯出、設定總覽與群組名稱規則；M4b（CHG-20261103-01）加入 Web UI 8 個畫面（UI-1–UI-8）與首次設定精靈，以及畫面需要的讀取端點；M4 閘門於 ACC-20261103-01 驗收。
 
 ## 核心概念
 
@@ -26,7 +26,7 @@ M2 路由核心已完成(CHG-20261030-02、整理 CHG-20261101-02)。M3 分兩�
 
 - [企劃書](docs/proposal.md)：背景、目標、範圍、技術選型、合規邊界、里程碑、風險
 - [規格書](docs/spec.md)：資料模型、路由規則、額度與預估、effort、adapter、MCP、HTTP API、驗收標準
-- [UI layout](docs/ui/)：UI-1–UI-7 的設計稿（UI-8「API 參考」的版面於 M4b 決定）
+- [UI layout](docs/ui/)：UI-1–UI-7 的設計稿（UI-8「API 參考」沒有設計稿，版面為頂端群組選單、左側可折疊索引、右側內容）；實作與設計稿的差異見 `sdlc_docs/structure/design.md`「設計差異」
 
 ## 技術選型
 
@@ -42,6 +42,27 @@ spillway serve           # 只綁 127.0.0.1:8787
 - 資料目錄為環境變數 `SPILLWAY_HOME`，未設定時為作業系統慣例位置（`platformdirs.user_data_dir("spillway")`）。
 - 存取 token 只在產生當下顯示一次，資料庫只存 SHA-256 雜湊。`spillway init` 把 token 印在 stdout（其他訊息走 stderr，可用 `TOKEN=$(spillway init)` 取得）；已有 token 時只提示「已存在，未變更」並以 0 結束，要重新產生請執行 `spillway init --rotate` 或呼叫 `POST /api/settings/token/rotate`（回應 `{"token": "..."}`，舊 token 失效）。沒執行過 `init` 時，`serve` 首次啟動會產生 token 並在 stderr 印一行；若把 stderr 導到檔案，檔案中會留有這一次明文。token 用於 `/mcp/*` 的 `Authorization: Bearer`（見「MCP 連線」）；`/v1`、`/api` 在只綁 127.0.0.1 時不驗證 token。
 - `serve` 啟動前會先確認埠可綁定，再取得資料目錄鎖 `spillway.lock`；任一失敗即結束，不開啟資料庫。同一個資料目錄同時只能有一個 `serve`（`init` 也需要這把鎖，`serve` 執行中時請改用 rotate API）。
+
+## Web UI
+
+`spillway serve` 啟動後，以瀏覽器開啟 `http://127.0.0.1:8787/`（轉址到 `/ui/`）。
+
+| 畫面 | 網址 | 內容 |
+| --- | --- | --- |
+| UI-1 總覽 | `/ui/` | 各成員剩餘額度或冷卻至、預估可用天數、近 7 天日均、近 24 小時請求數；清除冷卻 |
+| UI-2 成員 | `/ui/members.html` | 以連動選單（類型 → 供應商 → 模型）新增與編輯成員、測試呼叫、啟用切換、刪除；`#<id>` 直接開啟該成員 |
+| UI-3 群組與 Tag | `/ui/groups.html` | 以 all／any／none 編輯選擇器並即時預覽；列出各 tag 的成員（tag 改名尚未提供） |
+| UI-4 Route | `/ui/routes.html`、`/ui/route.html?name=<route>` | 拖曳（或以「移到…」選單、上移／下移按鈕）調整 slot 與成員順序，逐成員選 effort 與權重；還原預設、dry-run |
+| UI-5 MCP 設定 | `/ui/mcp.html` | 選群組與工具，複製或下載設定內容 |
+| UI-6 帳本 | `/ui/ledger.html` | 篩選、分頁、匯出 CSV；點選列查看該次的請求與回應（純文字） |
+| UI-7 設定 | `/ui/settings.html` | 設定總覽、context 記錄設定、匯出與匯入設定、重新產生存取 token |
+| UI-8 API 參考 | `/ui/api-reference.html` | MCP 介面的連線、工具、通知、錯誤碼（可折疊索引；不含 `/api` 與 `/v1`） |
+
+- **首次設定精靈**（`/ui/wizard.html`）：資料庫沒有成員也沒有 route 時，開啟畫面會自動導向精靈（`/ui/?skip_wizard=1` 可略過一次）。四步：加入成員 → 測試呼叫（會實際呼叫上游一次並記一列帳本）→ 建立 route → 完成（顯示 `curl` 範例）。每步完成即寫入；中途離開後再開啟精靈，會從尚未完成的步驟繼續。憑證欄只填參照（`env:NAME` 或 `keyring:服務:帳號`），不要填金鑰本身；環境變數必須在啟動 `serve` 前設定。MCP 用戶端需要的存取 token 請到 UI-7 產生（`/ui/settings.html#token`）。
+- **匯入設定**：在 UI-7 選檔與 `mode` 後按「預覽匯入」，畫面先以 `dry_run=true` 預覽，確認對話框列出新增、更新、刪除的數量與 `privileged` 成員；按「匯入」才寫入（`replace` 會先備份到 `backups/`）。
+- **存取 token**：UI-7 的「重新產生 token」只在對話框顯示新 token 一次，關閉後無法再次查看；舊 token 立即失效。
+- 畫面是靜態 HTML、CSS 與 JavaScript，所有資料經 `/api` 取得；不載入任何外部資源（使用系統字型）。畫面回應帶 Content-Security-Policy 等安全標頭，`/api` 回應一律 `Cache-Control: no-store`。與 `/api` 相同，在只綁 127.0.0.1 時不需登入，本機任何程式都能開啟。
+- 畫面只在 macOS 的 Chromium 驗證；Safari、Firefox 與其他平台尚未驗證。
 
 ## CLI 成員（訂閱）
 
@@ -120,7 +141,7 @@ curl -fsS -X POST --data-binary @spillway-config.yaml -H 'Content-Type: applicat
   'http://127.0.0.1:8787/api/config/import?mode=replace'
 ```
 
-- **設定檔等同程式碼，只匯入可信來源。** 匯入可改變成員的 `credential_ref`、上游位址（`params.api_base` 等）與 CLI 參數（`extra_args`、`effort_args`、`cwd`）；例如把 `api_base` 指向外部主機並把 `credential_ref` 設成任意環境變數，下一次呼叫就會把該變數的值送出去。匯入前先以 `dry_run=true` 預覽：回應的 `privileged` 列出會新增或變更這類欄位的成員 id（不含值）。伺服端不另外要求確認。
+- **設定檔等同程式碼，只匯入可信來源。** 匯入可改變成員的 `credential_ref`、供應商（`provider`）、上游位址（`params.api_base` 等）與 CLI 參數（`extra_args`、`effort_args`、`cwd`）；例如把 `api_base` 指向外部主機並把 `credential_ref` 設成任意環境變數，下一次呼叫就會把該變數的值送出去。匯入前先以 `dry_run=true` 預覽：回應的 `privileged` 列出會新增或變更這類欄位的成員 id（不含值；既有成員的 `provider` 改變也列入）。UI-7 的匯入一律先預覽並顯示確認對話框。伺服端不另外要求確認。
 - `mode` 必填：`merge` 只新增或整筆取代檔案中的成員、群組、route（檔案外的不動；route 的 `targets` 一併取代，沒列則回到預設順序；settings 只改檔案中出現的鍵）；`replace` 另外刪除檔案外的成員、群組、route，檔案沒有的 context 設定回到預設值（例如 `context_retention_days` 回到 7，下一次清理就會刪除較舊的 payload）。帳本、payload、存取 token 都不受影響；仍存在的成員保留冷卻狀態。
 - 任何欄位不合法時整批不寫入，回 422 `validation_error`，訊息列出欄位路徑（一次最多 20 筆，不回顯值）；匯入後有兩個以上同一個訂閱 CLI provider 的成員時回 409 `provider_single`。
 - curl 必須用 `--data-binary`（`-d` 會剝掉換行）並帶 `Content-Type: application/yaml`（也接受 `application/x-yaml`、`text/yaml`；其他型別回 422，這也讓網頁無法以跨站表單送出匯入）。檔案上限 1 MiB；YAML 的 anchor／alias、明確 tag（如 `!!binary`）與重複鍵都會被拒。
@@ -140,16 +161,17 @@ curl -fsS -X POST --data-binary @"$SPILLWAY_HOME/backups/<backup>" -H 'Content-T
 
 `replace` 在刪除任何資料前，會先檢查「目前的設定」能否通過匯出的憑證鍵名掃描與匯入解析器；不能通過時回 HTTP 422 `validation_error`，只列出位置、不含值，不刪除、不寫備份；`dry_run=true` 同樣回此 422。因此 `replace` 寫下的備份一定可還原。要繼續，請先用管理 API 修正所列的資料列，再重試。
 
-已知限制：① 本機其他程式（非瀏覽器）可直接呼叫匯入，備份是唯一的復原手段；匯入不檢查 `credential_ref` 指向的環境變數或 keyring 項目是否存在；② 資料庫內既有的違規資料（例如 route 指向不存在的群組、單一 provider 群組有兩個成員）會讓每一次 `merge` 匯入都被擋下（最終狀態檢查涵蓋整個資料庫）；③ 改變成員的 `provider` 不列入回應的 `privileged`。
+已知限制：① 本機其他程式（非瀏覽器）可直接呼叫匯入，備份是唯一的復原手段；匯入不檢查 `credential_ref` 指向的環境變數或 keyring 項目是否存在；② 資料庫內既有的違規資料（例如 route 指向不存在的群組、單一 provider 群組有兩個成員）會讓每一次 `merge` 匯入都被擋下（最終狀態檢查涵蓋整個資料庫）。
 
 ## 帳本 CSV 與設定總覽
 
-- `GET /api/ledger/export.csv`：篩選參數與 `GET /api/ledger` 相同（`from`、`to`、`deployment`、`route`、`status`），不分頁，最多 100,000 列（超過回 422，請縮小範圍）。UTF-8 BOM、欄位與帳本列相同，不含 prompt 與回應；以 `=`、`+`、`-`、`@`、Tab、CR 開頭的文字欄位前面會加 `'`，避免試算表當成公式。下載期間閘道持有一份讀取快照。
+- `GET /api/ledger/export.csv`：篩選參數與 `GET /api/ledger` 相同（`from`、`to`、`deployment`、`route`、`status`、`min_depth`：只列 `fallback_depth` 不小於此值的列，`1` 即「只看 fallback」），不分頁，最多 100,000 列（超過回 422，請縮小範圍）。UTF-8 BOM、欄位與帳本列相同，不含 prompt 與回應；以 `=`、`+`、`-`、`@`、Tab、CR 開頭的文字欄位前面會加 `'`，避免試算表當成公式。下載期間閘道持有一份讀取快照。
 - `GET /api/settings`：埠號、資料目錄、版本、token 是否已產生（不含 token）、是否首次使用（`first_run`：沒有成員也沒有 route）、成員／群組／route／成功帳本列數與 context 設定。
+- 畫面另用的讀取端點（格式見規格書 9.2.8）：`POST /api/groups/preview`（以未儲存的選擇器預覽成員）、`GET /api/routes/{name}/effective-order`（目前生效的順序，含停用與冷卻中的成員）、`GET /api/mcp/catalog?group=`（UI-8 的資料）；`GET /api/dashboard` 每個成員另帶 `daily_spend_7d`（近 7 天日均花費）。
 
 ## Host 與 Origin 檢查
 
-所有端點（`/v1`、`/api`、`/mcp`）只接受 `Host` 為 `127.0.0.1` 或 `localhost`（可帶埠號）的請求，其他回 403 `host_not_allowed`（包括 `[::1]`）；請以 `http://127.0.0.1:8787` 或 `http://localhost:8787` 連線。請求帶 `Origin` 時必須是 `http://127.0.0.1:<埠>` 或 `http://localhost:<埠>`（serve 實際的埠），否則回 403 `origin_not_allowed`；CLI 與 SDK 不送 `Origin`，不受影響。帶兩個 `Host` header 的請求由伺服器（uvicorn）直接回 400。這擋住網頁發起的跨站請求與 DNS rebinding；本機其他程式（非瀏覽器）仍可呼叫 `/api`。
+所有端點（`/v1`、`/api`、`/mcp`、`/ui`）只接受 `Host` 為 `127.0.0.1` 或 `localhost`（可帶埠號）的請求，其他回 403 `host_not_allowed`（包括 `[::1]`）；請以 `http://127.0.0.1:8787` 或 `http://localhost:8787` 連線。請求帶 `Origin` 時必須是 `http://127.0.0.1:<埠>` 或 `http://localhost:<埠>`（serve 實際的埠），否則回 403 `origin_not_allowed`；CLI 與 SDK 不送 `Origin`，不受影響。帶兩個 `Host` header 的請求由伺服器（uvicorn）直接回 400。這擋住網頁發起的跨站請求與 DNS rebinding；本機其他程式（非瀏覽器）仍可呼叫 `/api`。
 
 ## 升級與備份（schema）
 
@@ -171,6 +193,18 @@ curl -fsS -X POST --data-binary @"$SPILLWAY_HOME/backups/<backup>" -H 'Content-T
 | --- | --- |
 | `functions`、`function_call`（OpenAI 舊版函式呼叫） | 丟棄，不轉交上游；請改用 `tools` 與 `tool_choice` |
 | 其他不在白名單內的參數 | 丟棄，不轉交上游 |
+
+## 開發與測試
+
+```bash
+uv pip install --python .venv/bin/python -e '.[dev]'   # dev 相依含 pytest、behave、playwright==1.64.1
+export PYTHONPATH=src LITELLM_LOCAL_MODEL_COST_MAP=True
+.venv/bin/python -m pytest -q                          # 全量（含 tests/ui 的畫面測試）
+.venv/bin/python -m pytest tests/ui -q                 # 只跑畫面測試（Playwright、headless Chromium）
+.venv/bin/python -m behave tests/features
+```
+
+畫面測試使用 Playwright 1.64.1 對應的 Chromium 1248（headless），可先以 `.venv/bin/python -m playwright install --dry-run chromium` 確認安裝位置；瀏覽器不存在時畫面測試會失敗（不會略過），需要時以 `.venv/bin/python -m playwright install chromium` 安裝（會下載瀏覽器）。畫面測試以暫存資料目錄執行，不讀寫實際的資料目錄，也不連外。
 
 ## 使用範圍
 
