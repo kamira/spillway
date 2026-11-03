@@ -25,7 +25,7 @@ from playwright.sync_api import Browser, Page, expect
 
 from tests.helpers import TEST_KEY, TEST_KEY_ENV
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import NAV, PAGES, close_and_collect, goto, guard_of, import_module, open_context
+from tests.helpers.ui import NAV, PAGES, api, close_and_collect, goto, guard_of, import_module, open_context
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -35,7 +35,10 @@ MakeGw = Callable[..., LiveGateway]
 
 @pytest.fixture
 def gw(make_ui_gateway: MakeGw) -> LiveGateway:
-    return make_ui_gateway()
+    g = make_ui_gateway()
+    # 有一條 route → first_run 為 false,總覽不導向精靈(T4 決策 11);沒有成員 → 不顯示續作橫幅
+    api(g, "POST", "/api/routes", {"name": "shell", "target": {"tags": {"any": ["shell"]}}})
+    return g
 
 
 @pytest.fixture
