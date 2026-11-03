@@ -5,7 +5,7 @@
 
 常數
 - `NAV`:導覽 8 項(文字, href),依決策 20。
-- `PAGES`:10 個頁面 → `Page(file, path, title, current, script)`。
+- `PAGES`:10 個頁面 → `PageSpec(file, title, current, script)`(`path` 為推導屬性)。
 
 瀏覽器
 - `open_context(browser, *, permissions=(), accept_downloads=True, timezone_id="Asia/Taipei",
@@ -19,6 +19,8 @@
   - `violations()`:目前的違規清單;`take(pred)`:移除並回傳符合的違規(測試已明確斷言的預期錯誤,例如
     gateway 停止後的 `net::ERR_*`);`assert_clean()`。
 - `guard_of(page) -> PageGuard`。
+- `close_and_collect(opened) -> list[Violation]`:**先**關閉每個 context(讓排隊中的 console/pageerror
+  事件送達),再收集違規;只濾掉關閉時被中止的請求產生的 `net::ERR_ABORTED`(T3 審議 M2)。
 - `goto(page, gw, path)`:開啟頁面並等到共用外框初始化(`html[data-shell="ready"]`)。
 - `import_module(page, name)`:在頁面中動態 import `assets/js/<name>`,存到 `window.__mods[name]`
   (之後以 `page.evaluate("… window.__mods['api.js'] …")` 呼叫)。
@@ -41,9 +43,10 @@ from urllib.parse import urlsplit
 import httpx
 from playwright.sync_api import Browser, BrowserContext, ConsoleMessage, Dialog, Error, Page, Request, Route
 
-__all__ = ["NAV", "PAGES", "Page_", "PageGuard", "api", "db_execute", "db_snapshot", "goto", "guard_of",
+__all__ = ["NAV", "PAGES", "PageSpec", "PageGuard", "api", "db_execute", "db_snapshot", "close_and_collect", "goto", "guard_of",
            "import_module", "is_local_url", "open_context"]
 
+# 導覽 8 項:鏡像 web/static/assets/js/strings.js 的正式清單 NAV(決策 20);各 HTML 的 <nav> 須與此一致
 NAV: list[tuple[str, str]] = [
     ("總覽", "/ui/"), ("成員", "/ui/members.html"), ("群組與 Tag", "/ui/groups.html"),
     ("Route", "/ui/routes.html"), ("MCP 設定", "/ui/mcp.html"), ("帳本", "/ui/ledger.html"),
@@ -52,7 +55,7 @@ NAV: list[tuple[str, str]] = [
 
 
 @dataclass(frozen=True)
-class Page_:
+class PageSpec:
     file: str
     title: str
     current: str      # aria-current 指向的導覽文字
@@ -63,17 +66,17 @@ class Page_:
         return "/ui/" if self.file == "index.html" else f"/ui/{self.file}"
 
 
-PAGES: list[Page_] = [
-    Page_("index.html", "總覽", "總覽", "overview.js"),
-    Page_("members.html", "成員", "成員", "members.js"),
-    Page_("groups.html", "群組與 Tag", "群組與 Tag", "groups.js"),
-    Page_("routes.html", "Route", "Route", "routes.js"),
-    Page_("route.html", "編輯 Route", "Route", "route-editor.js"),
-    Page_("mcp.html", "MCP 設定", "MCP 設定", "mcp.js"),
-    Page_("ledger.html", "帳本", "帳本", "ledger.js"),
-    Page_("settings.html", "設定", "設定", "settings.js"),
-    Page_("wizard.html", "首次設定", "總覽", "wizard.js"),
-    Page_("api-reference.html", "API 參考", "API 參考", "api-reference.js"),
+PAGES: list[PageSpec] = [
+    PageSpec("index.html", "總覽", "總覽", "overview.js"),
+    PageSpec("members.html", "成員", "成員", "members.js"),
+    PageSpec("groups.html", "群組與 Tag", "群組與 Tag", "groups.js"),
+    PageSpec("routes.html", "Route", "Route", "routes.js"),
+    PageSpec("route.html", "編輯 Route", "Route", "route-editor.js"),
+    PageSpec("mcp.html", "MCP 設定", "MCP 設定", "mcp.js"),
+    PageSpec("ledger.html", "帳本", "帳本", "ledger.js"),
+    PageSpec("settings.html", "設定", "設定", "settings.js"),
+    PageSpec("wizard.html", "首次設定", "總覽", "wizard.js"),
+    PageSpec("api-reference.html", "API 參考", "API 參考", "api-reference.js"),
 ]
 
 _LOCAL_HOSTS = {"127.0.0.1", "localhost"}
@@ -178,6 +181,22 @@ _GUARDS: dict[int, PageGuard] = {}
 
 def guard_of(page: Page) -> PageGuard:
     return _GUARDS[id(page)]
+
+
+_ABORT_NOISE = "net::ERR_ABORTED"
+
+
+def close_and_collect(opened: Iterable[tuple[BrowserContext, PageGuard]]) -> list[Violation]:
+    """先關閉 context 再收集違規:sync API 的事件只在下一次 Playwright 呼叫時派送,所以測試最後一個
+    動作之後才發生的 console error 或 pageerror,要到 `close()` 時才會送達。關閉當下新增、屬於中止請求的
+    `net::ERR_ABORTED` 不算違規(關閉造成的雜訊);其他一律保留。"""
+    found: list[Violation] = []
+    for ctx, guard in opened:
+        before = len(guard.records)
+        ctx.close()
+        late = [v for v in guard.records[before:] if not (v.kind == "console" and _ABORT_NOISE in v.text)]
+        found.extend(guard.records[:before] + late)
+    return found
 
 
 def open_context(browser: Browser, *, permissions: Iterable[str] = (), accept_downloads: bool = True,

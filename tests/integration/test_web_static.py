@@ -43,6 +43,7 @@ def static_copy(tmp_path_factory: pytest.TempPathFactory) -> Path:
     shutil.copytree(web.WEB_ROOT, root)
     (root / ".DS_Store").write_bytes(b"\x00\x00\x00\x01Bud1")
     (root / "x.py").write_text("print('x')\n", encoding="utf-8")
+    (root / "notes.md").write_text("# NOTES-ORIGINAL\n", encoding="utf-8")
     hidden = root / ".git"
     hidden.mkdir()
     (hidden / "config.html").write_text("<p>hidden</p>", encoding="utf-8")
@@ -205,6 +206,32 @@ def test_traversal_raw_path_404(client: httpx.Client, raw: bytes) -> None:
     assert "def create_app" not in resp.text
     assert "<nav" not in resp.text
     assert SECRET_TEXT not in resp.text
+
+
+@pytest.mark.parametrize("path", ["/ui/x.py/", "/ui/notes.md/", "/ui/index.html/", "/ui/assets/app.css/",
+                                  "/ui/assets/js/api.js/", "/ui/nope/"])
+def test_trailing_slash_on_file_404(client: httpx.Client, path: str) -> None:
+    # T3 審議 M1:StaticFiles 會 normpath 掉結尾斜線;只有真的目錄才可帶結尾 `/`
+    resp = client.get(path)
+    assert resp.status_code == 404, path
+    assert "print('x')" not in resp.text
+    assert "NOTES-ORIGINAL" not in resp.text
+    assert "<nav" not in resp.text
+    _assert_ui_headers(resp)
+
+
+@pytest.mark.parametrize("raw", [b"/ui/x.py%2f", b"/ui/notes.md%2F", b"/ui/index.html%2f"])
+def test_trailing_encoded_slash_on_file_404(client: httpx.Client, raw: bytes) -> None:
+    resp = client.get("/ui/", extensions={"target": raw})
+    assert resp.status_code == 404, raw
+    assert "print('x')" not in resp.text
+    assert "NOTES-ORIGINAL" not in resp.text
+
+
+def test_ui_root_dir_still_served(client: httpx.Client) -> None:
+    resp = client.get("/ui/")
+    assert resp.status_code == 200
+    assert "<nav" in resp.text
 
 
 def test_wrong_host_403(client: httpx.Client) -> None:

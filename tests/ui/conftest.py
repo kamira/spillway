@@ -35,7 +35,7 @@ from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_
 
 from tests.helpers import TEST_KEY, TEST_KEY_ENV
 from tests.helpers.live_gateway import LiveGateway, start_live_gateway
-from tests.helpers.ui import PageGuard, open_context
+from tests.helpers.ui import PageGuard, close_and_collect, open_context
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -112,9 +112,7 @@ def new_page(browser: Browser, request: pytest.FixtureRequest,
         return ctx.new_page()
 
     yield factory
-    problems: list[str] = []
-    for ctx, guard in opened:
-        problems.extend(str(v) for v in guard.violations())
-        ctx.close()
+    # 先關閉再收集(T3 審議 M2):最後一個動作之後才發生的事件要到 close 時才送達
+    problems = [str(v) for v in close_and_collect(opened)]
     if problems:
         pytest.fail("畫面違規(console error / pageerror / 非本機請求):\n" + "\n".join(problems))

@@ -155,6 +155,8 @@ export function kindBadge(kind) {
 
 // ---- 導覽 -----------------------------------------------------------------------------------
 
+// 決策 8 的靜態掃描禁止直接改 location;改由 h() 建一個 <a>(經同源網址檢查)再 click() 觸發導覽,
+// 不放進 DOM。path 必須以 /ui/ 或 ./ 開頭(或 #、?)。
 export function navigate(path) {
   h("a", { href: path }).click();
 }

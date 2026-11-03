@@ -60,7 +60,8 @@ BANNED_JS = {
     ".action =": r"\.\s*action\s*=(?!=)",
     ".formAction =": r"\.\s*formAction\s*=(?!=)",
     ".srcdoc": r"\.\s*srcdoc\b",
-    "location =": r"\blocation\s*=(?!=)",
+    # 宣告名為 location 的區域變數不算(仍建議不要用這個名稱)
+    "location =": r"(?<!let )(?<!const )(?<!var )\blocation\s*=(?!=)",
     "location.href =": r"\blocation\s*\.\s*href\s*=(?!=)",
     "location.assign": r"\blocation\s*\.\s*assign\b",
     "location.replace": r"\blocation\s*\.\s*replace\b",
@@ -113,13 +114,15 @@ def test_shared_js_no_console(name: str) -> None:
     ("location.assign", "location.assign(u)"), ("window.open(", "window.open(u)"),
     ("import(非字面)", "import(name)"), ("import(非字面)", "import(`./${x}.js`)"),
     ("DOMParser", "new DOMParser()"), (".srcdoc", "f.srcdoc = s"), ("location =", "location = u"),
+    ("location =", "window.location = u"),
 ])
 def test_banned_patterns_detect_samples(label: str, sample: str) -> None:
     assert re.search(BANNED_JS[label], sample)
 
 
 @pytest.mark.parametrize("sample", ["a.href === b", "import('./x.js')", 'import("./ui.js")',
-                                    "x.evaluate()", "setTimeout(fn, 300)", "el.dataset.src"])
+                                    "x.evaluate()", "setTimeout(fn, 300)", "el.dataset.src",
+                                    "let location = 1", "const location = x"])
 def test_banned_patterns_allow_samples(sample: str) -> None:
     assert [k for k, rx in BANNED_JS.items() if re.search(rx, sample)] == []
 
@@ -249,6 +252,30 @@ def test_nav_aria_current_points_to_self(name: str) -> None:
     current = [t for t, _, cur in page.nav_links if cur is not None]
     assert current == [PAGES[name][1]]
     assert [cur for _, _, cur in page.nav_links if cur is not None] == ["page"]
+
+
+# ---- 檔案過濾函式 ---------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("path,dirs,expected", [
+    ("/ui/", {""}, True), ("/ui/assets/", {"", "assets"}, True), ("/ui/index.html", set(), True),
+    ("/ui/assets/js/api.js", set(), True),
+    ("/ui/x.py/", {""}, False), ("/ui/notes.md/", {""}, False), ("/ui/index.html/", {""}, False),
+    ("/ui/x.py", {""}, False), ("/ui/assets", {"assets"}, False), ("/ui/.git/", {".git"}, False),
+    ("/ui/../app.py", set(), False), ("/ui/a\\b.html", set(), False), ("/ui/", None, False),
+])
+def test_is_allowed_path(path: str, dirs: set[str] | None, expected: bool) -> None:
+    from spillway.web import is_allowed_path
+    is_dir = None if dirs is None else (lambda rel: rel in dirs)
+    assert is_allowed_path(path, is_dir) is expected
+
+
+def test_static_filter_dir_check_uses_root(tmp_path: Path) -> None:
+    from spillway.web import StaticFilter
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "x.py").write_text("x", encoding="utf-8")
+    f = StaticFilter(lambda *a: None, tmp_path)
+    assert f._is_dir("") and f._is_dir("sub")
+    assert not f._is_dir("x.py") and not f._is_dir("nope")
 
 
 # ---- 架構守門(AM-16)-----------------------------------------------------------------------------

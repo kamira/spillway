@@ -1,12 +1,18 @@
 // DOM 建構(CHG-20261103-01 決策 8;AM-12)。
 // 動態資料只以 text node、value 或 setAttribute 放入 DOM;不以字串解析 HTML。
-// h() 在執行期拒絕:事件屬性(on*)、style、srcdoc、formaction;href/src/action 的值不以
-// ./、/ui/、/api/、#、?、blob: 開頭;危險的 tag(denylist)。
+// h() 在執行期拒絕:事件屬性(on*)、style、srcdoc、formaction;網址屬性(href、src、action、
+// srcset 的每個候選、poster、ping 的每個網址)不以 ./、/ui/、/api/、#、?、blob: 開頭;危險的 tag(denylist)。
+// 屬性值只轉成字串一次,檢查與寫入用同一個值。
 
 const BANNED_TAGS = new Set(["script", "style", "iframe", "object", "embed", "base", "link", "meta",
   "frame", "frameset"]);
 const BANNED_ATTRS = new Set(["style", "srcdoc", "formaction"]);
-const URL_ATTRS = new Set(["href", "src", "action", "xlink:href"]);
+const URL_ATTRS = new Set(["href", "src", "action", "xlink:href", "poster"]);
+// 值內含多個網址的屬性:srcset 以逗號分隔(每個候選取第一段),ping 以空白分隔
+const MULTI_URL_ATTRS = new Map([
+  ["srcset", (v) => v.split(",").map((c) => c.trim().split(/\s+/)[0])],
+  ["ping", (v) => v.trim().split(/\s+/)],
+]);
 const SAFE_URL = /^(\.\/|\/ui\/|\/api\/|#|\?|blob:)/;
 
 export class DomError extends Error {
@@ -23,8 +29,11 @@ export function isSafeUrl(value) {
 export function setAttr(el, name, value) {
   const n = String(name).toLowerCase();
   if (/^on/i.test(n) || BANNED_ATTRS.has(n)) throw new DomError(`不允許的屬性:${name}`);
-  if (URL_ATTRS.has(n) && !isSafeUrl(value)) throw new DomError(`不允許的網址:${name}`);
-  el.setAttribute(name, value === true ? "" : String(value));
+  const v = value === true ? "" : String(value);
+  if (URL_ATTRS.has(n) && !isSafeUrl(v)) throw new DomError(`不允許的網址:${name}`);
+  const split = MULTI_URL_ATTRS.get(n);
+  if (split && !split(v).every((u) => isSafeUrl(u))) throw new DomError(`不允許的網址:${name}`);
+  el.setAttribute(name, v);
   return el;
 }
 

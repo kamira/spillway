@@ -1,6 +1,6 @@
 // 同源 /api 呼叫(CHG-20261103-01 決策 20;AM-2、AM-12)。
 // 一律帶 cache: "no-store";非 2xx 時解析 spec 9.1.2 為 ApiError{status, code, message},
-// 非 JSON 時以狀態碼表示;fetch 本身失敗時丟 ApiError{status: 0, code: "network_error"}
+// 非 JSON 時以狀態碼表示;2xx 但 body 無法解析時為 ApiError{code: "bad_response"};fetch 本身失敗時丟 ApiError{status: 0, code: "network_error"}
 // (只用於前端,不是伺服端錯誤碼)。不輸出請求或回應內容到 console。
 
 import { TEXT } from "./strings.js";
@@ -46,16 +46,25 @@ export async function request(method, path, { body, headers } = {}) {
   return resp;
 }
 
+// 2xx 但 body 無法解析(非 JSON、讀取中斷)時也丟 ApiError,畫面不會顯示引擎的英文訊息
+async function readBody(resp, read) {
+  try {
+    return await read();
+  } catch {
+    throw new ApiError(resp.status, "bad_response", TEXT.bad_response);
+  }
+}
+
 async function parseBody(resp) {
   if (resp.status === 204) return null;
   const type = resp.headers.get("content-type") || "";
-  if (type.includes("application/json")) return resp.json();
-  return resp.text();
+  if (type.includes("application/json")) return readBody(resp, () => resp.json());
+  return readBody(resp, () => resp.text());
 }
 
 export async function getJSON(path) {
   const resp = await request("GET", path, { headers: { Accept: "application/json" } });
-  return resp.json();
+  return readBody(resp, () => resp.json());
 }
 
 export async function sendJSON(method, path, body) {

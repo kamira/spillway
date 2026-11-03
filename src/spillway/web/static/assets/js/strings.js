@@ -1,6 +1,7 @@
 // 畫面字串對照表(CHG-20261103-01 決策 20;AM-17)。畫面文字為繁體中文。
 // 代碼對應的標籤以 label(table, value) 取得;原值由呼叫端放在 title(見 ui.js 的 codeLabel)。
 
+// 導覽 8 項的正式清單:各 HTML 的 <nav> 與 tests/helpers/ui.py 的 NAV 都對照這份(決策 20)
 export const NAV = Object.freeze([
   ["總覽", "/ui/"],
   ["成員", "/ui/members.html"],
@@ -39,6 +40,7 @@ export const WINDOW = Object.freeze({ monthly: "每月", weekly: "每週", daily
 export const TEXT = Object.freeze({
   network_error: "無法連線到 spillway",
   http_error: "伺服器回應錯誤",
+  bad_response: "伺服器回應的內容無法解讀",
   loading: "載入中…",
   cancel: "取消",
   confirm: "確定",

@@ -15,16 +15,17 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Browser, Page, expect
 
 from tests.helpers import TEST_KEY, TEST_KEY_ENV
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import NAV, PAGES, goto, guard_of, import_module
+from tests.helpers.ui import NAV, PAGES, close_and_collect, goto, guard_of, import_module, open_context
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -169,6 +170,43 @@ def test_api_js_errors(page: Page, gw: LiveGateway) -> None:
     guard_of(page).take(lambda v: "net::ERR_" in v.text)
 
 
+def test_h_value_stringified_once(page: Page) -> None:
+    import_module(page, "dom.js")
+    got = page.evaluate("""() => {
+        const v = {n: 0, toString() { return this.n++ ? "javascript:alert(1)" : "/ui/ok.html"; }};
+        return window.__mods["dom.js"].h("a", {href: v}).getAttribute("href");
+    }""")
+    assert got == "/ui/ok.html"
+
+
+def test_h_allows_safe_multi_url_attrs(page: Page) -> None:
+    import_module(page, "dom.js")
+    got = page.evaluate("""() => {
+        const { h } = window.__mods["dom.js"];
+        return [h("img", {srcset: "/ui/a.png 1x, ./b.png 2x"}).getAttribute("srcset"),
+                h("a", {href: "#x", ping: "/api/a /api/b"}).getAttribute("ping")];
+    }""")
+    assert got == ["/ui/a.png 1x, ./b.png 2x", "/api/a /api/b"]
+
+
+def test_api_js_bad_2xx_body(page: Page) -> None:
+    import_module(page, "api.js")
+    page.route("**/api/__t3/okbad", lambda r: r.fulfill(status=200, body="not json", content_type="text/html"))
+    page.route("**/api/__t3/okbadjson", lambda r: r.fulfill(status=200, body="{oops",
+                                                           content_type="application/json"))
+    result = page.evaluate("""async () => {
+        const { getJSON, sendJSON, ApiError } = window.__mods["api.js"];
+        const caught = async (fn) => {
+            try { await fn(); return null; }
+            catch (e) { return {isApiError: e instanceof ApiError, status: e.status, code: e.code, message: e.message}; }
+        };
+        return [await caught(() => getJSON("/api/__t3/okbad")),
+                await caught(() => sendJSON("POST", "/api/__t3/okbadjson", {}))];
+    }""")
+    expected = {"isApiError": True, "status": 200, "code": "bad_response", "message": "伺服器回應的內容無法解讀"}
+    assert result == [expected, expected]
+
+
 @pytest.mark.expect_http_errors(422)
 def test_api_js_uses_no_store(page: Page) -> None:
     import_module(page, "api.js")
@@ -228,6 +266,9 @@ def test_h_injection_strings_create_no_elements(page: Page) -> None:
     'h("a", {href: "javascript:alert(1)"})', 'h("a", {href: "//evil.example/"})',
     'h("a", {href: "https://evil.example/"})', 'h("img", {src: "http://evil.example/x.png"})',
     'h("a", {href: "data:text/html,x"})', 'h("form", {action: "https://evil.example"})',
+    'h("img", {srcset: "/ui/a.png 1x, https://evil.example/b.png 2x"})', 'h("img", {srcset: ""})',
+    'h("video", {poster: "https://evil.example/p.png"})',
+    'h("a", {href: "/ui/", ping: "/api/x https://evil.example/track"})',
     'h("script")', 'h("SCRIPT")', 'h("iframe")', 'h("base", {href: "/ui/"})', 'h("style")',
     'h("object")', 'h("embed")', 'h("link")', 'h("meta")', 'h("img src=x onerror=alert(1)")',
 ])
@@ -377,9 +418,45 @@ def test_non_local_request_blocked_and_recorded(page: Page) -> None:
     # fetch 會先被 CSP connect-src 擋下(不會成為請求);導覽不受 connect-src 限制,改由 context.route 中止
     with pytest.raises(PlaywrightError):
         page.goto("http://example.invalid/x")
-    taken = guard.take(lambda v: True)
+    taken = guard.take(lambda v: v.kind == "request" or (v.kind == "console" and "net::ERR" in v.text))
+    guard.assert_clean()
     assert any(v.kind == "request" and v.url.startswith("http://example.invalid/") for v in taken)
 
+
+
+def test_close_and_collect_catches_late_events(browser: Browser, gw: LiveGateway) -> None:
+    """T3 審議 M2:最後一個 Playwright 呼叫之後才發生的 console error 與 pageerror,關閉 context 時才送達。"""
+    ctx, guard = open_context(browser)
+    page = ctx.new_page()
+    goto(page, gw, "/ui/")
+    page.evaluate("""() => { setTimeout(() => { console.error("t3 late error");
+                                                throw new Error("t3 late boom"); }, 50); }""")
+    time.sleep(0.3)   # 刻意不呼叫 Playwright:事件留在佇列裡
+    found = close_and_collect([(ctx, guard)])
+    assert [(v.kind, v.text) for v in found] == [("console", "t3 late error"), ("pageerror", "t3 late boom")]
+
+
+def test_manual_dialogs_beforeunload(page: Page, gw: LiveGateway) -> None:
+    guard = guard_of(page)
+    page.evaluate("""() => { window.addEventListener("beforeunload", (e) => { e.preventDefault(); e.returnValue = ""; }); }""")
+    page.locator("main h1").click()   # beforeunload 需要使用者互動才會顯示
+    seen: list[str] = []
+
+    def accept(dialog) -> None:  # noqa: ANN001
+        seen.append(dialog.type)
+        dialog.accept()
+
+    with guard.manual_dialogs():
+        page.once("dialog", accept)
+        page.goto(gw.url("/ui/members.html"))
+    assert seen == ["beforeunload"]
+    assert guard.dialogs[-1][0] == "beforeunload"
+    expect(page.locator("main h1")).to_have_text("成員")
+    # 區塊外恢復預設:記錄後 dismiss
+    with page.expect_event("dialog"):
+        page.evaluate("""() => { setTimeout(() => alert("t3"), 0); }""")
+    assert guard.dialogs[-1] == ("alert", "t3")
+    expect(page.locator("main h1")).to_have_text("成員")   # alert 已被 dismiss,頁面可操作
 
 
 # ---- Trusted Types 下 Playwright 的必要操作 -----------------------------------------------------
