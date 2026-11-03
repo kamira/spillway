@@ -17,6 +17,7 @@ import pytest
 import yaml
 from playwright.sync_api import Page, Route, expect
 
+from tests.contract.fakemods import write_module
 from tests.helpers import TEST_KEY_ENV, dead_base
 from tests.helpers.live_gateway import LiveGateway
 from tests.helpers.ui import api, guard_of, import_module
@@ -465,3 +466,200 @@ def test_mount_member_form_contract(new_page: NewPage, gw: LiveGateway, fake_api
     assert get_member(gw, "w1")["tags"] == ["default"]
     page.evaluate("() => window.__handle.destroy()")
     expect(page.locator("#wizard-host form")).to_have_count(0)
+
+
+
+# ---- 施工審議 T5 修正(M1–M6、選修)----------------------------------------------------------------
+
+SYNC_NOTE = "params.api_base 與上游網址不同,已以上游網址為準"
+
+
+@pytest.mark.parametrize("kind", ["api", "local"])
+def test_upstream_kept_when_params_fixed(new_page: NewPage, gw: LiveGateway, kind: str) -> None:
+    up = "http://127.0.0.1:4321/v1"
+    page = new_page()
+    open_members(page, gw)
+    form = new_form(page)
+    form.kind(kind)
+    form.field("id").fill(f"{kind}-up")
+    form.field("params").fill('{"timeout": 60')
+    form.field("upstream").fill(up)
+    form.field("params").fill('{"timeout": 60}')
+    expect(form.field("upstream")).to_have_value(up)
+    assert json.loads(form.field("params").input_value()) == {"timeout": 60, "api_base": up}
+    form.submit.click()
+    expect(page.locator("#editor-title")).to_contain_text(f"{kind}-up")
+    assert get_member(gw, f"{kind}-up")["params"] == {"timeout": 60, "api_base": up}
+
+
+def test_upstream_conflict_upstream_wins_with_note(new_page: NewPage, gw: LiveGateway) -> None:
+    a, b = "http://127.0.0.1:1111/v1", "http://127.0.0.1:2222/v1"
+    page = new_page()
+    open_members(page, gw)
+    form = new_form(page)
+    form.kind("api")
+    form.field("id").fill("conflict")
+    form.field("params").fill("{")
+    form.field("upstream").fill(b)
+    form.field("params").fill(json.dumps({"api_base": a}))
+    expect(form.field("upstream")).to_have_value(b)
+    expect(form.form.locator('[data-role="form-note"]')).to_have_text(SYNC_NOTE)
+    assert json.loads(form.field("params").input_value()) == {"api_base": b}
+    form.submit.click()
+    expect(page.locator("#msgbar")).to_contain_text(SYNC_NOTE)
+    assert get_member(gw, "conflict")["params"]["api_base"] == b
+
+
+@pytest.mark.parametrize("field,error", [("limit_amount", "上限必須是 0 以上的數字"),
+                                         ("ctx", "Context 上限必須是正整數")])
+def test_bad_number_input_not_sent(new_page: NewPage, gw: LiveGateway, field: str, error: str) -> None:
+    budget = {"type": "usd", "limit_amount": 5, "window": "monthly", "reset_anchor": None}
+    seed_member(gw, "num1", budget=budget)
+    page = new_page()
+    open_members(page, gw, "num1")
+    form = MemberForm(page)
+    form.wait_ready()
+    form.field(field).fill("")
+    form.field(field).press_sequentially("1e")
+    assert form.field(field).evaluate("(el) => el.validity.badInput") is True
+    guard = guard_of(page)
+    form.submit.click()
+    expect(form.error).to_have_text(error)
+    assert requests_of(guard, "PUT", "/api/deployments/num1") == []
+    after = get_member(gw, "num1")
+    assert after["budget"] == budget and after["capabilities"]["ctx"] == 1000
+
+
+def test_toggle_updates_open_editor(new_page: NewPage, gw: LiveGateway) -> None:
+    seed_member(gw, "m1")
+    page = new_page()
+    open_members(page, gw, "m1")
+    form = MemberForm(page)
+    form.wait_ready()
+    expect(form.field("enabled")).to_be_checked()
+    page.locator('input[data-toggle="m1"]').uncheck()
+    expect(page.locator("#msgbar")).to_contain_text("已停用 m1")
+    expect(form.field("enabled")).not_to_be_checked()
+    form.submit.click()
+    expect(page.locator("#msgbar")).to_contain_text("已儲存成員")
+    assert get_member(gw, "m1")["enabled"] is False
+
+
+def test_dot_ids_rejected_on_create(new_page: NewPage, gw: LiveGateway) -> None:
+    page = new_page()
+    open_members(page, gw)
+    form = new_form(page)
+    for bad in (".", ".."):
+        form.field("id").fill(bad)
+        form.submit.click()
+        expect(form.error).to_contain_text("不可為 . 或 ..")
+    assert requests_of(guard_of(page), "POST", "/api/deployments") == []
+
+
+def test_dot_id_member_not_managed(new_page: NewPage, gw: LiveGateway) -> None:
+    seed_member(gw, ".")
+    seed_member(gw, "ok1")
+    page = new_page()
+    open_members(page, gw)
+    row = page.locator('tr[data-member="."]')
+    expect(row).to_be_visible()
+    expect(row.locator("a")).to_have_count(0)
+    expect(page.locator('input[data-toggle="."]')).to_be_disabled()
+    expect(page.locator('input[data-toggle="ok1"]')).to_be_enabled()
+    guard = guard_of(page)
+    guard.requests.clear()
+    page.goto(gw.url("/ui/members.html#."))
+    expect(page.locator("#msgbar")).to_contain_text("無法在畫面上管理")
+    expect(page.locator("#member-editor")).to_be_hidden()
+    assert [u for _, u in guard.requests if "/api/deployments/" in u] == []
+
+
+def test_litellm_member_create_and_edit(new_page: NewPage, gw: LiveGateway) -> None:
+    page = new_page()
+    open_members(page, gw)
+    form = new_form(page)
+    form.kind("api")
+    form.provider.select_option("litellm")
+    expect(form.field("llm_provider")).to_be_visible()
+    form.model.select_option(label="DeepSeek Chat")
+    expect(form.field("llm_provider")).to_have_value("deepseek")
+    form.field("llm_provider").fill("deepseek")
+    form.field("id").fill("ds1")
+    form.submit.click()
+    expect(page.locator("#editor-title")).to_contain_text("ds1")
+    dep = get_member(gw, "ds1")
+    assert (dep["provider"], dep["model"], dep["model_name"]) == ("deepseek", "deepseek-chat", "deepseek-chat")
+
+    seed_member(gw, "ds2", provider="deepseek", model="deepseek-chat", model_name="ds")
+    before = get_member(gw, "ds2")
+    open_members(page, gw, "ds2")
+    form = MemberForm(page)
+    form.wait_ready()
+    expect(form.provider).to_have_value("litellm")
+    expect(form.field("llm_provider")).to_have_value("deepseek")
+    expect(form.model.locator("option:checked")).to_have_text("DeepSeek Chat")
+    form.submit.click()
+    expect(page.locator("#msgbar")).to_contain_text("已儲存成員")
+    assert get_member(gw, "ds2") == before
+
+
+def test_removed_cli_module_member(new_page: NewPage, gw: LiveGateway) -> None:
+    seed_member(gw, "gone", kind="cli", provider="gone-cli", model="x-1", params={}, credential_ref=None)
+    page = new_page()
+    open_members(page, gw)
+    expect(page.locator('tr[data-member="gone"]')).to_contain_text("模組不可用")
+    open_members(page, gw, "gone")
+    form = MemberForm(page)
+    form.wait_ready()
+    expect(form.provider).to_have_value("gone-cli")
+    expect(form.provider.locator("option:checked")).to_have_text("gone-cli(模組不可用)")
+    expect(form.model).to_have_value("__other__")
+    expect(form.field("model_manual")).to_have_value("x-1")
+
+
+def test_mount_member_form_edit_and_cancel(new_page: NewPage, gw: LiveGateway) -> None:
+    seed_member(gw, "e1")
+    page = new_page()
+    open_members(page, gw)
+    import_module(page, "member-form.js")
+    page.evaluate("""async () => {
+        const initial = await (await fetch("/api/deployments/e1", {cache: "no-store"})).json();
+        const host = document.createElement("div");
+        host.id = "edit-host";
+        document.querySelector("main").append(host);
+        window.__saved = [];
+        window.__cancelled = 0;
+        window.__handle = window.__mods["member-form.js"].mountMemberForm(host, {
+            initial, onSaved: (m, info) => { window.__saved.push([m.id, info.created]); },
+            onCancel: () => { window.__cancelled += 1; },
+        });
+    }""")
+    form = MemberForm(page, page.locator("#edit-host"))
+    form.wait_ready()
+    expect(form.field("id")).to_be_disabled()
+    form.field("model_name").fill("e1-renamed")
+    form.submit.click()
+    page.wait_for_function("() => window.__saved.length === 1")
+    assert page.evaluate("() => window.__saved") == [["e1", False]]
+    assert get_member(gw, "e1")["model_name"] == "e1-renamed"
+    form.form.locator('[data-role="cancel"]').click()
+    assert page.evaluate("() => window.__cancelled") == 1
+
+
+def test_user_data_rendered_as_text(new_page: NewPage, make_ui_gateway: MakeGw, tmp_path: Path) -> None:
+    evil = '<img src=x onerror="window.__xss=1">'
+    write_module(tmp_path / "mods", "xssmod", providers=("xss-p",),
+                 models_yaml=("- id: xm\n  label: '" + evil + "'\n"
+                              "  capabilities: {ctx: 10, tools: false, vision: false, efforts: []}\n"))
+    gw = make_ui_gateway(extra_adapter_paths=[tmp_path / "mods"])
+    seed_member(gw, "<i>x", tags=[evil])
+    page = new_page()
+    open_members(page, gw)
+    row = page.locator("#member-table-host tbody tr").first
+    expect(row).to_contain_text("<i>x")
+    expect(row).to_contain_text(evil)
+    form = new_form(page)
+    form.provider.select_option("xss-p")
+    expect(form.model.locator("option").first).to_have_text(evil)
+    assert page.locator("main img, main i").count() == 0
+    assert page.evaluate("() => window.__xss") is None

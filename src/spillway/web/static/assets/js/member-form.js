@@ -67,8 +67,9 @@ const S = Object.freeze({
   choose_provider: "— 無可用的供應商 —",
   single_full: "已有 1 個,僅限 1 個",
   unavailable: "模組不可用",
+  kind_unsupported: "此類型不支援",
   models_error: "無法取得執行期模型清單,只列 models.yaml:",
-  err_id: "請填寫成員 id(不可含空白或 /)",
+  err_id: "請填寫成員 id(不可含空白或 /,也不可為 . 或 ..)",
   err_provider: "請選擇可用的供應商",
   err_model: "請選擇或輸入模型",
   err_model_name: "model_name 為必填",
@@ -118,6 +119,8 @@ export function mountMemberForm(container, {
     tags: [...(base.tags || [])],
     modelNameAuto: !editing && !base.model_name,
     destroyed: false,
+    upstreamPending: false,   // params 不合法時改過上游欄位
+    syncConflict: false,      // 上游欄位蓋過了 params 中不同的 api_base
   };
 
   // ---- 控制項 ----
@@ -144,7 +147,8 @@ export function mountMemberForm(container, {
   const upstreamInput = h("input", { type: "url", id: fid("upstream"), name: "upstream", class: "mono",
     autocomplete: "off", placeholder: "http://127.0.0.1:11434/v1" });
   const upstreamHint = h("span", { class: "hint" });
-  const upstreamField = h("label", { class: "f", for: fid("upstream") }, S.upstream, upstreamInput, upstreamHint);
+  const upstreamField = field(S.upstream, upstreamInput, { id: fid("upstream") });
+  upstreamField.append(upstreamHint);
   const credInput = h("input", { type: "text", id: fid("credential"), name: "credential_ref", class: "mono",
     autocomplete: "off", spellcheck: "false", placeholder: "env:OPENAI_API_KEY",
     value: base.credential_ref || "" });
@@ -170,7 +174,8 @@ export function mountMemberForm(container, {
   const enabledBox = h("input", { type: "checkbox", name: "enabled", checked: base.enabled !== false });
   const paramsInput = h("textarea", { id: fid("params"), name: "params", class: "mono", autocomplete: "off",
     spellcheck: "false", rows: "6" });
-  const formError = h("p", { class: "f-error", role: "alert", "data-role": "form-error", hidden: true });
+  const formError = h("p", { class: "error", role: "alert", "data-role": "form-error", hidden: true });
+  const formNote = h("p", { class: "hint warn-text", role: "status", "data-role": "form-note", hidden: true });
   const submitBtn = h("button", { type: "submit", class: "btn primary", "data-role": "submit", disabled: true }, submitLabel);
   const cancelBtn = onCancel ? h("button", { type: "button", class: "btn", "data-role": "cancel" }, S.cancel) : null;
 
@@ -209,7 +214,7 @@ export function mountMemberForm(container, {
       h("div", { class: "hint params-help" }, h("strong", {}, S.params_help_title),
         h("ul", { class: "params-keys" }, ...S.params_help.map(([k, d]) => h("li", {}, h("code", {}, k), `:${d}`)))),
       paramsInput),
-    formError,
+    h("div", { class: "f" }, formError, formNote),
     h("div", { class: "row end" }, cancelBtn, submitBtn));
 
   // ---- 初值 ----
@@ -325,8 +330,10 @@ export function mountMemberForm(container, {
       if (fb) {
         pick = fb.providers[0];
       } else {
-        opts.push(h("option", { value: preferred, "data-module": "", "data-reason": S.unavailable,
-          title: S.unavailable }, `${preferred}(${S.unavailable})`));
+        // 模組存在但不支援此類型 → 「此類型不支援」;找不到任何模組 → 「模組不可用」
+        const why = moduleOf(preferred) ? S.kind_unsupported : S.unavailable;
+        opts.push(h("option", { value: preferred, "data-module": "", "data-reason": why, title: why },
+          `${preferred}(${why})`));
       }
     }
     providerSel.append(...opts);
@@ -431,6 +438,11 @@ export function mountMemberForm(container, {
     }
   }
 
+  function showFormNote(text) {
+    formNote.hidden = false;
+    setText(formNote, text);
+  }
+
   function clearFormError() {
     formError.hidden = true;
     setText(formError, "");
@@ -463,18 +475,35 @@ export function mountMemberForm(container, {
     state.modelNameAuto = modelNameInput.value === "";
   });
   // 上游網址 ⇄ params.api_base
-  upstreamInput.addEventListener("input", () => {
-    const p = parseParams();
-    if (!p) return;
+  // params 暫時不合法時修改上游欄位:記下 pending,params 恢復合法時把上游值併入 params(以上游欄為準),
+  // 不清空上游欄位(審議 M1)。
+  function mergeUpstream(p) {
     const v = upstreamInput.value.trim();
+    if (v && typeof p.api_base === "string" && p.api_base !== v) state.syncConflict = true;
     if (v) p.api_base = v;
     else delete p.api_base;
     setParamsText(p);
+  }
+  upstreamInput.addEventListener("input", () => {
+    const p = parseParams();
+    if (!p) {
+      state.upstreamPending = true;
+      return;
+    }
+    state.upstreamPending = false;
+    mergeUpstream(p);
   });
   paramsInput.addEventListener("input", () => {
     const p = parseParams();
-    if (p && typeof p.api_base === "string") upstreamInput.value = p.api_base;
-    else if (p && !("api_base" in p)) upstreamInput.value = "";
+    if (!p) return;
+    if (state.upstreamPending) {
+      state.upstreamPending = false;
+      mergeUpstream(p);
+      if (state.syncConflict) showFormNote(S.sync_note);
+      return;
+    }
+    if (typeof p.api_base === "string") upstreamInput.value = p.api_base;
+    else if (!("api_base" in p)) upstreamInput.value = "";
   });
   budgetType.addEventListener("change", syncBudget);
   windowSel.addEventListener("change", syncBudget);
@@ -490,7 +519,7 @@ export function mountMemberForm(container, {
   function buildBody() {
     clearFormError();
     const id = editing ? initial.id : idInput.value.trim();
-    if (!id || /[\s/]/.test(id)) return showFormError(S.err_id, idInput);
+    if (!id || /[\s/]/.test(id) || id === "." || id === "..") return showFormError(S.err_id, idInput);
     const opt = providerSel.selectedOptions[0];
     if (!state.modules || !opt || !opt.value || (opt.disabled && !(editing && opt.value === initial.provider))) {
       return showFormError(S.err_provider, providerSel);
@@ -508,13 +537,14 @@ export function mountMemberForm(container, {
       const up = upstreamInput.value.trim();
       if (state.kind === "local" && !up) return showFormError(S.err_upstream, upstreamInput);
       if (up) {
-        if (typeof params.api_base === "string" && params.api_base !== up) note = S.sync_note;
+        if (state.syncConflict || (typeof params.api_base === "string" && params.api_base !== up)) note = S.sync_note;
         params.api_base = up;
       } else {
         delete params.api_base;
       }
     }
     const caps = editing ? deepCopy(initial.capabilities) || {} : {};
+    if (ctxInput.validity.badInput) return showFormError(S.err_ctx, ctxInput);
     const ctxText = ctxInput.value.trim();
     if (ctxText) {
       const n = Number(ctxText);
@@ -528,6 +558,8 @@ export function mountMemberForm(container, {
     caps.efforts = effortBoxes.filter((b) => b.checked).map((b) => b.value);
     let budget = null;
     if (budgetType.value !== "none") {
+      if (limitInput.validity.badInput) return showFormError(S.err_limit, limitInput);
+      if (windowSel.value === "monthly" && anchorInput.validity.badInput) return showFormError(S.err_anchor, anchorInput);
       const lt = limitInput.value.trim();
       const limit = lt === "" ? null : Number(lt);
       if (limit !== null && (!Number.isFinite(limit) || limit < 0)) return showFormError(S.err_limit, limitInput);
@@ -564,6 +596,7 @@ export function mountMemberForm(container, {
           ? await sendJSON("PUT", `/api/deployments/${encodeURIComponent(initial.id)}`, built.body)
           : await sendJSON("POST", "/api/deployments", built.body);
         if (state.destroyed) return;
+        state.syncConflict = false;
         showMessage(built.note ? `${S.saved}(${built.note})` : S.saved, built.note ? "warn" : "ok");
         if (onSaved) await onSaved(saved, { created: !editing });
       } catch (err) {

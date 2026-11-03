@@ -184,3 +184,59 @@ def test_tag_list_links_to_member_editor(new_page: NewPage, gw: LiveGateway) -> 
     form = MemberForm(page)
     form.wait_ready()
     expect(form.field("id")).to_have_value("a3")
+
+
+@pytest.mark.expect_http_errors(422)
+def test_preview_error_clears_stale_result(new_page: NewPage, gw: LiveGateway) -> None:
+    page = new_page()
+    open_groups(page, gw)
+    page.locator("#new-group").click()
+    with page.expect_response(lambda r: "/api/groups/preview" in r.url):
+        add(page, "all", "cheap")
+    expect_preview(page, ["a1"])
+    with page.expect_response(lambda r: "/api/groups/preview" in r.url) as resp:
+        add(page, "any", "x" * 201)
+    assert resp.value.status == 422
+    preview = page.locator('#group-editor [data-role="preview"]')
+    expect(preview).to_have_attribute("data-stale", "true")
+    expect(preview.locator("li")).to_have_count(0)
+    expect(page.locator('#group-editor [data-role="preview-title"]')).to_have_text("預覽失敗")
+    expect(page.locator("#msgbar")).to_have_class("msgbar msg-error")
+    # 移除過長的 tag 後恢復
+    page.locator(f'#group-editor button[aria-label="移除 any {"x" * 201}"]').click()
+    expect_preview(page, ["a1"])
+    expect(preview).not_to_have_attribute("data-stale", "true")
+
+
+def test_preview_debounce_300ms_clock(new_page: NewPage, gw: LiveGateway) -> None:
+    page = new_page()
+    page.clock.install()
+    open_groups(page, gw)
+    page.locator("#new-group").click()
+    expect_preview(page, api_preview(gw, {}))
+    guard = guard_of(page)
+    before = len(requests_of(guard, "POST", "/api/groups/preview"))
+    add(page, "any", "cheap")
+    add(page, "any", "review")
+    page.clock.fast_forward(299)
+    page.wait_for_function("() => true")
+    assert len(requests_of(guard, "POST", "/api/groups/preview")) == before
+    with page.expect_request(lambda r: r.method == "POST" and "/api/groups/preview" in r.url) as req:
+        page.clock.fast_forward(1)
+    assert req.value.post_data_json == {"selector": {"all": [], "any": ["cheap", "review"], "none": []}}
+    expect_preview(page, api_preview(gw, {"any": ["cheap", "review"]}))
+    assert len(requests_of(guard, "POST", "/api/groups/preview")) == before + 1
+
+
+def test_group_names_and_tags_rendered_as_text(new_page: NewPage, gw: LiveGateway) -> None:
+    evil = '<img src=x onerror="window.__xss=1">'
+    seed_member(gw, "e1", tags=[evil])
+    seed_group(gw, "<b>g", {"any": [evil]})
+    page = new_page()
+    open_groups(page, gw)
+    expect(page.locator('#group-list button[data-group="<b>g"]')).to_contain_text("<b>g")
+    expect(page.locator("#tag-list")).to_contain_text(evil)
+    page.locator('#group-list button[data-group="<b>g"]').click()
+    expect(page.locator('#group-editor [data-chips="any"]')).to_contain_text(evil)
+    assert page.locator("main img, main b").count() == 0
+    assert page.evaluate("() => window.__xss") is None

@@ -28,7 +28,7 @@ const S = Object.freeze({
   unset: "未設定",
   preview: (n) => `符合的成員(${n})`,
   preview_note: "即時預覽",
-  preview_empty_selector: "條件為空時符合全部成員",
+  preview_failed: "預覽失敗",
   disabled: "停用",
   routes: "使用此群組的 route:",
   no_routes: "無",
@@ -45,6 +45,10 @@ const S = Object.freeze({
 });
 
 const state = { groups: [], routes: [], editor: null };
+
+function memberLink(id, attrs = {}) {
+  return h("a", { href: `/ui/members.html#${encodeURIComponent(id)}`, class: "mono", ...attrs }, id);
+}
 
 // ---- 清單 ------------------------------------------------------------------------------------
 
@@ -84,7 +88,7 @@ function renderTags(deployments) {
       h("span", { class: "chip" }, t),
       h("span", { class: "muted" }, S.members_count(members.length)),
       h("span", { class: "tag-members" }, ...members.map((d) =>
-        h("a", { href: `/ui/members.html#${encodeURIComponent(d.id)}`, class: "mono", "data-member": d.id }, d.id)))));
+        memberLink(d.id, { "data-member": d.id })))));
   }
 }
 
@@ -183,12 +187,14 @@ function createEditor(group) {
   }
 
   function renderPreview(members) {
+    previewList.removeAttribute("data-stale");
+    previewList.removeAttribute("aria-busy");
     setText(previewTitle, S.preview(members.length));
     clear(previewList);
     if (!members.length) previewList.append(h("li", { class: "muted" }, S.no_members));
     for (const m of members) {
       previewList.append(h("li", { "data-member": m.id },
-        h("a", { href: `/ui/members.html#${encodeURIComponent(m.id)}`, class: "mono" }, m.id),
+        memberLink(m.id),
         kindBadge(m.kind),
         m.enabled ? null : h("span", { class: "badge b-muted" }, S.disabled)));
     }
@@ -202,12 +208,19 @@ function createEditor(group) {
       if (destroyed || mine !== reqSeq) return;
       renderPreview(r.members || []);
     } catch (err) {
-      if (!destroyed && mine === reqSeq) showError(err);
+      if (destroyed || mine !== reqSeq) return;
+      // 預覽失敗:清掉舊結果並標為過時,畫面不留與目前條件不符的成員集合(審議 M4)
+      clear(previewList);
+      previewList.setAttribute("data-stale", "true");
+      previewList.removeAttribute("aria-busy");
+      setText(previewTitle, S.preview_failed);
+      showError(err);
     }
   }
 
   function schedulePreview() {
     if (timer !== null) clearTimeout(timer);
+    previewList.setAttribute("aria-busy", "true");
     timer = setTimeout(runPreview, PREVIEW_DELAY_MS);
   }
 
@@ -241,7 +254,8 @@ function createEditor(group) {
       }
       showMessage(`${S.saved} ${saved.name}`, "ok");
       await loadAll();
-      openEditor(state.groups.find((g) => g.name === saved.name) || saved);
+      // 儲存期間使用者已切到別的群組:不把畫面切回來
+      if (!destroyed) openEditor(state.groups.find((g) => g.name === saved.name) || saved);
     } catch (err) {
       showError(err);
     }

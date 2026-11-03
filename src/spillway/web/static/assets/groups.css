@@ -1,7 +1,5 @@
-/* UI-3 群組與 Tag(CHG-20261103-01 T5)。 */
-.groups-layout { display: grid; grid-template-columns: minmax(200px, 280px) minmax(0, 1fr); gap: 16px; align-items: start; }
-.groups-layout #tag-card { grid-column: 1 / -1; }
+/* UI-3 群組與 Tag(CHG-20261103-01 T5)。版面沿用 app.css 的 .split;「所有 Tag」卡片跨兩欄。 */
+.groups-layout > #tag-card { grid-column: 1 / -1; }
 .selrow input[type=text] { min-width: 180px; }
 .preview-head { display: flex; align-items: baseline; gap: 10px; }
 .tag-members { display: flex; flex-wrap: wrap; gap: 6px; }
-@media (max-width: 720px) { .groups-layout { grid-template-columns: minmax(0, 1fr); } }

@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Locator, Page
+from playwright.sync_api import Locator, Page, expect
 
 from tests.contract.fakemods import write_module
 from tests.helpers import TEST_KEY_ENV
@@ -39,15 +39,15 @@ def member_body(dep_id: str, **kw: Any) -> dict[str, Any]:
 
 
 def seed_member(gw: Any, dep_id: str, **kw: Any) -> dict[str, Any]:
-    return api(gw, "POST", "/api/deployments", member_body(dep_id, **kw)).json()
+    return api(gw, "POST", "/api/deployments", member_body(dep_id, **kw), expect=(201,)).json()
 
 
 def seed_group(gw: Any, name: str, selector: dict[str, list[str]]) -> dict[str, Any]:
-    return api(gw, "POST", "/api/groups", {"name": name, "selector": selector}).json()
+    return api(gw, "POST", "/api/groups", {"name": name, "selector": selector}, expect=(201,)).json()
 
 
 def seed_route(gw: Any, name: str, target: dict[str, Any], mode: str = "chat") -> dict[str, Any]:
-    return api(gw, "POST", "/api/routes", {"name": name, "target": target, "mode": mode}).json()
+    return api(gw, "POST", "/api/routes", {"name": name, "target": target, "mode": mode}, expect=(201,)).json()
 
 
 def broken_adapter_dir(root: Path) -> Path:
@@ -105,7 +105,6 @@ class MemberForm:
         return select.locator("option").evaluate_all("(os) => os.map((o) => o.textContent)")
 
     def wait_ready(self) -> None:
-        from playwright.sync_api import expect
         expect(self.submit).to_be_enabled()
 
     def caps(self) -> dict[str, Any]:

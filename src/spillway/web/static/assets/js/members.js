@@ -30,7 +30,7 @@ const S = Object.freeze({
   test: "測試呼叫",
   test_note: "會實際呼叫上游一次,並記一列帳本",
   delete: "刪除",
-  close: "關閉",
+  unmanageable: "id 為 . 或 .. 的成員無法在畫面上管理",
   not_found: "找不到成員",
   deleted: "已刪除成員",
   toggled_on: "已啟用",
@@ -49,7 +49,7 @@ const S = Object.freeze({
   delete_ledger: "帳本紀錄保留,不會刪除。",
 });
 
-const state = { members: [], unavailable: new Set(), form: null, current: null };
+const state = { members: [], modules: [], unavailable: new Set(), form: null, current: null };
 
 function budgetText(b) {
   if (!b) return S.no_budget;
@@ -61,12 +61,30 @@ function memberHref(id) {
   return `#${encodeURIComponent(id)}`;
 }
 
+// id 為 . 或 .. 的成員:網址會被正規化成別的路徑,畫面無法管理(後端限制延後到 hardening CHG;審議 M5)
+function unmanageable(id) {
+  return id === "." || id === "..";
+}
+
+function clearHash() {
+  history.replaceState(null, "", window.location.pathname + window.location.search);
+}
+
+// 供應商無法使用:模組載入失敗,或沒有任何模組處理它(cli 沒有 fallback 模組)
+function providerUnavailable(d) {
+  if (state.unavailable.has(d.provider)) return true;
+  const mods = state.modules.filter((m) => m.available);
+  if (!state.modules.length || mods.some((m) => m.providers.includes(d.provider))) return false;
+  return !mods.some((m) => (m.fallback_for_kinds || []).includes(d.kind));
+}
+
 function memberRow(d) {
+  const bad = unmanageable(d.id);
   const toggle = h("input", { type: "checkbox", checked: d.enabled, "aria-label": `${S.col_enabled} ${d.id}`,
-    "data-toggle": d.id });
-  toggle.addEventListener("change", () => toggleEnabled(d.id, toggle));
+    "data-toggle": d.id, disabled: bad, title: bad ? S.unmanageable : null });
+  if (!bad) toggle.addEventListener("change", () => toggleEnabled(d.id, toggle));
   const provider = h("td", { class: "mono" }, d.provider);
-  if (state.unavailable.has(d.provider)) {
+  if (providerUnavailable(d)) {
     provider.append(" ", h("span", { class: "badge b-warn" }, S.unavailable));
   }
   const cooling = d.cooling_until
@@ -74,7 +92,7 @@ function memberRow(d) {
       codeLabel(COOLING_REASON, d.cooling_reason, { class: "badge b-warn" }))
     : h("td", { class: "muted" }, "—");
   return h("tr", { "data-member": d.id, "aria-selected": state.current === d.id ? "true" : "false" },
-    h("td", {}, h("a", { href: memberHref(d.id) }, d.id)),
+    h("td", {}, bad ? h("span", { class: "mono", title: S.unmanageable }, d.id) : h("a", { href: memberHref(d.id) }, d.id)),
     h("td", {}, kindBadge(d.kind)),
     provider,
     h("td", { class: "mono" }, d.model),
@@ -104,7 +122,8 @@ async function loadList() {
     const [deps, adapters] = await Promise.all([getJSON("/api/deployments"),
       getJSON("/api/adapters").catch(() => ({ modules: [] }))]);
     state.members = deps.deployments || [];
-    state.unavailable = new Set((adapters.modules || []).filter((m) => !m.available).flatMap((m) => m.providers));
+    state.modules = adapters.modules || [];
+    state.unavailable = new Set(state.modules.filter((m) => !m.available).flatMap((m) => m.providers));
     renderList();
   } catch (err) {
     setLoading(host, false);
@@ -121,6 +140,11 @@ async function toggleEnabled(id, box) {
     body.enabled = wanted;
     await sendJSON("PUT", `/api/deployments/${encodeURIComponent(id)}`, body);
     showMessage(`${wanted ? S.toggled_on : S.toggled_off} ${id}`, "ok");
+    // 已開啟同一成員的編輯表單:同步「啟用」,之後儲存表單不會把切換蓋回去(審議 M3)
+    if (state.current === id && state.form) {
+      const enabledBox = state.form.element.querySelector('input[name="enabled"]');
+      if (enabledBox) enabledBox.checked = wanted;
+    }
     await loadList();
   } catch (err) {
     box.checked = !wanted;
@@ -145,7 +169,7 @@ function closeEditor() {
   state.form = null;
   state.current = null;
   byId("member-editor").hidden = true;
-  history.replaceState(null, "", window.location.pathname + window.location.search);
+  clearHash();
   markSelected();
 }
 
@@ -195,6 +219,10 @@ async function openFromHash() {
     id = decodeURIComponent(raw);
   } catch {
     id = raw;
+  }
+  if (unmanageable(id)) {
+    showMessage(`${S.unmanageable}:${id}`, "warn");
+    return;
   }
   // 先比對已載入的清單:不存在的 id 只顯示訊息,不送出會 404 的請求
   if (!state.members.some((m) => m.id === id)) await loadList();
@@ -259,7 +287,7 @@ async function deleteMember(member, btn) {
 // ---- 啟動 ------------------------------------------------------------------------------------
 
 byId("new-member").addEventListener("click", () => {
-  history.replaceState(null, "", window.location.pathname + window.location.search);
+  clearHash();
   openEditor(null);
 });
 window.addEventListener("hashchange", openFromHash);
