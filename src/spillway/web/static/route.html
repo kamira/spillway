@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>編輯 Route · Spillway</title>
 <link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/routes.css">
 <script type="module" src="assets/js/route-editor.js"></script>
 </head>
 <body>
@@ -24,9 +25,12 @@
 <main class="main" id="main">
 <div class="head">
 <div>
+<p class="muted" id="route-crumb"><a href="/ui/routes.html">Route</a> / <span class="mono" id="route-name"></span></p>
 <h1>編輯 Route</h1>
 </div>
+<div class="row" id="route-actions"></div>
 </div>
+<div id="editor" class="stack"></div>
 </main>
 </div>
 </body>

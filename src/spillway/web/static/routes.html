@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Route · Spillway</title>
 <link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/routes.css">
 <script type="module" src="assets/js/routes.js"></script>
 </head>
 <body>
@@ -25,8 +26,17 @@
 <div class="head">
 <div>
 <h1>Route</h1>
+<p class="sub">依 route 決定成員的使用順位;點選名稱編輯順序。</p>
 </div>
 </div>
+<section class="card" aria-labelledby="routes-list-h">
+<h2 id="routes-list-h">Route 清單</h2>
+<div class="scroll" id="routes-list" aria-busy="true"></div>
+</section>
+<section class="card" aria-labelledby="route-new-h">
+<h2 id="route-new-h">新增 route</h2>
+<form id="route-new" class="stack" autocomplete="off"></form>
+</section>
 </main>
 </div>
 </body>
