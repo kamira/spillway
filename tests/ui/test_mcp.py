@@ -15,7 +15,7 @@ import pytest
 from playwright.sync_api import Page, Route, expect
 
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import goto, guard_of
+from tests.helpers.ui import api, goto, guard_of
 from tests.helpers.ui_mcp import (BLOB_SPY, DENY_CLIPBOARD, TOOLS, mcp_config, mcp_variants, open_mcp, seed_group,
                                   select_mcp)
 
@@ -113,10 +113,11 @@ def test_download_uses_filename_and_plain_blob(new_page: NewPage, gw: LiveGatewa
     assert {b["type"] for b in blobs} <= ALLOWED_BLOB_TYPES
     # wait_for_function 以字串求值,會被 CSP 擋下;改為以 evaluate 輪詢(revoke 在點擊後的下一個 task)
     revoked: list[str] = []
-    for _ in range(200):
+    for _ in range(200):   # 上限約 2 秒
         revoked = page.evaluate("window.__revoked")
         if len(revoked) == len(blobs):
             break
+        page.wait_for_timeout(10)
     assert sorted(revoked) == sorted(b["url"] for b in blobs)
 
 
@@ -157,3 +158,19 @@ def test_unknown_group_shows_error_as_text(new_page: NewPage, gw: LiveGateway) -
     expect(page.locator("#msgbar")).to_contain_text(name)
     expect(page.locator("main img")).to_have_count(0)
     assert page.evaluate("window.__xss") is None
+
+
+@pytest.mark.expect_http_errors(404)
+def test_failed_load_clears_previous_content(new_page: NewPage, gw: LiveGateway) -> None:
+    page = new_page()
+    open_mcp(page, gw, group="coding", tool="gemini")
+    expect(page.locator("#mcp-notes li")).not_to_have_count(0)
+    api(gw, "DELETE", "/api/groups/coding", expect=(204,))
+    # 群組已刪除(選單仍保留):先改選 all,再回 coding 觸發重新載入 → 404
+    page.select_option("#mcp-group", "all")
+    page.wait_for_selector('html[data-mcp-ready="all|gemini"]', state="attached")
+    page.select_option("#mcp-group", "coding")
+    expect(page.locator("html")).to_have_attribute("data-mcp-ready", "error")
+    expect(page.locator("#msgbar")).to_be_visible()
+    for box in ("#mcp-variants", "#mcp-env", "#mcp-notes", "#mcp-endpoint", "#mcp-toollist"):
+        expect(page.locator(box)).to_be_empty()

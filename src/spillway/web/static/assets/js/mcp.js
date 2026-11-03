@@ -9,7 +9,8 @@
 
 import { getJSON, withQuery } from "./api.js";
 import { byId, clear, h, setText } from "./dom.js";
-import { clearMessage, initShell, setLoading, showError, showMessage } from "./ui.js";
+import { clearMessage, codeLabel, initShell, setLoading, showError, showMessage } from "./ui.js";
+import { label } from "./strings.js";
 
 const TOOLS = Object.freeze([
   ["claude-code", "Claude Code"],
@@ -40,13 +41,13 @@ const T = Object.freeze({
 const state = { group: "all", tool: "claude-code", seq: 0 };
 
 // AM-12:檔名去除 / 與 \;去除後為空時用預設名
-export function safeFilename(name) {
+function safeFilename(name) {
   const cleaned = String(name ?? "").replace(/[/\\]/g, "");
   return cleaned || "spillway-mcp.txt";
 }
 
 // AM-12:Blob type 一律 text/plain;charset=utf-8;只經 <a download> 觸發,點擊後 revoke
-export function downloadText(filename, content) {
+function downloadText(filename, content) {
   const blob = new Blob([String(content)], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = h("a", { href: url, download: safeFilename(filename) });
@@ -82,7 +83,7 @@ async function copyContent(pre, content, hint) {
 }
 
 function variantCard(v, index) {
-  const pre = h("pre", { class: "mcp-content", tabindex: "0", "data-role": "content",
+  const pre = h("pre", { class: "wrap", tabindex: "0", "data-role": "content",
     "aria-label": v.label }, v.content);
   const hint = h("p", { class: "mcp-copy-hint", role: "status", "data-role": "copy-hint", hidden: true });
   const copyBtn = h("button", { type: "button", class: "btn primary", "data-role": "copy" }, T.copy);
@@ -106,8 +107,8 @@ function variantCard(v, index) {
     h("div", { class: "row between" },
       h("h3", { "data-role": "label" }, v.label),
       h("div", { class: "row" },
-        h("span", { class: "badge b-muted", title: v.scope, "data-role": "scope" }, SCOPE[v.scope] || v.scope),
-        h("span", { class: "badge b-api", title: v.format }, FORMAT[v.format] || v.format))),
+        codeLabel(SCOPE, v.scope, { class: "badge b-muted", "data-role": "scope" }),
+        codeLabel(FORMAT, v.format, { class: "badge b-api" }))),
     h("dl", {}, ...where, ...file),
     pre,
     hint,
@@ -129,7 +130,7 @@ function renderConfig(cfg) {
   for (const n of cfg.notes || []) {
     notes.append(h("li", { class: `mcp-note note-${n.severity === "warn" ? "warn" : "info"}`, role: "note",
       "data-severity": n.severity },
-    h("strong", {}, `${SEVERITY[n.severity] || n.severity}:`), n.text));
+    h("strong", {}, `${label(SEVERITY, n.severity)}:`), n.text));
   }
 }
 
@@ -200,8 +201,10 @@ async function loadConfig() {
   } catch (err) {
     if (seq !== state.seq) return;
     setLoading(box, false);
-    clear(box);
+    // 失敗時清掉上一個組合的內容,避免顯示與選單不符的舊資料
+    for (const id of ["mcp-variants", "mcp-env", "mcp-notes", "mcp-endpoint", "mcp-toollist"]) clear(byId(id));
     showError(err);
+    document.documentElement.setAttribute("data-mcp-ready", "error");
   }
 }
 

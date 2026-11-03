@@ -8,7 +8,7 @@
 // - 網址 ?group=<g> 決定初始群組;切換群組以 history.replaceState 更新 query(保留 hash)。只做 GET。
 
 import { getJSON, withQuery } from "./api.js";
-import { byId, clear, h, setText } from "./dom.js";
+import { byId, clear, h } from "./dom.js";
 import { clearMessage, initShell, setLoading, showError } from "./ui.js";
 
 const T = Object.freeze({

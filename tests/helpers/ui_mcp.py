@@ -72,7 +72,10 @@ def mcp_catalog(gw: Any, group: str = "all") -> dict[str, Any]:
 
 
 def _wait_mcp(page: Page, group: str, tool: str) -> None:
-    page.wait_for_selector(f'html[data-mcp-ready="{group}|{tool}"]', state="attached")
+    """等到該組合載入完成;載入失敗(`data-mcp-ready="error"`)時立即失敗,不等逾時。"""
+    page.wait_for_selector(f'html[data-mcp-ready="{group}|{tool}"], html[data-mcp-ready="error"]', state="attached")
+    state = page.locator("html").get_attribute("data-mcp-ready")
+    assert state == f"{group}|{tool}", f"UI-5 載入失敗:{state}"
 
 
 def open_mcp(page: Page, gw: Any, group: str = "all", tool: str = "claude-code") -> None:
