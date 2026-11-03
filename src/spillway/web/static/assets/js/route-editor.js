@@ -20,7 +20,7 @@ import {
 
 // ---- 頁面字串 ---------------------------------------------------------------------------------
 
-export const T = Object.freeze({
+const T = Object.freeze({
   missing_name: "缺少 route 名稱;請從 Route 清單開啟編輯頁。",
   restore: "還原預設順序",
   dry_run: "Dry-run",

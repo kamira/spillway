@@ -236,3 +236,41 @@ def test_group_names_and_tags_rendered_as_text(new_page: NewPage, gw: LiveGatewa
     expect(page.locator('#group-editor [data-chips="any"]')).to_contain_text(evil)
     assert page.locator("main img, main b").count() == 0
     assert page.evaluate("() => window.__xss") is None
+
+
+# ---- 終審修正(CHG-20261103-01 終審必修 1、2) ------------------------------------------------------
+
+def test_save_commits_pending_tag_input(new_page: NewPage, gw: LiveGateway) -> None:
+    """輸入但沒按 Enter 的 tag,按儲存時一併送出(新群組與既有群組各一次)。"""
+    page = new_page()
+    open_groups(page, gw)
+    page.locator("#new-group").click()
+    page.locator("#group-name").fill("pending")
+    page.locator('#group-editor input[data-tag-input="none"]').fill("x")
+    with page.expect_request(lambda r: r.method == "POST" and r.url.endswith("/api/groups")) as req:
+        page.locator('#group-editor [data-role="save"]').click()
+    assert req.value.post_data_json["selector"]["none"] == ["x"]
+    expect(page.locator("#msgbar")).to_contain_text("已儲存群組 pending")
+    assert api(gw, "GET", "/api/groups/pending").json()["selector"]["none"] == ["x"]
+    # 既有群組:編輯器重開後,再輸入一個未按 Enter 的 tag
+    expect(page.locator('#group-editor [data-chips="none"] [data-tag="x"]')).to_be_visible()
+    page.locator('#group-editor input[data-tag-input="all"]').fill("coding")
+    with page.expect_request(lambda r: r.method == "PUT" and r.url.endswith("/api/groups/pending")):
+        page.locator('#group-editor [data-role="save"]').click()
+    expect(page.locator('#group-editor [data-chips="all"] [data-tag="coding"]')).to_be_visible()
+    assert api(gw, "GET", "/api/groups/pending").json()["selector"] == {"all": ["coding"], "any": [],
+                                                                        "none": ["x"]}
+
+
+def test_mcp_link_carries_group(new_page: NewPage, gw: LiveGateway) -> None:
+    name = "a&b#c?"
+    seed_group(gw, name, {"all": ["coding"]})
+    page = new_page()
+    open_groups(page, gw)
+    page.locator('#group-list button[data-group="a&b#c?"]').click()
+    link = page.locator('#group-editor [data-role="mcp"] a')
+    expect(link).to_have_attribute("href", "/ui/mcp.html?group=a%26b%23c%3F")
+    link.click()
+    page.wait_for_url("**/ui/mcp.html?group=a%26b%23c%3F")
+    page.wait_for_selector('html[data-shell="ready"]', state="attached")
+    expect(page.locator("#mcp-group")).to_have_value(name)

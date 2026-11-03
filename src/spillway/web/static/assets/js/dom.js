@@ -79,8 +79,3 @@ export function setText(el, text) {
   el.textContent = text === null || text === undefined ? "" : String(text);
   return el;
 }
-
-// 以資料值查找元素時一律經 CSS.escape
-export function queryData(root, name, value) {
-  return root.querySelector(`[data-${name}="${CSS.escape(String(value))}"]`);
-}

@@ -27,7 +27,6 @@ export function bytesToKb(bytes) {
 const T = Object.freeze({
   issued: "已產生",
   not_issued: "未產生",
-  copy: "複製",
   stats: (n, size) => `目前 ${fmtInt(n)} 筆 · ${size}`,
   ctx_saved: "已儲存 context 設定",
   err_days: "保存天數必須是 0 以上的整數",

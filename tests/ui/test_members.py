@@ -368,6 +368,29 @@ def test_hash_unknown_member_no_request(new_page: NewPage, gw: LiveGateway) -> N
     assert requests_of(guard_of(page), "GET", "/api/deployments/nope") == []
 
 
+def test_hash_stale_response_ignored(new_page: NewPage, gw: LiveGateway) -> None:
+    """終審必修 3:#m1 的回應晚於 #m2 抵達時,不覆蓋已開啟的 m2。"""
+    seed_member(gw, "m1")
+    seed_member(gw, "m2")
+    page = new_page()
+    open_members(page, gw)
+    held: list[Route] = []
+    page.route("**/api/deployments/m1", lambda route: held.append(route)
+               if route.request.method == "GET" else route.continue_())
+    with page.expect_request(lambda r: r.method == "GET" and r.url.endswith("/api/deployments/m1")):
+        page.evaluate("() => { window.location.hash = 'm1'; }")
+    page.evaluate("() => { window.location.hash = 'm2'; }")
+    expect(page.locator("#editor-title")).to_have_text("編輯 m2")
+    assert len(held) == 1
+    with page.expect_response(lambda r: r.url.endswith("/api/deployments/m1")):
+        held[0].continue_()
+    # 讓延遲的回應跑完後續(解析 JSON、openFromHash 的剩餘部分)
+    page.evaluate("() => new Promise((r) => setTimeout(r, 0))")
+    page.evaluate("() => new Promise((r) => setTimeout(r, 0))")
+    expect(page.locator("#editor-title")).to_have_text("編輯 m2")
+    expect(MemberForm(page).field("id")).to_have_value("m2")
+
+
 def test_toggle_get_then_put(new_page: NewPage, gw: LiveGateway) -> None:
     seed_member(gw, "t1")
     page = new_page()

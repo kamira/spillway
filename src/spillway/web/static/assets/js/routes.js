@@ -10,7 +10,7 @@ import {
   showError, showMessage, targetSummary, withBusy,
 } from "./ui.js";
 
-export const T = Object.freeze({
+const T = Object.freeze({
   name: "名稱",
   mode: "模式",
   target: "目標",

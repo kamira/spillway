@@ -39,7 +39,6 @@ const T = Object.freeze({
   input_schema: "inputSchema",
   output_schema: "outputSchema",
   annotations: "annotations",
-  method: "method",
   delivery: "送達條件",
   code: "code",
   status: "HTTP 狀態",

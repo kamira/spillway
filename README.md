@@ -58,7 +58,7 @@ spillway serve           # 只綁 127.0.0.1:8787
 | UI-7 設定 | `/ui/settings.html` | 設定總覽、context 記錄設定、匯出與匯入設定、重新產生存取 token |
 | UI-8 API 參考 | `/ui/api-reference.html` | MCP 介面的連線、工具、通知、錯誤碼（可折疊索引；不含 `/api` 與 `/v1`） |
 
-- **首次設定精靈**（`/ui/wizard.html`）：資料庫沒有成員也沒有 route 時，開啟畫面會自動導向精靈（`/ui/?skip_wizard=1` 可略過一次）。四步：加入成員 → 測試呼叫（會實際呼叫上游一次並記一列帳本）→ 建立 route → 完成（顯示 `curl` 範例）。每步完成即寫入；中途離開後再開啟精靈，會從尚未完成的步驟繼續。憑證欄只填參照（`env:NAME` 或 `keyring:服務:帳號`），不要填金鑰本身；環境變數必須在啟動 `serve` 前設定。MCP 用戶端需要的存取 token 請到 UI-7 產生（`/ui/settings.html#token`）。
+- **首次設定精靈**（`/ui/wizard.html`）：資料庫沒有成員也沒有 route 時，開啟總覽 `/ui/`（含 `/`）會自動導向精靈（`/ui/?skip_wizard=1` 可略過一次）。四步：加入成員 → 測試呼叫（會實際呼叫上游一次並記一列帳本）→ 建立 route → 完成（顯示 `curl` 範例）。每步完成即寫入；中途離開後再開啟精靈，會從尚未完成的步驟繼續。憑證欄只填參照（`env:NAME` 或 `keyring:服務:帳號`），不要填金鑰本身；環境變數必須在啟動 `serve` 前設定。MCP 用戶端需要的存取 token 請到 UI-7 產生（`/ui/settings.html#token`）。
 - **匯入設定**：在 UI-7 選檔與 `mode` 後按「預覽匯入」，畫面先以 `dry_run=true` 預覽，確認對話框列出新增、更新、刪除的數量與 `privileged` 成員；按「匯入」才寫入（`replace` 會先備份到 `backups/`）。
 - **存取 token**：UI-7 的「重新產生 token」只在對話框顯示新 token 一次，關閉後無法再次查看；舊 token 立即失效。
 - 畫面是靜態 HTML、CSS 與 JavaScript，所有資料經 `/api` 取得；不載入任何外部資源（使用系統字型）。畫面回應帶 Content-Security-Policy 等安全標頭，`/api` 回應一律 `Cache-Control: no-store`。與 `/api` 相同，在只綁 127.0.0.1 時不需登入，本機任何程式都能開啟。

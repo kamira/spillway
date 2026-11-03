@@ -125,6 +125,7 @@ function createEditor(group) {
   const section = clear(byId("group-editor"));
   const nameInput = h("input", { type: "text", id: "group-name", class: "mono", autocomplete: "off",
     value: name, disabled: !isNew, "aria-label": T.name });
+  const boxes = [];
   const rowEls = ROWS.map(([key, text]) => {
     const box = tagInput({
       tags: sel[key],
@@ -138,6 +139,7 @@ function createEditor(group) {
         schedulePreview();
       },
     });
+    boxes.push(box);
     return h("div", { class: "selrow", "data-row": key },
       h("div", {}, h("strong", {}, text), h("div", { class: "muted small" }, key)),
       h("div", { class: "row" }, box.chips, box.input, box.button));
@@ -208,10 +210,12 @@ function createEditor(group) {
       if (i) routesBox.append(", ");
       routesBox.append(h("a", { href: `/ui/route.html?name=${encodeURIComponent(r)}`, class: "mono" }, r));
     });
-    mcpBox.append(T.mcp, h("a", { href: "/ui/mcp.html", class: "mono" }, `/mcp/${encodeURIComponent(name)}`));
+    mcpBox.append(T.mcp, h("a", { href: `/ui/mcp.html?group=${encodeURIComponent(name)}`, class: "mono" }, `/mcp/${encodeURIComponent(name)}`));
   }
 
   saveBtn.addEventListener("click", () => withBusy(saveBtn, async () => {
+    // 已輸入但沒按 Enter 的 tag 也要納入(commit 會經 onChange 更新 sel)
+    for (const box of boxes) box.commit();
     const body = { selector: { all: [...sel.all], any: [...sel.any], none: [...sel.none] } };
     try {
       let saved;

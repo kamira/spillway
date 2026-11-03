@@ -10,7 +10,7 @@ import { byId, clear, h, setText } from "./dom.js";
 import { mountMemberForm } from "./member-form.js";
 import { BUDGET_TYPE, COOLING_REASON, STATUS, TEXT, WINDOW, label } from "./strings.js";
 import {
-  codeLabel, confirmDialog, fmtUSD, initShell, kindBadge, memberHref, setLoading, showError, showMessage, timeEl,
+  codeLabel, confirmDialog, fmtUSD, initShell, kindBadge, latest, memberHref, setLoading, showError, showMessage, timeEl,
   withBusy,
 } from "./ui.js";
 
@@ -207,7 +207,10 @@ function openEditor(member) {
   markSelected();
 }
 
+const hashGuard = latest();
+
 async function openFromHash() {
+  const isLatest = hashGuard();
   const raw = window.location.hash.slice(1);
   if (!raw) return;
   let id;
@@ -222,15 +225,18 @@ async function openFromHash() {
   }
   // 先比對已載入的清單:不存在的 id 只顯示訊息,不送出會 404 的請求
   if (!state.members.some((m) => m.id === id)) await loadList();
+  if (!isLatest()) return;
   if (!state.members.some((m) => m.id === id)) {
     showMessage(`${T.not_found}:${id}`, "warn");
     return;
   }
   try {
     const member = await getJSON(`/api/deployments/${encodeURIComponent(id)}`);
+    if (!isLatest()) return;
     openEditor(member);
     byId("member-editor").scrollIntoView({ block: "start" });
   } catch (err) {
+    if (!isLatest()) return;
     showError(err);
   }
 }

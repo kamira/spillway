@@ -880,7 +880,7 @@ Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>
 | UI-4 | Route | Route 清單；編輯頁以拖曳調整 slot 與成員順序，逐成員以選單設定 effort 與優先權重（高、中、低）；route 層級勾選「預估額度檢查」與「記錄 context」 | 拖曳、還原預設、dry-run |
 | UI-5 | MCP 設定 | 選群組與工具，顯示各放置方式（`variants`）的設定內容、放置路徑與注意事項（8.2.1） | 複製、下載 |
 | UI-6 | 帳本 | 每次嘗試的紀錄，含預估與實際 token、花費；點選列開啟請求與回應內容 | 篩選、匯出 CSV |
-| UI-7 | 設定 | 首次設定精靈（獨立頁 `/ui/wizard.html`，UI-7 頁首有連結；`GET /api/settings` 的 `first_run` 為 true 時開啟畫面即導向精靈）、YAML 匯入匯出、存取 token、埠號（唯讀）、context 記錄預設與保存天數 | 匯入（選檔與 `mode` 後按「預覽匯入」才送 `dry_run=true`；確認對話框顯示新增、更新、刪除計數與 `privileged` 成員 id，按「匯入」才以同一份內容寫入；檔案或 `mode` 改變後先前的預覽作廢）、匯出、重新產生 token（新 token 只在對話框顯示一次，關閉時清除，不寫入瀏覽器儲存或網址） |
+| UI-7 | 設定 | 首次設定精靈（獨立頁 `/ui/wizard.html`，UI-7 頁首有連結；`GET /api/settings` 的 `first_run` 為 true 時開啟總覽 `/ui/`（含 `/`）即導向精靈）、YAML 匯入匯出、存取 token、埠號（唯讀）、context 記錄預設與保存天數 | 匯入（選檔與 `mode` 後按「預覽匯入」才送 `dry_run=true`；確認對話框顯示新增、更新、刪除計數與 `privileged` 成員 id，按「匯入」才以同一份內容寫入；檔案或 `mode` 改變後先前的預覽作廢）、匯出、重新產生 token（新 token 只在對話框顯示一次，關閉時清除，不寫入瀏覽器儲存或網址） |
 | UI-8 | API 參考 | 只列 MCP 介面，內容於執行期產生、與程式一致（資料來源 `mcp_catalog(app, group)`），依類型分四大類：連線（各群組端點 URL、傳輸、驗證方式、`mcp-stdio`）、工具（`ask`、`list_routes`、`quota_status` 的說明與 inputSchema／outputSchema）、通知（`tools/list_changed`）、錯誤碼；不列 `/api/*` 與 `/v1`。版面：頂端群組選單（預設 `all`）、左側可折疊索引（四大類，各類下列項目）、右側顯示所選項目的內容 | 以可折疊索引切換大類與項目、切換群組 |
 
 ### 10.1 拖曳規則（UI-4）
