@@ -14,9 +14,9 @@
 
 | # | 指令 | 通過標準 | 涵蓋條件 | 來源 ACC | 範圍標籤 |
 |---|------|----------|----------|----------|----------|
-| R1 | `python -m pytest -q` | exit 0;0 failed(ACC-20261031-01 時為 1089 passed;ACC-20261101-01 時為 1340 passed;ACC-20261101-02 時為 1739 passed;ACC-20261102-01 時為 2194 passed;ACC-20261102-02 時為 2578 passed) | 單元、合約、整合、fakes 與 acceptance 全部;含 AC-19 合約測試、管理 API 錯誤碼(FR-13、FR-25)、`stream: true` 400、retention 每小時排程、AC-7、NFR-1、NFR-2、NFR-3、NFR-5 | ACC-20261031-01 | 全部 |
-| R2 | `python -m behave tests/features` | exit 0;全部情境全過、0 skipped(ACC-20261031-01 時 5 features、18 scenarios、155 steps;ACC-20261101-01 時 6 features、22 scenarios、183 steps;ACC-20261101-02 時 7 features、31 scenarios、279 steps;ACC-20261102-01 時 8 features、40 scenarios、395 steps;ACC-20261102-02 時 9 features、50 scenarios、498 steps) | AC-3、AC-4、AC-5、AC-13、AC-14、AC-15、AC-18、AC-19、4.2.5(api 版)、4.2.6(api 版) | ACC-20261031-01 | routing、quota、estimate、ledger、redact、adapters、api |
-| R3 | `python -m pytest tests/acceptance -q -rs` | 全數 passed(ACC-20261031-01 時 9、ACC-20261101-01 時 10、ACC-20261101-02 時 12、ACC-20261102-01 時 17、ACC-20261102-02 時 19)且**必須 0 skipped**(缺 lsof 時 NFR-3 與操作驗收會被跳過;驗收平台 macOS 有 lsof,出現 skipped 即視為未通過) | AC-7、NFR-1(dry-run P95 < 20 ms)、NFR-2(dashboard P95 < 200 ms)、NFR-3(只聽 127.0.0.1)、NFR-5(payload 過期刪除)、Acceptance operation、NFR-4 預掃描(不計入 M2 閘門) | ACC-20261031-01 | api、cli、routing、ledger、store |
+| R1 | `python -m pytest -q` | exit 0;0 failed(ACC-20261031-01 時為 1089 passed;ACC-20261101-01 時為 1340 passed;ACC-20261101-02 時為 1739 passed;ACC-20261102-01 時為 2194 passed;ACC-20261102-02 時為 2578 passed;ACC-20261103-01 時為 3004 passed) | 單元、合約、整合、fakes 與 acceptance 全部;含 AC-19 合約測試、管理 API 錯誤碼(FR-13、FR-25)、`stream: true` 400、retention 每小時排程、AC-7、NFR-1、NFR-2、NFR-3、NFR-5 | ACC-20261031-01 | 全部 |
+| R2 | `python -m behave tests/features` | exit 0;全部情境全過、0 skipped(ACC-20261031-01 時 5 features、18 scenarios、155 steps;ACC-20261101-01 時 6 features、22 scenarios、183 steps;ACC-20261101-02 時 7 features、31 scenarios、279 steps;ACC-20261102-01 時 8 features、40 scenarios、395 steps;ACC-20261102-02 時 9 features、50 scenarios、498 steps;ACC-20261103-01 時 10 features、60 scenarios、570 steps) | AC-3、AC-4、AC-5、AC-13、AC-14、AC-15、AC-18、AC-19、4.2.5(api 版)、4.2.6(api 版) | ACC-20261031-01 | routing、quota、estimate、ledger、redact、adapters、api |
+| R3 | `python -m pytest tests/acceptance -q -rs` | 全數 passed(ACC-20261031-01 時 9、ACC-20261101-01 時 10、ACC-20261101-02 時 12、ACC-20261102-01 時 17、ACC-20261102-02 時 19、ACC-20261103-01 時 20)且**必須 0 skipped**(缺 lsof 時 NFR-3 與操作驗收會被跳過;驗收平台 macOS 有 lsof,出現 skipped 即視為未通過) | AC-7、NFR-1(dry-run P95 < 20 ms)、NFR-2(dashboard P95 < 200 ms)、NFR-3(只聽 127.0.0.1)、NFR-5(payload 過期刪除)、Acceptance operation、NFR-4 預掃描(不計入 M2 閘門) | ACC-20261031-01 | api、cli、routing、ledger、store |
 
 R1 與 R2 合起來就是 CHG-20261030-02 的本機閘(`python -m pytest -q && python -m behave tests/features`)。
 
@@ -72,6 +72,14 @@ R1 與 R2 合起來就是 CHG-20261030-02 的本機閘(`python -m pytest -q && p
 | R52 | mcp-stdio 錯誤對應成對(9.1.2 body 才以 3 結束)、測試用 session 上限、環境變數名稱常數契約 | `tests/integration/test_mcp_stdio.py`、`tests/contract/test_env_names.py` | ACC-20261102-02 | cli、api(mcp)、安全 |
 | R53 | 測試輸出遮罩 token(最長優先、裸字串) | `tests/unit/test_helpers.py` | ACC-20261102-02 | 測試基礎、安全 |
 | R54 | m4a 行為情境 10 個 | `tests/features/m4a_config.feature` | ACC-20261102-02 | api(admin)、安全 |
+| R55 | Web UI 畫面測試全部(10 頁、Playwright headless Chromium 1248;瀏覽器不存在時失敗不跳過;console error、pageerror、非本機請求皆判失敗;含精靈續作路徑 409 沿用警告) | `tests/ui/`(含 `tests/ui/test_wizard.py`) | ACC-20261103-01 | ui、安全 |
+| R56 | m4b 行為情境 10 個(AC-6、AC-8、AC-10、AC-20、AC-21、AC-22、NFR-4 畫面部分、拖曳、匯入確認、純文字顯示) | `tests/features/m4b_ui.feature` | ACC-20261103-01 | ui、安全 |
+| R57 | M4b Acceptance operation 自動部分 ①–⑩(精靈、連動選單、拖曳後 /v1 改由新首位處理、AC-10 經畫面往返逐位元組、預覽為 dry_run 且資料不變、AC-21、AC-22、token 一次顯示);NFR-4 對資料庫、匯出檔、CSV、備份、日誌、全部畫面 HTML 與 API 回應命中 0;產物 `artifacts/m4b/`。須前景執行 | `tests/acceptance/test_m4b_operation.py` | ACC-20261103-01 | ui、api(admin)、安全 |
+| R58 | 靜態檔提供與安全標頭(`/` 302、`/ui` 過濾點檔與副檔名與結尾斜線、CSP 含 Trusted Types、`/api` no-store)與前端靜態掃描(禁用 HTML 插入與外部網址、導覽一致、`spillway.web` 只 import 標準庫與 starlette、package-data) | `tests/integration/test_web_static.py`、`tests/unit/test_web_assets.py` | ACC-20261103-01 | ui、安全 |
+| R59 | 9.2.8 新端點與欄位:`POST /api/groups/preview`、`GET /api/routes/{name}/effective-order`(與 MCP `list_routes` 相等)、`/api/mcp/catalog`、`daily_spend_7d`、`min_depth`(含 CSV 上限)、版本字串單一來源 | `tests/integration/admin/test_admin_groups.py`、`tests/integration/admin/test_admin_routes.py`、`tests/integration/admin/test_admin_mcp_catalog.py`、`tests/integration/admin/test_admin_dashboard.py`、`tests/integration/admin/test_admin_ledger.py`、`tests/integration/admin/test_admin_ledger_csv.py`、`tests/integration/mcp/test_mcp_version.py` | ACC-20261103-01 | api(admin)、api(mcp) |
+| R60 | 匯入 privileged 含既有成員 provider 變更 | `tests/integration/admin/test_admin_config_io.py` | ACC-20261103-01 | api(admin)、安全 |
+| R61 | 小型整理行為不變:422 建構函式、時間戳記 helper、`read_tx` 巢狀 | `tests/unit/api/test_admin_invalid.py`、`tests/unit/test_clock.py`、`tests/unit/store/test_read_tx.py` | ACC-20261103-01 | api(admin)、store |
+| R62 | 共用前端模組行為(常駐錯誤、`latest()`、`fmtUSD`、`tagInput`、`fillGroupSelect`、首次導向 replace 與上一頁) | `tests/ui/test_shell.py` | ACC-20261103-01 | ui |
 
 ## Interaction spec(M2)
 
