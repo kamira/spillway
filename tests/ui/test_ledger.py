@@ -233,10 +233,15 @@ def test_payload_panel(new_page: NewPage, gw: LiveGateway) -> None:
 
     panel.get_by_role("button", name="關閉").click()
     expect(panel).to_be_hidden()
+    # 關閉後內容不留在 DOM
+    expect(page.locator("#payload-text")).to_have_count(0)
+    assert page.locator("#payload-body").evaluate("el => el.textContent") == ""
+    assert "alert(3)" not in page.content()
 
 
 @pytest.mark.expect_http_errors(404, 410)
 def test_payload_expired_and_not_recorded(new_page: NewPage, gw: LiveGateway) -> None:
+    api(gw, "PUT", "/api/settings/context", {"context_retention_days": 7})    # 明設:30 天前的列已過期
     old = NOW - timedelta(days=30)
     insert_ledger(gw, 1, old, deployment="m1")
     insert_payload(gw, 1, old, '{"messages": []}', "x")
@@ -263,7 +268,7 @@ def test_orphan_rows_show_original_id(new_page: NewPage, gw: LiveGateway) -> Non
     insert_ledger(gw, 3, NOW - timedelta(hours=3), deployment="gone")
     api(gw, "DELETE", "/api/deployments/gone")
     page = open_ledger(new_page, gw)
-    cell = lambda i: page.locator(f'#ledger-body tr[data-ledger-id="{i}"] td.member-cell')  # noqa: E731
+    cell = lambda i: page.locator(f'#ledger-body tr[data-ledger-id="{i}"] td.ledger-member-cell')  # noqa: E731
     expect(cell(1)).to_have_text("m1")
     expect(cell(2)).to_have_text("ghost(已刪除)")
     expect(cell(3)).to_have_text("gone(已刪除)")
@@ -279,7 +284,7 @@ def test_error_html_is_text(new_page: NewPage, gw: LiveGateway) -> None:
     r = page.locator('#ledger-body tr[data-ledger-id="1"]')
     expect(r.locator(".ledger-error")).to_have_text(XSS)
     expect(r.locator("td").nth(1)).to_have_text(XSS)
-    expect(r.locator("td.member-cell")).to_have_text(XSS.replace(" ", "") + "(已刪除)")
+    expect(r.locator("td.ledger-member-cell")).to_have_text(XSS.replace(" ", "") + "(已刪除)")
     with page.expect_response(lambda x: x.url.endswith("/api/ledger/1/payload")):
         r.click()
     expect(page.locator("#payload-panel .ledger-error")).to_have_text(XSS)
@@ -287,3 +292,77 @@ def test_error_html_is_text(new_page: NewPage, gw: LiveGateway) -> None:
     assert page.locator("script").count() == 1
     assert guard_of(page).dialogs == []
 
+
+
+def test_double_click_next_moves_one_page(new_page: NewPage, gw: LiveGateway) -> None:
+    for i in range(1, 121):
+        insert_ledger(gw, i, NOW - timedelta(minutes=i), deployment="m1")
+    page = open_ledger(new_page, gw)
+    sent: list[dict[str, str]] = []
+    page.on("request", lambda r: sent.append(query_of(r.url)) if is_list(r) else None)
+    page.locator("#page-next").dblclick()
+    expect(page.locator("#page-info")).to_have_text("第 2 / 3 頁,共 120 列")
+    wait_loaded(page)
+    assert ids(page) == list(range(51, 101))
+    assert query_of(page.url) == {"page": "2"}
+    assert sent and all(q == {"page": "2"} for q in sent), sent
+    # 再按一次下一頁:由最後一次回應的頁碼 +1
+    assert change(page, lambda: page.locator("#page-next").click()) == {"page": "3"}
+
+
+def test_page_out_of_range_clamps_to_last(new_page: NewPage, gw: LiveGateway) -> None:
+    for i in range(1, 121):
+        insert_ledger(gw, i, NOW - timedelta(minutes=i), deployment="m1")
+    page = new_page()
+    pages: list[str | None] = []
+    page.on("request", lambda r: pages.append(query_of(r.url).get("page")) if is_list(r) else None)
+    goto(page, gw, "/ui/ledger.html?page=9")
+    expect(page.locator("#page-info")).to_have_text("第 3 / 3 頁,共 120 列")
+    wait_loaded(page)
+    assert ids(page) == list(range(101, 121))
+    assert query_of(page.url) == {"page": "3"}
+    assert pages == ["9", "3"]
+    expect(page.locator("#page-next")).to_be_disabled()
+    expect(page.locator("#page-prev")).to_be_enabled()
+
+
+def _fail_500(route) -> None:  # noqa: ANN001
+    route.fulfill(status=500, content_type="application/json",
+                  body='{"error": {"code": "internal_error", "message": "測試用的 500"}}')
+
+
+@pytest.mark.expect_http_errors(500)
+def test_export_link_disabled_when_list_fails(new_page: NewPage, gw: LiveGateway) -> None:
+    insert_ledger(gw, 1, NOW - timedelta(hours=1), deployment="m1")
+    page = new_page()
+    page.route(lambda url: urlsplit(url).path == "/api/ledger", _fail_500)
+    goto(page, gw, "/ui/ledger.html?status=error")
+    wait_loaded(page)
+    expect(page.locator("#msgbar")).to_contain_text("測試用的 500")
+    export = page.locator("#export-csv")
+    expect(export).to_have_attribute("aria-disabled", "true")
+    assert export.get_attribute("href") is None
+    expect(page.locator("#page-next")).to_be_disabled()
+    # 改篩選後仍失敗:連結保持停用,不沿用舊篩選
+    with page.expect_request(is_list):
+        page.locator("#f-route").select_option("rt")
+    wait_loaded(page)
+    expect(export).to_have_attribute("aria-disabled", "true")
+    assert export.get_attribute("href") is None
+
+
+@pytest.mark.expect_http_errors(500)
+def test_member_list_failure_does_not_mark_orphans(new_page: NewPage, gw: LiveGateway) -> None:
+    insert_ledger(gw, 1, NOW - timedelta(hours=1), deployment="m1")
+    insert_ledger(gw, 2, NOW - timedelta(hours=2), deployment="ghost")
+    page = new_page()
+    page.route(lambda url: urlsplit(url).path == "/api/deployments", _fail_500)
+    goto(page, gw, "/ui/ledger.html")
+    wait_loaded(page)
+    expect(page.locator("#msgbar")).to_contain_text("測試用的 500")
+    cell = lambda i: page.locator(f'#ledger-body tr[data-ledger-id="{i}"] td.ledger-member-cell')  # noqa: E731
+    expect(cell(1)).to_have_text("m1")
+    expect(cell(2)).to_have_text("ghost")
+    expect(page.locator(".ledger-orphan")).to_have_count(0)
+    # route 選單照常載入
+    expect(page.locator("#f-route option")).to_have_text(["全部", "other", "rt"])

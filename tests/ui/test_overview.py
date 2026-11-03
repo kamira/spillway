@@ -115,6 +115,28 @@ def test_rows_and_summary_match_dashboard(new_page: NewPage, seeded: LiveGateway
     expect(page.locator("#resume-banner")).to_be_hidden()
 
 
+def test_usage_meter_matches_dashboard(new_page: NewPage, seeded: LiveGateway) -> None:
+    gw = seeded
+    dash = {d["id"]: d for d in api(gw, "GET", "/api/dashboard").json()["deployments"]}
+    page = new_page()
+    goto(page, gw, "/ui/")
+    wait_loaded(page)
+    for dep_id, d in dash.items():
+        meter = row(page, dep_id).locator("meter")
+        if d["unlimited"]:
+            expect(meter).to_have_count(0)
+            continue
+        expect(meter).to_have_count(1)
+        assert float(meter.get_attribute("min") or "nan") == 0
+        assert float(meter.get_attribute("max") or "nan") == pytest.approx(d["limit_amount"])
+        assert float(meter.get_attribute("value") or "nan") == pytest.approx(d["period_spend"])
+        pct = round(d["period_spend"] / d["limit_amount"] * 100)
+        expect(meter).to_have_attribute("aria-label", f"已使用 {pct}%")
+    assert dash["u-free"]["unlimited"] is True
+    expect(row(page, "u-free").locator("meter")).to_have_count(0)
+    expect(row(page, "c-pool").locator("meter")).to_have_attribute("aria-label", "已使用 37%")
+
+
 def test_clear_cooldown(new_page: NewPage, seeded: LiveGateway) -> None:
     gw = seeded
     page = new_page()
@@ -139,10 +161,10 @@ def test_member_id_links_to_members_page(new_page: NewPage, gw: LiveGateway) -> 
     page = new_page()
     goto(page, gw, "/ui/")
     wait_loaded(page)
-    link = page.locator('#members-body a.member-link').filter(has_text=odd)
+    link = page.locator('#members-body a.overview-member-link').filter(has_text=odd)
     expect(link).to_have_attribute("href", "/ui/members.html#" + quote(odd, safe=""))
     assert quote(odd, safe="") == "a%23b%3Fc%25d%26e"
-    expect(page.locator('#members-body a.member-link').filter(has_text="plain")).to_have_attribute(
+    expect(page.locator('#members-body a.overview-member-link').filter(has_text="plain")).to_have_attribute(
         "href", "/ui/members.html#plain")
     link.click()
     expect(page).to_have_url(gw.url("/ui/members.html#a%23b%3Fc%25d%26e"))

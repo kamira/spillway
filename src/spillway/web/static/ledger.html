@@ -28,12 +28,12 @@
 <h1>帳本</h1>
 <p class="sub">每次嘗試一列,含 fallback。點選任一列可查看該次的請求與回應內容。</p>
 </div>
-<div class="stack tight export-box">
+<div class="stack tight ledger-export">
 <a class="btn" id="export-csv" href="/api/ledger/export.csv" download>匯出 CSV</a>
 <span class="small warn-text" id="export-hint" hidden>符合的列超過 100,000 列,請縮小範圍後再匯出</span>
 </div>
 </div>
-<form class="card row filters" id="filters" aria-label="篩選">
+<form class="card row ledger-filters" id="filters" aria-label="篩選">
 <label class="f">起<input type="date" id="f-from" name="from"></label>
 <label class="f">訖(含當日)<input type="date" id="f-to" name="to"></label>
 <label class="f">Route<select id="f-route" name="route"><option value="">全部</option></select></label>
@@ -44,7 +44,7 @@
 </form>
 <section class="card" aria-label="帳本紀錄">
 <div class="scroll">
-<table id="ledger-table">
+<table class="ledger-table" id="ledger-table">
 <thead><tr><th>時間</th><th>Route</th><th>成員</th><th class="num">Slot</th><th>Effort</th><th class="num">預估 入 / 出 P90</th><th class="num">實際 入 / 出</th><th class="num">預估花費 P90</th><th class="num">實際花費</th><th>狀態</th><th class="num">延遲</th><th class="num">Fallback 深度</th></tr></thead>
 <tbody id="ledger-body"></tbody>
 </table>

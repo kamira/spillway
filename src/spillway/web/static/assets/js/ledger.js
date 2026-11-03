@@ -43,7 +43,9 @@ const state = {
   filters: {},       // 與 /api/ledger 參數同名(from、to 為完整 ISO)
   page: 1,
   deployments: new Set(),
+  deploymentsLoaded: false,   // 成員清單未載入成功時不判定孤兒列
   retentionDays: null,
+  lastPage: 1,                // 最後一次成功回應的 data.page(上/下一頁由它 ±1)
   loadSeq: 0,
   payloadSeq: 0,
   selected: null,
@@ -115,7 +117,9 @@ function statusBadge(status) {
 function memberText(depId) {
   if (depId === null || depId === undefined) return [h("span", { class: "muted" }, T.dash)];
   const nodes = [h("span", { class: "mono" }, depId)];
-  if (!state.deployments.has(depId)) nodes.push(h("span", { class: "muted orphan" }, T.deleted));
+  if (state.deploymentsLoaded && !state.deployments.has(depId)) {
+    nodes.push(h("span", { class: "muted ledger-orphan" }, T.deleted));
+  }
   return nodes;
 }
 
@@ -176,13 +180,20 @@ function syncUrl() {
   history.replaceState(null, "", withQuery("/ui/ledger.html", apiParams(true)));
 }
 
+function disableExport(title) {
+  const link = byId("export-csv");
+  link.removeAttribute("href");
+  link.setAttribute("aria-disabled", "true");
+  if (title) link.setAttribute("title", title);
+  else link.removeAttribute("title");
+}
+
+// 只在 /api/ledger 成功後呼叫;載入中與載入失敗時連結保持停用(不沿用舊篩選)
 function updateExport(total) {
   const link = byId("export-csv");
   const tooMany = total > CSV_MAX_ROWS;
   if (tooMany) {
-    link.removeAttribute("href");
-    link.setAttribute("aria-disabled", "true");
-    link.setAttribute("title", T.exportDisabled);
+    disableExport(T.exportDisabled);
   } else {
     setAttr(link, "href", withQuery("/api/ledger/export.csv", apiParams(false)));
     link.removeAttribute("aria-disabled");
@@ -205,14 +216,14 @@ function renderRows(items) {
       "aria-selected": state.selected === r.id ? "true" : "false" },
     h("td", { class: "nowrap" }, timeEl(r.ts)),
     h("td", { class: "mono" }, r.route_name ?? T.dash),
-    h("td", { class: "member-cell" }, ...memberText(r.deployment_id)),
+    h("td", { class: "ledger-member-cell" }, ...memberText(r.deployment_id)),
     h("td", { class: "num" }, r.slot ?? T.dash),
     h("td", {}, r.effort ?? T.dash),
     h("td", { class: "num" }, `${fmtInt(r.est_tokens_in)} / ${fmtInt(r.est_tokens_out_p90)}`),
     h("td", { class: "num" }, `${fmtInt(r.tokens_in)} / ${fmtInt(r.tokens_out)}`),
     h("td", { class: "num" }, fmtCost(r.est_cost_usd_p90)),
     h("td", { class: "num" }, fmtCost(r.cost_usd)),
-    h("td", { class: "status-cell" }, statusBadge(r.status),
+    h("td", { class: "ledger-status-cell" }, statusBadge(r.status),
       r.error ? h("div", { class: "small muted ledger-error" }, r.error) : null),
     h("td", { class: "num nowrap" }, fmtLatency(r.latency_ms)),
     h("td", { class: "num" }, r.fallback_depth ?? 0));
@@ -232,10 +243,22 @@ async function load() {
   const table = byId("ledger-table");
   table.setAttribute("aria-busy", "true");
   table.removeAttribute("data-loaded");
+  byId("page-prev").disabled = true;
+  byId("page-next").disabled = true;
+  disableExport(null);
+  byId("export-hint").hidden = true;
   syncUrl();
   try {
     const data = await getJSON(withQuery("/api/ledger", apiParams(true)));
     if (seq !== state.loadSeq) return;
+    const lastPage = Math.max(Number(data.pages) || 0, 1);
+    if (Number(data.page) > lastPage) {
+      // 網址的 page 超過最後一頁:改到最後一頁重新查詢(網址一併同步)
+      state.page = lastPage;
+      load();
+      return;
+    }
+    state.lastPage = Number(data.page);
     renderRows(Array.isArray(data.items) ? data.items : []);
     setText(byId("page-info"), T.pageInfo(data.page, data.pages, data.total));
     byId("page-prev").disabled = data.page <= 1;
@@ -268,12 +291,16 @@ function markSelected(id) {
 
 function keptUntilIso(ts) {
   const t = Date.parse(ts);
-  if (Number.isNaN(t) || state.retentionDays === null) return null;
+  if (Number.isNaN(t) || state.retentionDays === null || Number(state.retentionDays) <= 0) return null;
   return isoOf(new Date(t + Number(state.retentionDays) * DAY_MS));
 }
 
 function payloadNotice(text, kind) {
-  return h("p", { class: `payload-notice ${kind}`, "data-role": "payload-notice" }, text);
+  return h("p", { class: `ledger-payload-notice ${kind}`, "data-role": "payload-notice" }, text);
+}
+
+function errorLine(row) {
+  return h("p", { class: "small" }, T.errorLabel, h("span", { class: "ledger-error" }, row.error));
 }
 
 function renderPayload(row, p) {
@@ -281,6 +308,7 @@ function renderPayload(row, p) {
   const body = byId("payload-body");
   clear(meta);
   clear(body);
+  if (row.error) body.append(errorLine(row));
   meta.append(
     h("span", { class: p.truncated ? "badge b-warn" : "badge b-ok", "data-role": "truncated" },
       p.truncated ? T.truncated : T.notTruncated),
@@ -289,7 +317,7 @@ function renderPayload(row, p) {
   if (kept) meta.append(h("span", { class: "muted", "data-role": "kept-until" }, T.keptUntil, timeEl(kept)));
 
   const texts = { request: p.request_json ?? "", response: p.response_text ?? "" };
-  const pre = h("pre", { class: "wrap payload-text", id: "payload-text" });
+  const pre = h("pre", { class: "wrap ledger-payload-text", id: "payload-text" });
   const tabs = h("div", { class: "tabs", role: "tablist", "aria-label": T.title });
   let current = "request";
   const show = (which) => {
@@ -330,17 +358,14 @@ async function openPayload(row) {
   panel.removeAttribute("data-loaded");
   clear(meta);
   clear(body);
-  if (row.error) body.append(h("p", { class: "small" }, T.errorLabel, h("span", { class: "ledger-error" }, row.error)));
+  if (row.error) body.append(errorLine(row));
   const loading = h("p", { class: "loading" }, TEXT.loading);
   body.append(loading);
   panel.hidden = false;
   try {
     const p = await getJSON(`/api/ledger/${encodeURIComponent(row.id)}/payload`);
     if (seq !== state.payloadSeq) return;
-    loading.remove();
-    const errNode = body.firstChild;
     renderPayload(row, p);
-    if (row.error && errNode) body.prepend(errNode);
   } catch (err) {
     if (seq !== state.payloadSeq) return;
     loading.remove();
@@ -352,9 +377,16 @@ async function openPayload(row) {
   }
 }
 
+// 關閉(與 pagehide)時清空內容,不把 prompt 與回應留在 DOM(含 bfcache)
 function closePayload() {
   state.payloadSeq += 1;
-  byId("payload-panel").hidden = true;
+  const panel = byId("payload-panel");
+  panel.hidden = true;
+  panel.removeAttribute("data-ledger-id");
+  panel.removeAttribute("data-loaded");
+  setText(byId("payload-title"), T.title);
+  clear(byId("payload-meta"));
+  clear(byId("payload-body"));
   markSelected(null);
 }
 
@@ -370,9 +402,10 @@ async function main() {
   form.addEventListener("submit", (e) => e.preventDefault());
   form.addEventListener("change", onFilterChange);
   form.addEventListener("reset", () => setTimeout(onFilterChange, 0));
-  byId("page-prev").addEventListener("click", () => { state.page = Math.max(1, state.page - 1); load(); });
-  byId("page-next").addEventListener("click", () => { state.page += 1; load(); });
+  byId("page-prev").addEventListener("click", () => { state.page = Math.max(1, state.lastPage - 1); load(); });
+  byId("page-next").addEventListener("click", () => { state.page = state.lastPage + 1; load(); });
   byId("payload-close").addEventListener("click", closePayload);
+  window.addEventListener("pagehide", closePayload);
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !byId("payload-panel").hidden) closePayload();
   });
@@ -380,17 +413,19 @@ async function main() {
     if (byId("export-csv").getAttribute("aria-disabled") === "true") e.preventDefault();
   });
   fillSelect(byId("f-status"), Object.keys(STATUS), (v) => label(STATUS, v));
-  try {
-    const [routes, deps, ctx] = await Promise.all([
-      getJSON("/api/routes"), getJSON("/api/deployments"), getJSON("/api/settings/context")]);
-    const depIds = (deps.deployments || []).map((d) => d.id);
+  // 三個選單資料各自載入:其中一個失敗不影響其他
+  const [routes, deps, ctx] = await Promise.allSettled([
+    getJSON("/api/routes"), getJSON("/api/deployments"), getJSON("/api/settings/context")]);
+  if (routes.status === "fulfilled") fillSelect(byId("f-route"), (routes.value.routes || []).map((r) => r.name));
+  if (deps.status === "fulfilled") {
+    const depIds = (deps.value.deployments || []).map((d) => d.id);
     state.deployments = new Set(depIds);
-    state.retentionDays = ctx.context_retention_days;
-    fillSelect(byId("f-route"), (routes.routes || []).map((r) => r.name));
+    state.deploymentsLoaded = true;
     fillSelect(byId("f-deployment"), depIds);
-  } catch (err) {
-    showError(err);
   }
+  if (ctx.status === "fulfilled") state.retentionDays = ctx.value.context_retention_days;
+  const failed = [routes, deps, ctx].find((r) => r.status === "rejected");
+  if (failed) showError(failed.reason);
   readFiltersFromUrl();
   await load();
 }

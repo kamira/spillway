@@ -15,6 +15,8 @@ import { codeLabel, fmtLocal, fmtUSD, initShell, kindBadge, navigate, showError,
 const T = Object.freeze({
   dash: "—",
   days: (n) => `${n} 天`,
+  underOneDay: "< 1 天",
+  usedPct: (pct) => `已使用 ${pct}%`,
   normal: "正常",
   disabled: "停用",
   clearCooldown: "清除冷卻",
@@ -42,9 +44,18 @@ function budgetCell(row) {
   return h("span", { title: [row.budget_type, row.window].filter(Boolean).join(" · ") }, parts.join(" · "));
 }
 
+// 設計稿的進度條以原生 <meter> 呈現(只有 min/max/value 屬性,不需要 style;決策 7、8)
 function usageCell(row) {
-  if (row.unlimited) return h("span", {}, fmtUSD(row.period_spend));
-  return h("span", {}, `${fmtUSD(row.period_spend)} / ${fmtUSD(row.limit_amount)}`);
+  if (row.unlimited || row.limit_amount === null || row.limit_amount === undefined) {
+    return h("span", {}, fmtUSD(row.period_spend));
+  }
+  const limit = Number(row.limit_amount);
+  const spend = Number(row.period_spend) || 0;
+  const pct = limit > 0 ? Math.round((spend / limit) * 100) : 100;
+  return h("div", { class: "overview-usage" },
+    h("meter", { class: "overview-meter", min: "0", max: String(limit), value: String(spend),
+      "aria-label": T.usedPct(pct) }),
+    h("span", {}, `${fmtUSD(spend)} / ${fmtUSD(limit)}`));
 }
 
 function remainingCell(row) {
@@ -54,7 +65,9 @@ function remainingCell(row) {
 
 function daysCell(row) {
   if (row.est_days_left === null || row.est_days_left === undefined) return h("span", { class: "muted" }, T.dash);
-  return h("span", {}, T.days(Math.floor(Number(row.est_days_left))));
+  const days = Number(row.est_days_left);
+  if (days > 0 && days < 1) return h("span", {}, T.underOneDay);
+  return h("span", {}, T.days(Math.floor(days)));
 }
 
 function statusCell(row) {
@@ -70,8 +83,8 @@ function statusCell(row) {
 function memberCell(row, dep) {
   const tags = dep && Array.isArray(dep.tags) ? dep.tags : [];
   return h("div", { class: "stack tight" },
-    h("a", { class: "mono member-link", href: memberHref(row.id), title: T.memberLink(row.id) }, row.id),
-    tags.length ? h("div", { class: "row tag-row" }, ...tags.map((t) => h("span", { class: "chip" }, t))) : null);
+    h("a", { class: "mono overview-member-link", href: memberHref(row.id), title: T.memberLink(row.id) }, row.id),
+    tags.length ? h("div", { class: "row overview-tags" }, ...tags.map((t) => h("span", { class: "chip" }, t))) : null);
 }
 
 function renderRows(rows, deps, reload) {
@@ -117,8 +130,12 @@ function renderSummary(rows) {
   setText(byId("stat-requests"), rows.reduce((sum, r) => sum + Number(r.requests_24h || 0), 0));
 }
 
+let dashSeq = 0;
+
 async function loadDashboard() {
+  const seq = ++dashSeq;
   const [dash, depsResp] = await Promise.all([getJSON("/api/dashboard"), getJSON("/api/deployments")]);
+  if (seq !== dashSeq) return;      // 較新的一次載入已在進行,舊回應不渲染
   const rows = Array.isArray(dash.deployments) ? dash.deployments : [];
   const deps = new Map((depsResp.deployments || []).map((d) => [d.id, d]));
   renderSummary(rows);
