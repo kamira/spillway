@@ -1,0 +1,8 @@
+/* UI-1 總覽的頁面樣式(CHG-20261103-01 T4)。共用元件在 app.css。 */
+.tag-row { gap: 4px; }
+.tag-row .chip { padding: 1px 8px; font-size: 12px; }
+.member-link { font-weight: 600; }
+#members-body td { white-space: nowrap; }
+#members-body td:first-child { white-space: normal; min-width: 160px; }
+a.banner { text-decoration: none; font-weight: 600; }
+a.banner:hover { color: var(--warn-fg); text-decoration: underline; }

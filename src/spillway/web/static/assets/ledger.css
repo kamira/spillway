@@ -1,0 +1,11 @@
+/* UI-6 帳本的頁面樣式(CHG-20261103-01 T4)。共用元件在 app.css。 */
+.filters { align-items: flex-end; }
+.filters .f select, .filters .f input { min-width: 150px; }
+.export-box { align-items: flex-end; }
+.export-box .warn-text { max-width: 260px; text-align: right; }
+#ledger-body td { white-space: nowrap; }
+#ledger-body td.status-cell { white-space: normal; min-width: 120px; }
+.ledger-error { overflow-wrap: anywhere; max-width: 320px; }
+.orphan { margin-left: 4px; }
+.payload-text { max-height: 60vh; overflow-y: auto; }
+.payload-notice { padding: 12px 0; }

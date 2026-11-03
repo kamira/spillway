@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>總覽 · Spillway</title>
 <link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/overview.css">
 <script type="module" src="assets/js/overview.js"></script>
 </head>
 <body>
@@ -25,8 +26,35 @@
 <div class="head">
 <div>
 <h1>總覽</h1>
+<p class="sub">各成員本期剩餘額度與狀態;路由前會先排除冷卻中與額度用完的成員。</p>
 </div>
+<a class="btn sm" href="/ui/members.html">管理成員</a>
 </div>
+<a class="banner" id="resume-banner" href="/ui/wizard.html" hidden>尚未建立 route — 繼續首次設定</a>
+<section class="cards" aria-label="摘要" id="summary">
+<div class="card stat">
+<span class="stat-label">冷卻中成員</span>
+<div class="stat-value" id="stat-cooling">—</div>
+<div class="stat-note muted" id="stat-cooling-note"></div>
+</div>
+<div class="card stat">
+<span class="stat-label">近 24 小時請求</span>
+<div class="stat-value" id="stat-requests">—</div>
+<div class="stat-note muted">不含預檢略過</div>
+</div>
+</section>
+<section class="card" aria-labelledby="members-h">
+<div class="row between">
+<h2 id="members-h">成員額度</h2>
+<span class="muted small" id="generated-at"></span>
+</div>
+<div class="scroll">
+<table id="members-table">
+<thead><tr><th>成員</th><th>類型</th><th>額度類型</th><th class="num">本期使用</th><th class="num">剩餘</th><th class="num">預估可用</th><th class="num">近 7 天日均</th><th class="num">近 24 小時請求</th><th>狀態</th><th><span class="sr-only">操作</span></th></tr></thead>
+<tbody id="members-body"></tbody>
+</table>
+</div>
+</section>
 </main>
 </div>
 </body>
