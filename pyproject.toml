@@ -25,7 +25,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "behave>=1.2.6"]
+# CHG-20261103-01 決策 3:畫面測試(Chromium 1248 使用已快取的瀏覽器,不下載)
+dev = ["pytest>=8", "behave>=1.2.6", "playwright==1.64.1"]
 
 [project.scripts]
 spillway = "spillway.cli:main"
@@ -34,7 +35,9 @@ spillway = "spillway.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-spillway = ["**/*.sql", "**/*.yaml", "**/*.md", "**/*.j2"]
+# CHG-20261103-01 決策 5:畫面靜態檔
+spillway = ["**/*.sql", "**/*.yaml", "**/*.md", "**/*.j2",
+            "web/static/**/*.html", "web/static/**/*.css", "web/static/**/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

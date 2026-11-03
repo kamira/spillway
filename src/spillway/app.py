@@ -80,6 +80,7 @@ from spillway.api import install_error_handlers
 from spillway.api import admin
 from spillway.api import openai as openai_api
 from spillway.api.host_origin import HostOriginMiddleware
+from spillway.api.http_headers import SecurityHeadersMiddleware
 from spillway.api.mcp import McpEndpoint, McpRuntime, SpillwayServer
 from spillway.api.mcp.events import McpEvents
 from spillway.api.mcp.sdk_logging import install_sdk_root_log_filter
@@ -89,6 +90,7 @@ from spillway.clock import Clock, Rng, SystemClock, SystemRng
 from spillway.ledger import RetentionJob
 from spillway.routing import Router
 from spillway.store.db import connect
+from spillway.web import mount_web
 
 __all__ = ["create_app", "RetentionScheduler", "DEFAULT_RETENTION_INTERVAL_SECONDS",
            "DEFAULT_RETENTION_POLL_SECONDS", "TOKEN_NOTICE"]
@@ -291,6 +293,10 @@ def create_app(
     # ---- T15 追加處結束 ----
     # CHG-20261102-01 T2(決策 9、10):`/mcp/<group>`(depth → Bearer → 停機 → 群組 → SDK session manager)
     app.mount("/mcp", McpEndpoint(app))
+    # CHG-20261103-01 T3(決策 5–7):`/ui` 靜態檔與 `/` 轉址
+    mount_web(app)
+    # CHG-20261103-01 T3(決策 7,AM-2):安全標頭;必須在 HostOrigin 之前加入,HostOrigin 才在最外層
+    app.add_middleware(SecurityHeadersMiddleware)
     # CHG-20261102-01 T1(決策 4、AM-11):Host/Origin 檢查。add_middleware 後加者在外層,
     # 所以這一行必須是 create_app 的最後一個 add_middleware,讓它先於所有路由與 `/mcp` 執行。
     app.add_middleware(HostOriginMiddleware, port=port)
