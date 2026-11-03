@@ -285,18 +285,46 @@ def test_empty_slots_go_through_restore_confirm(page: Page, gw: LiveGateway) -> 
     open_editor(page, gw, "rt")
     assert editor_slots(page) == []
     expect(page.locator("#order-source")).to_have_text("手動")
-    # 取消:不刪除
+    page.locator("#route-mode").select_option("chat")            # 同時有設定變更
+    # 取消:確認在任何寫入之前,不寫入任何東西
     page.locator("#btn-save").click()
     dialog = page.locator("dialog")
     expect(dialog.locator(".dialog-title")).to_have_text("還原預設順序")
     dialog.get_by_role("button", name="取消").click()
     expect(dialog).to_have_count(0)
     assert route_targets(gw, "rt") == ["api-a", "api-b"]
-    # 確認:等同還原預設
+    assert api(gw, "GET", "/api/routes/rt").json()["mode"] == "task"
+    expect(page.locator("#dirty-banner")).to_be_visible()
+    # 確認:設定寫入,順序等同還原預設
     page.locator("#btn-save").click()
     page.locator("dialog").get_by_role("button", name="還原預設").click()
     expect(page.locator("#order-source")).to_have_text("預設")
     assert route_targets(gw, "rt") == []
+    assert api(gw, "GET", "/api/routes/rt").json()["mode"] == "chat"
+
+
+def test_settings_save_does_not_revert_external_target(page: Page, gw: LiveGateway) -> None:
+    open_editor(page, gw, "rt")
+    new_target = {"tags": {"all": [], "any": ["r", "other"], "none": []}}
+    api(gw, "PUT", "/api/routes/rt", {"target": new_target, "mode": "task"})   # 另一分頁改了 target
+    page.locator("#route-mode").select_option("chat")
+    puts: list[str] = []
+    page.on("request", lambda r: puts.append(r.url) if r.method == "PUT" else None)
+    page.locator("#btn-save").click()
+    expect(page.locator("#msgbar")).to_contain_text("route 目標已在別處變更")
+    expect(page.locator("#btn-reload-route")).to_be_visible()
+    r = api(gw, "GET", "/api/routes/rt").json()
+    assert (r["target"], r["mode"]) == (new_target, "task")
+    assert puts == []
+    # 重新載入後以新的 target 顯示,再改 mode 可以儲存
+    page.locator("#btn-reload-route").click()
+    expect(page.locator("#dirty-banner")).to_be_hidden()
+    assert "x-other" in sum(editor_slots(page), [])
+    page.locator("#route-mode").select_option("chat")
+    page.locator("#btn-save").click()
+    expect(page.locator("#dirty-banner")).to_be_hidden()
+    r = api(gw, "GET", "/api/routes/rt").json()
+    assert (r["target"], r["mode"]) == (new_target, "chat")
 
 
 def test_restore_default(page: Page, gw: LiveGateway) -> None:
@@ -356,6 +384,54 @@ def test_dry_run_panel(page: Page, gw: LiveGateway, fake_api) -> None:  # noqa: 
     expect(page.locator("#dry-random")).to_have_text("slot 內依權重隨機抽選,每次順序可能不同")
 
 
+def test_dry_run_slot_labels_match_editor(page: Page, gw: LiveGateway) -> None:
+    # 預設順序:api 為 planner slot 2、local 為 slot 3;畫面一律以位置標 Slot 1、Slot 2
+    eff = api(gw, "GET", "/api/routes/rt/effective-order").json()
+    assert [s["slot"] for s in eff["slots"]] == [2, 3]
+    open_editor(page, gw, "rt")
+    expect(page.locator("#slots .slot h3")).to_have_text(["Slot 1", "Slot 2"])
+    page.locator("#btn-dry-run").click()
+    items = page.locator("#dry-slots > li")
+    expect(items.first).to_be_visible()
+    got = [(items.nth(i).get_attribute("data-slot"), items.nth(i).locator("strong").inner_text(),
+            items.nth(i).get_attribute("title")) for i in range(items.count())]
+    expected = {"2": "Slot 1", "3": "Slot 2"}
+    assert got and got[0][0] == "2"
+    assert all(label == expected[num] and title == f"帳本 slot {num}" for num, label, title in got), got
+    expect(page.locator("#dry-dirty")).to_have_count(0)
+    # 有未儲存的變更時,dry-run 面板提示它依已儲存的設定
+    slot_head(page, 1).locator('[data-role="up"]').click()
+    page.locator("#btn-dry-run").click()
+    expect(page.locator("#dry-dirty")).to_have_text("目前有未儲存的變更,dry-run 依已儲存的設定")
+
+
+def test_stored_effort_outside_capabilities_is_kept(page: Page, gw: LiveGateway) -> None:
+    put_order(gw, "rt", [[("api-a", "max", "high"), "api-b"], ["q-local"]])
+    open_editor(page, gw, "rt")
+    effort = card(page, "api-a").locator('select[data-role="effort"]')
+    assert effort.locator("option").all_inner_texts() == ["不指定", "low", "medium", "high", "max(不在能力清單)"]
+    expect(effort).to_have_value("max")
+    card(page, "api-b").locator('select[data-role="weight"]').select_option("low")
+    page.locator("#btn-save").click()
+    expect(page.locator("#dirty-banner")).to_be_hidden()
+    assert route_order_full(gw, "rt")[0] == [{"deployment": "api-a", "effort": "max", "weight": "high"},
+                                             {"deployment": "api-b", "effort": None, "weight": "low"}]
+    expect(card(page, "api-a").locator('select[data-role="effort"]')).to_have_value("max")
+
+
+def test_cli_card_marked_when_mode_chat(page: Page, gw: LiveGateway) -> None:
+    add_members(gw, {"id": "cli-a", "model_name": "cli-a", "kind": "cli", "provider": "claude-cli",
+                     "model": "claude-sonnet-4-5", "tags": ["r"]})
+    open_editor(page, gw, "rt")
+    expect(card(page, "cli-a").locator(".badge.b-cli")).to_have_text("訂閱 CLI")
+    expect(card(page, "cli-a").locator('[data-mark="cli-in-chat"]')).to_have_count(0)
+    page.locator("#route-mode").select_option("chat")
+    expect(card(page, "cli-a").locator('[data-mark="cli-in-chat"]')).to_have_text("chat 不使用")
+    expect(card(page, "api-a").locator('[data-mark="cli-in-chat"]')).to_have_count(0)
+    page.locator("#route-mode").select_option("task")
+    expect(card(page, "cli-a").locator('[data-mark="cli-in-chat"]')).to_have_count(0)
+
+
 @pytest.mark.expect_http_errors(422)
 def test_member_not_in_target_shows_422(page: Page, gw: LiveGateway) -> None:
     open_editor(page, gw, "rt")
@@ -374,6 +450,15 @@ def test_member_not_in_target_shows_422(page: Page, gw: LiveGateway) -> None:
     expect(page.locator("#msgbar")).to_contain_text("api-a")
     expect(page.locator("#dirty-banner")).to_be_visible()
     assert route_order(gw, "rt") == []
+    # 恢復:重新載入(捨棄本頁的變更)後 api-a 不再出現,再次修改並儲存成功
+    page.locator("#btn-reload-route").click()
+    expect(card(page, "api-a")).to_have_count(0)
+    expect(page.locator("#dirty-banner")).to_be_hidden()
+    assert editor_slots(page) == [["api-b"]]
+    card(page, "api-b").locator('select[data-role="weight"]').select_option("low")
+    page.locator("#btn-save").click()
+    expect(page.locator("#dirty-banner")).to_be_hidden()
+    assert route_order_full(gw, "rt") == [[{"deployment": "api-b", "effort": None, "weight": "low"}]]
 
 
 @pytest.mark.expect_http_errors(404)
@@ -416,7 +501,7 @@ def test_routes_list_create_delete_and_record_tristate(page: Page, gw: LiveGatew
     form.locator("#new-tags").fill("weekly")
     form.locator("#new-record").select_option(label="關")
     form.locator("#new-submit").click()
-    expect(page.locator('#routes-table tr[data-route="by-group"]')).to_have_count(1)
+    expect(page.locator('#routes-table tr[data-route="by-group"] [data-col="record"]')).to_have_text("關")
     r = api(gw, "GET", "/api/routes/by-group").json()
     assert (r["mode"], r["target"], r["tags"], r["record_context"], r["budget_precheck"]) == \
         ("task", {"group": "coding"}, ["weekly"], False, False)

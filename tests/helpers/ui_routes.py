@@ -137,7 +137,10 @@ def new_slot_zone(page: Page) -> Locator:
 
 def _drag(page: Page, source: Locator, target: Locator) -> None:
     """HTML5 拖曳。拖曳目標在 dragstart 之前就必須可見且有尺寸(AM-9);拖曳中途捲動會讓 Chromium 取消拖曳,
-    所以先把來源與目標一起捲進視窗(兩者的中點置中)再 `drag_to`。"""
+    所以先把來源與目標一起捲進視窗(兩者的中點置中)再 `drag_to`。
+
+    限制:來源頂端到目標底端的距離不可超過視窗高度(1280×800 的 context 為 800 px),否則兩者無法同時
+    在視窗內,拖曳會失敗;需要更遠的移動時改用鍵盤替代(「移到…」選單、上移/下移)。"""
     expect(source).to_be_visible()
     expect(target).to_be_visible()
     src_box, dst_box = source.bounding_box(), target.bounding_box()

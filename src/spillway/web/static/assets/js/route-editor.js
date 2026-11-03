@@ -14,8 +14,8 @@ import { getJSON, sendJSON } from "./api.js";
 import { byId, clear, h, setText } from "./dom.js";
 import { TEXT } from "./strings.js";
 import {
-  clearMessage, confirmDialog, fmtLocal, fmtUSD, initShell, kindBadge, setLoading, showError,
-  showMessage, withBusy,
+  clearMessage, confirmDialog, fmtUSD, initShell, kindBadge, setLoading, showError, showMessage, timeEl,
+  withBusy,
 } from "./ui.js";
 
 // ---- 頁面字串 ---------------------------------------------------------------------------------
@@ -82,9 +82,16 @@ export const T = Object.freeze({
   dry_excluded: "排除",
   dry_none: "沒有候選成員",
   dry_unsorted: "(未排序)",
+  dry_dirty: "目前有未儲存的變更,dry-run 依已儲存的設定",
+  ledger_slot: "帳本 slot",
+  reload_route: "重新載入",
+  target_changed: "route 目標已在別處變更,請重新載入",
+  cli_in_chat: "chat 不使用",
+  budget: "額度",
+  settings: "Route 設定",
 });
 
-const WEIGHTS = Object.freeze([["high", "高"], ["medium", "中"], ["low", "低"]]);
+const WEIGHTS = Object.freeze([["high", "高", 3], ["medium", "中", 2], ["low", "低", 1]]);
 
 // 排除原因(routing EXCLUDE_REASONS)→ 繁中;原值放在 title
 const EXCLUDE_REASON = Object.freeze({
@@ -195,6 +202,7 @@ const state = {
   deps: new Map(),      // id → /api/deployments 列
   dash: new Map(),      // id → /api/dashboard 列
   slots: [],
+  numbers: [],          // 載入時各 slot 的 planner 編號(dry-run 依此對到畫面位置)
   baseOrder: "[]",
   settings: null,       // {mode, tags, record_context, budget_precheck}
   baseSettings: "",
@@ -226,6 +234,7 @@ async function load() {
   ]);
   state.route = route;
   state.ordered = eff.ordered;
+  state.numbers = eff.slots.map((s) => s.slot);   // planner 的 slot 編號(可能不連號;帳本記錄的值)
   state.deps = new Map(deps.deployments.map((d) => [d.id, d]));
   state.dash = new Map(dash.deployments.map((d) => [d.id, d]));
   state.slots = eff.slots.map((s) => ({
@@ -272,7 +281,7 @@ function renderSettings() {
   const mode = h("select", { id: "route-mode" },
     h("option", { value: "chat" }, "chat"), h("option", { value: "task" }, "task"));
   mode.value = s.mode;
-  mode.addEventListener("change", () => { s.mode = mode.value; renderModeNote(); renderDirty(); });
+  mode.addEventListener("change", () => { s.mode = mode.value; renderModeNote(); renderSlots(); renderDirty(); });
 
   const tags = h("input", { type: "text", id: "route-tags", autocomplete: "off" });
   tags.value = s.tags.join(", ");
@@ -293,12 +302,12 @@ function renderSettings() {
   });
 
   const manual = state.ordered === "manual";
-  return h("section", { class: "card", "aria-label": "Route 設定" },
+  return h("section", { class: "card", "aria-label": T.settings },
     h("div", { class: "route-settings" },
       h("div", { class: "f" }, h("span", { class: "label" }, T.target), h("span", { id: "route-target" }, ...targetText(state.route.target))),
       field(T.mode, mode),
       field(T.route_tags, tags, T.route_tags_hint),
-      h("div", { class: "f" }, h("span", { class: "label" }, "額度"),
+      h("div", { class: "f" }, h("span", { class: "label" }, T.budget),
         h("label", { class: "check" }, pre, T.precheck), h("span", { class: "hint" }, T.precheck_hint)),
       field(T.record, rec),
       h("div", { class: "f" }, h("span", { class: "label" }, T.source),
@@ -406,8 +415,11 @@ function renderCard(entry, slotIndex) {
   const marks = [];
   if (dep && dep.enabled === false) marks.push(h("span", { class: "badge b-muted", "data-mark": "disabled" }, T.disabled));
   if (row && row.cooling_until) {
-    marks.push(h("span", { class: "badge b-warn", "data-mark": "cooling", title: row.cooling_until },
-      `${T.cooling} ${fmtLocal(row.cooling_until)}`));
+    marks.push(h("span", { class: "badge b-warn", "data-mark": "cooling" }, `${T.cooling} `, timeEl(row.cooling_until)));
+  }
+  // chat route 不使用 CLI 成員:卡片照樣保留並寫入順序(改回 task 時仍有效),只加提示
+  if (kind === "cli" && state.settings && state.settings.mode === "chat") {
+    marks.push(h("span", { class: "badge b-muted", "data-mark": "cli-in-chat" }, T.cli_in_chat));
   }
   if (entry.unsorted) marks.push(h("span", { class: "badge b-warn", "data-mark": "unsorted" }, T.unsorted));
 
@@ -473,7 +485,7 @@ function renderEditor() {
     else update({ kind: "slot", from: drag.index, to: state.slots.length });
   });
   editor.append(
-    h("div", { id: "dirty-banner", class: "dirty-banner", role: "status", hidden: true },
+    h("div", { id: "dirty-banner", class: "banner", role: "status", hidden: true },
       h("strong", {}, T.dirty), h("span", {}, T.dirty_hint)),
     renderSettings(),
     h("div", { class: "route-layout" },
@@ -491,9 +503,7 @@ function renderEditor() {
           h("h2", { id: "w-h" }, T.weight_h),
           h("p", { id: "weight-note" }, T.weight_note),
           h("div", { class: "weight-scale" },
-            h("div", {}, h("div", {}, "高"), h("div", { class: "muted" }, "3")),
-            h("div", {}, h("div", {}, "中"), h("div", { class: "muted" }, "2")),
-            h("div", {}, h("div", {}, "低"), h("div", { class: "muted" }, "1"))),
+            ...WEIGHTS.map(([, l, n]) => h("div", {}, h("div", {}, l), h("div", { class: "muted" }, String(n))))),
           h("p", { class: "muted small" }, T.weight_formula)))));
   renderSlots();
   renderDirty();
@@ -509,16 +519,37 @@ async function reload() {
   renderEditor();
 }
 
-async function restoreDefault(body) {
-  const ok = await confirmDialog({ title: T.restore_title, body, confirmLabel: T.restore_confirm, danger: true });
-  if (!ok) return false;
-  await sendJSON("DELETE", routePath("/order"));
-  return true;
+function confirmRestore(body) {
+  return confirmDialog({ title: T.restore_title, body, confirmLabel: T.restore_confirm, danger: true });
+}
+
+function deleteOrder() {
+  return sendJSON("DELETE", routePath("/order"));
+}
+
+// 目標在別處變更或 422 member_not_in_target 之後,本頁的狀態已過時:在未儲存標示內提供「重新載入」
+// (捨棄本頁的變更,重新讀取 effective-order)
+function showReload() {
+  const banner = byId("dirty-banner");
+  if (!banner) return;
+  banner.hidden = false;
+  if (byId("btn-reload-route")) return;
+  const btn = h("button", { type: "button", class: "btn sm", id: "btn-reload-route" }, T.reload_route);
+  btn.addEventListener("click", () => withBusy(btn, async () => {
+    try {
+      await reload();
+      clearMessage();
+    } catch (err) {
+      showError(err);
+    }
+  }));
+  banner.append(btn);
 }
 
 async function onRestore() {
   try {
-    if (await restoreDefault(T.restore_body)) {
+    if (await confirmRestore(T.restore_body)) {
+      await deleteOrder();
       await reload();
       showMessage(T.restored, "ok");
     }
@@ -530,26 +561,33 @@ async function onRestore() {
 async function onSave() {
   clearMessage();
   const empty = state.slots.length === 0;
-  if (!isDirty() && !(empty && state.ordered === "manual")) {
+  // 把所有卡片拖出(slots = [])等同還原預設:先確認,取消時不寫入任何東西
+  const restoreNeeded = empty && (orderDirty() || state.ordered === "manual");
+  if (!isDirty() && !restoreNeeded) {
     showMessage(T.no_changes, "info");
     return;
   }
   try {
+    if (restoreNeeded && !(await confirmRestore(T.restore_empty_body))) {
+      renderDirty();
+      return;
+    }
     if (settingsDirty()) {
+      // 編輯頁不改 target:先重讀,target 已在別處變更時不寫入(避免把它蓋回載入時的值)
+      const fresh = await getJSON(routePath());
+      if (JSON.stringify(fresh.target) !== JSON.stringify(state.route.target)) {
+        showMessage(T.target_changed, "error");
+        showReload();
+        return;
+      }
       const s = state.settings;
-      await sendJSON("PUT", routePath(), { target: state.route.target, mode: s.mode, tags: s.tags,
+      await sendJSON("PUT", routePath(), { target: fresh.target, mode: s.mode, tags: s.tags,
         record_context: s.record_context, budget_precheck: s.budget_precheck });
       state.baseSettings = settingsKey(s);
     }
-    if (empty) {
-      // 把所有卡片拖出(slots = [])等同還原預設,走同一個確認對話框
-      if (orderDirty() || state.ordered === "manual") {
-        if (!(await restoreDefault(T.restore_empty_body))) {
-          renderDirty();
-          return;
-        }
-      }
-    } else if (orderDirty()) {
+    if (restoreNeeded) {
+      await deleteOrder();
+    } else if (!empty && orderDirty()) {
       await sendJSON("PUT", routePath("/order"), orderBody(state.slots));
     }
     await reload();
@@ -557,7 +595,14 @@ async function onSave() {
   } catch (err) {
     renderDirty();
     showError(err);
+    if (err && err.code === "member_not_in_target") showReload();
   }
+}
+
+// dry-run 的 slot 依載入時的 planner 編號對到畫面位置(Slot 1…N);帳本記錄的 planner 編號放在 data-slot 與 title
+function dryRunSlotLabel(number) {
+  const pos = state.numbers.indexOf(number);
+  return pos >= 0 ? `${T.slot} ${pos + 1}` : `${T.slot} ${number ?? ""}`;
 }
 
 function excludedLabel(code) {
@@ -571,8 +616,9 @@ async function onDryRun() {
     const plan = await sendJSON("POST", routePath("/dry-run"), { messages: [{ role: "user", content: T.dry_sample }] });
     setLoading(out, false);
     clear(out);
-    const items = plan.slots.map((s) => h("li", { "data-slot": String(s.number ?? "") },
-      h("strong", {}, `${T.slot} ${s.number ?? ""}`), " ",
+    if (isDirty()) out.append(h("p", { class: "warn-text", id: "dry-dirty" }, T.dry_dirty));
+    const items = plan.slots.map((s) => h("li", { "data-slot": String(s.number ?? ""), title: `${T.ledger_slot} ${s.number ?? ""}` },
+      h("strong", {}, dryRunSlotLabel(s.number)), " ",
       ...s.entries.map((e, k) => h("span", { class: "dry-entry" }, k ? "、" : "",
         h("span", { class: "mono", "data-deployment": e.deployment }, e.deployment), " ", kindBadge(e.kind),
         e.unsorted ? T.dry_unsorted : ""))));

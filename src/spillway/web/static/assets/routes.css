@@ -5,7 +5,6 @@
 .route-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* ---- 編輯頁 ---- */
-.dirty-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-fg); }
 .route-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 20px; align-items: start; }
 .route-settings .f { font-weight: 400; }
 .route-settings .f > .label { font-weight: 600; color: var(--muted); }
