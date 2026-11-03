@@ -235,7 +235,7 @@ async function createRoute(ev) {
     }
     state.route = name;
     enterDone();
-    if (reused) await checkReused(name);
+    if (reused) await checkReused(name, tag);
   });
 }
 
@@ -250,16 +250,20 @@ export function curlExample(port, route) {
   return `curl http://127.0.0.1:${port}/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d ${shellQuote(body)}`;
 }
 
-// 409 沿用既有 route 時:以靜態生效順序確認它包含 ① 的成員,不含時於 ④ 警示並提供回 ③
-async function checkReused(name) {
+// 409 沿用既有 route 時:以靜態生效順序確認它包含 ① 的成員(續作時為帶所選 tag 的既有成員),
+// 不含時於 ④ 警示並提供回 ③
+async function checkReused(name, tag) {
   const warn = byId("done-warn");
   const text = byId("done-warn-text");
-  if (!state.member) return;
+  const cands = state.member
+    ? [state.member.id]
+    : (state.resumeDeps || []).filter((d) => (d.tags || []).includes(tag)).map((d) => d.id);
+  if (!cands.length) return;
   try {
     const eo = await getJSON(`/api/routes/${encodeURIComponent(name)}/effective-order`);
     const ids = (eo.slots || []).flatMap((s) => (s.entries || []).map((e) => e.deployment));
-    if (ids.includes(state.member.id)) return;
-    setText(text, T.not_member(name, state.member.id));
+    if (cands.some((id) => ids.includes(id))) return;
+    setText(text, T.not_member(name, cands.join("、")));
   } catch {
     setText(text, T.check_failed);
   }
@@ -289,6 +293,7 @@ async function resumeRoute() {
   const tags = [];
   for (const d of deps) for (const t of d.tags || []) if (!tags.includes(t)) tags.push(t);
   state.tags = tags;
+  state.resumeDeps = deps;
   state.kind = deps.length && deps.every((d) => d.kind === "cli") ? "cli" : null;
   enterRoute();
 }

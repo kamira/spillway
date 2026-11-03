@@ -279,6 +279,23 @@ def test_resume_from_step3_via_overview_banner(new_page: NewPage, gw: LiveGatewa
     assert {m for m, u in guard_of(page).requests[seen:] if not u.endswith("/api/groups/preview")} == {"GET"}
 
 
+@pytest.mark.expect_http_errors(409)
+def test_resume_step3_reused_route_without_member_warns(new_page: NewPage, gw: LiveGateway) -> None:
+    """續作路徑(有成員無 route 直接開精靈到 ③)遇 409 沿用時,同樣檢查 route 是否包含帶所選 tag 的成員
+    (ACC-20261103-01 發現 1;迴歸 R55)。"""
+    seed_member(gw, "r1", tags=["alpha"])
+    page = new_page()
+    open_wizard(page, gw)
+    wait_step(page, 3)
+    add_route(gw, "chat", "zzz")                                 # 另一個分頁先建立了同名 route
+    with page.expect_response(lambda r: r.url.endswith("/effective-order")):
+        page.locator("#route-create").click()
+    wait_step(page, 4)
+    warn = page.locator("#done-warn")
+    expect(warn).to_be_visible()
+    expect(warn).to_contain_text("route「chat」不包含剛加入的成員 r1")
+
+
 def test_resume_step4_when_member_and_route_exist(new_page: NewPage, gw: LiveGateway) -> None:
     seed_member(gw, "m1")
     add_route(gw, "review", "chat")
