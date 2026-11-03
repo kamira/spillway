@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>成員 · Spillway</title>
 <link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/member-form.css">
+<link rel="stylesheet" href="assets/members.css">
 <script type="module" src="assets/js/members.js"></script>
 </head>
 <body>
@@ -25,7 +27,22 @@
 <div class="head">
 <div>
 <h1>成員</h1>
+<p class="sub">每個成員是一個可呼叫的模型;single 模組(例如訂閱 CLI)每個供應商最多一個成員。</p>
 </div>
+<button class="btn primary" type="button" id="new-member">+ 新增成員</button>
+</div>
+<div class="members-layout">
+<section class="card" aria-label="成員清單" id="member-list">
+<div class="scroll" id="member-table-host"></div>
+</section>
+<section class="card" aria-labelledby="editor-title" id="member-editor" hidden>
+<div class="row between">
+<h2 id="editor-title"></h2>
+<div class="row" id="editor-actions"></div>
+</div>
+<div id="test-result" class="test-result" role="status" hidden></div>
+<div id="member-form-host"></div>
+</section>
 </div>
 </main>
 </div>

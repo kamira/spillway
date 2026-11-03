@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>群組與 Tag · Spillway</title>
 <link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/groups.css">
 <script type="module" src="assets/js/groups.js"></script>
 </head>
 <body>
@@ -25,7 +26,20 @@
 <div class="head">
 <div>
 <h1>群組與 Tag</h1>
+<p class="sub">群組是有名稱的 tag 條件;route 指向群組,或直接指向 tag 條件。</p>
 </div>
+<button class="btn primary" type="button" id="new-group">+ 新增群組</button>
+</div>
+<div class="groups-layout">
+<section class="card" aria-label="群組清單">
+<div class="glist" id="group-list"></div>
+</section>
+<section class="card" aria-labelledby="group-editor-title" id="group-editor" hidden></section>
+<section class="card" aria-labelledby="tags-title" id="tag-card">
+<h2 id="tags-title">所有 Tag</h2>
+<ul class="plain" id="tag-list"></ul>
+<p class="muted small">要修改 tag,請點選成員,在成員頁編輯該成員的 tags。</p>
+</section>
 </div>
 </main>
 </div>

@@ -1,0 +1,10 @@
+/* 成員表單(member-form.js;UI-2 與首次設定精靈共用,CHG-20261103-01 T5)。 */
+.member-form input[type=text], .member-form input[type=number], .member-form input[type=url], .member-form select { width: 100%; }
+.member-form textarea { width: 100%; }
+.member-form h3 { color: var(--muted); font-size: 13px; }
+.member-form .f-error { color: var(--err-fg); background: var(--err-bg); border: 1px solid var(--err-line); border-radius: 8px; padding: 10px 12px; }
+.member-form .params-help { display: flex; flex-direction: column; gap: 4px; }
+.member-form .params-keys { margin: 0; padding-left: 18px; }
+.member-form .params-keys code { font-family: var(--mono); }
+.member-form [data-role="tags"] { min-height: 32px; }
+.member-form .row input[name=tag] { flex: 1 1 200px; width: auto; }
