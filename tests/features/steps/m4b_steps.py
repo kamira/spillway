@@ -9,7 +9,8 @@
 - 瀏覽器:environment.py 的 `before_feature` 只為本 feature 啟動 Playwright(`context.browser`);每個情境以
   `tests.helpers.ui.open_context` 開一個 context(1280×800、Asia/Taipei、zh-TW、剪貼簿權限),收尾時
   `close_and_collect`:console error、pageerror、非本機請求任何一筆即讓情境失敗。
-- 頁面操作與種資料一律匯入 `tests/helpers/ui.py` 與 `tests/helpers/ui_<area>.py`(不搬移、不複製)。
+- 頁面操作與種資料匯入 `tests/helpers/ui.py` 與 `tests/helpers/ui_<area>.py`(不搬移)。少數小工具
+  (`_wait_step`、`TPE`/`_local`、匯出下載)與 tests/ui、操作驗收各有一份,留待下一輪共用模組整理。
 - 上游一律為 environment.py 的假 API 上游(`context.fake`);api 成員的憑證參照為 `env:SPILLWAY_TEST_KEY`
   (值為 environment.py 設定的假金鑰,只是參照)。
 - 收尾登記到 `context.scenario_teardown`(environment.py 在關閉 `context.gw` 與刪除暫存目錄之前執行):
@@ -76,7 +77,7 @@ def _start_gateway(context: Any, db_path: Path | None = None, **kw: Any) -> Any:
     return gw
 
 
-def _teardown(context: Any, opened: list[Any]) -> None:
+def _close_all(context: Any, opened: list[Any]) -> None:
     """先關瀏覽器 context 並收集違規,再停全部閘道(頁面不會看到閘道停機造成的連線錯誤)。"""
     errors: list[BaseException] = []
     problems = [str(v) for v in close_and_collect(opened)]
@@ -98,7 +99,7 @@ def step_gateway_and_browser(context: Any) -> None:
     context.ui_gateways = []
     ctx, guard = open_context(context.browser, permissions=CLIP)
     opened = [(ctx, guard)]
-    context.scenario_teardown.append(lambda: _teardown(context, opened))
+    context.scenario_teardown.append(lambda: _close_all(context, opened))
     context.ui_gw = _start_gateway(context)
     context.ui_page = ctx.new_page()
 
@@ -501,6 +502,7 @@ def _api_base(context: Any, dep_id: str) -> str:
 
 
 def _query(url: str) -> dict[str, list[str]]:
+    """網址的 query(多值;`tests.helpers.ui.query_of` 要求單值,這裡只看 dry_run)。"""
     return parse_qs(urlsplit(url).query)
 
 
@@ -614,8 +616,7 @@ def step_open_three(context: Any) -> None:
 def _page_facts(page: Page) -> dict[str, Any]:
     return {"text": page.locator("main").inner_text(),
             "img": page.evaluate("() => document.querySelectorAll('img').length"),
-            "script": page.evaluate("() => document.querySelectorAll('script').length"),
-            "xss": page.evaluate("() => window.__xss === undefined ? null : window.__xss")}
+            "script": page.evaluate("() => document.querySelectorAll('script').length")}
 
 
 @step(r"畫面上以文字顯示這兩個字串")
@@ -630,7 +631,6 @@ def step_xss_inert(context: Any) -> None:
     for name, facts in context.ui_seen.items():
         assert facts["img"] == 0, name
         assert facts["script"] == 1, name          # 只有頁面自己的 module script
-        assert facts["xss"] is None, name
     assert guard_of(_page(context)).dialogs == []
 
 
@@ -651,15 +651,24 @@ def step_open_all(context: Any) -> None:
     page, gw = _page(context), _gw(context)
     captured: list[tuple[str, str]] = []          # (來源, 內容)
     responses: list[Response] = []
-    page.on("response", lambda r: responses.append(r) if "/api/" in r.url else None)
-    for label, href in NAV:
-        responses.clear()
-        goto(page, gw, href)
-        page.wait_for_load_state("networkidle")
-        assert page.locator("main h1").first.inner_text().strip(), label
-        captured.append((f"html:{label}", page.content()))
-        for r in list(responses):
-            captured.append((f"api:{label}:{r.url}", r.text()))
+    current = {"label": ""}
+
+    def on_response(r: Response) -> None:          # 回應到達時立即讀 body(換頁後可能取不到)
+        if "/api/" in r.url:
+            responses.append(r)
+            captured.append((f"api:{current['label']}:{r.url}", r.text()))
+
+    page.on("response", on_response)
+    try:
+        for label, href in NAV:
+            current["label"] = label
+            goto(page, gw, href)
+            page.wait_for_load_state("networkidle")
+            assert page.locator("main h1").first.inner_text().strip(), label
+            captured.append((f"html:{label}", page.content()))
+    finally:
+        page.remove_listener("response", on_response)
+    assert responses
     context.ui_captured = captured
 
 

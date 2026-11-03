@@ -65,12 +65,13 @@ M4B_UI_FEATURE = "m4b_ui.feature"
 
 
 def _is_m4b_ui(feature) -> bool:
-    return Path(str(feature.filename)).name == M4B_UI_FEATURE or "m4b_ui" in feature.tags
+    return Path(str(feature.filename)).name == M4B_UI_FEATURE
 
 
 def before_feature(context, feature):
     if not _is_m4b_ui(feature):
         return
+    # 延遲 import:只有執行 m4b_ui 時才載入 Playwright(其他 feature 不需要它)
     from playwright.sync_api import sync_playwright
 
     context.playwright = sync_playwright().start()
@@ -85,7 +86,8 @@ def before_feature(context, feature):
 def after_feature(context, feature):
     if not _is_m4b_ui(feature):
         return
-    import asyncio
+    import asyncio  # 延遲 import:只在 m4b_ui 結束時斷言用
+
 
     browser = getattr(context, "browser", None)
     pw = getattr(context, "playwright", None)

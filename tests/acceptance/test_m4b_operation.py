@@ -35,6 +35,7 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -47,7 +48,8 @@ from tests.fakes.cli_upstream import assert_only_fakes, install
 from tests.features.support.mcp_proc import ServeProc, child_env
 from tests.helpers import redact_tokens
 from tests.helpers.live_gateway import start_live_gateway
-from tests.helpers.ui import CLIP, NAV, close_and_collect, confirm_dialog, goto, open_context, wait_loaded
+from tests.helpers.ui import (CLIP, NAV, close_and_collect, confirm_dialog, db_snapshot, goto, open_context,
+                              wait_loaded)
 from tests.helpers.ui_ledger import insert_ledger
 from tests.helpers.ui_mcp import TOOLS, mcp_config, mcp_variants, open_mcp, open_reference
 from tests.helpers.ui_members import BROKEN_PROVIDER, MemberForm, broken_adapter_dir, open_members
@@ -191,8 +193,12 @@ class Screens:
         self.rotations = 0
         page.on("response", self._on_response)
 
+    def close(self) -> None:
+        self.page.remove_listener("response", self._on_response)
+
     def _on_response(self, r: Response) -> None:
-        # 回應到達時立即讀 body(之後換頁,前一頁的 body 可能已無法取得);下載(<a download>)讀不到時記錄
+        # 回應到達時立即在 callback 內讀 body。導覽競態(回應到達時頁面已開始換頁)會讓 body 無法取得;
+        # 這些記到 unreadable,結尾斷言同一 method+path 至少有一次被讀到並搜尋過。
         if "/api/" not in r.url:
             return
         key = f"api:{r.request.method} {r.url}"
@@ -216,6 +222,17 @@ class Screens:
         name = f"{self.n:02d}-{label}.png"
         self.page.screenshot(path=str(SCREENS / name))
         self.shots.append(name)
+
+
+def _check_disabled_providers(form: MemberForm, gw: Any) -> list[str]:
+    """供應商選單中停用的選項只能是不可用模組,或已達上限的 single 模組(spec 10.2)。"""
+    mods = gw.get("/api/adapters")["modules"]
+    allowed = {p for m in mods if not m["available"] or (m.get("cardinality") == "single"
+                                                        and m.get("existing_members", 0) > 0)
+               for p in m["providers"]}
+    disabled = form.provider.locator("option[disabled]").evaluate_all("(os) => os.map((o) => o.value)")
+    assert set(disabled) <= allowed, (disabled, sorted(allowed))
+    return disabled
 
 
 def _expected_variants(cfg: dict[str, Any]) -> list[dict[str, Any]]:
@@ -344,6 +361,7 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
         form.kind("api")
         api_providers = [p for m in adapters if m["available"] and "api" in m["kinds"] for p in m["providers"]]
         assert form.option_values(form.provider, enabled_only=True) == api_providers
+        _check_disabled_providers(form, a)
         form.provider.select_option("openai")
         form.model.select_option(index=0)
         form.field("id").fill("api-b")
@@ -355,6 +373,7 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
         form.kind("cli")
         cli_providers = [p for m in adapters if m["available"] and "cli" in m["kinds"] for p in m["providers"]]
         assert form.option_values(form.provider, enabled_only=True) == cli_providers
+        _check_disabled_providers(form, a)
         form.provider.select_option("claude-cli")
         entries = yaml.safe_load(CLAUDE_MODELS.read_text(encoding="utf-8"))
         assert form.option_texts(form.model) == [e["label"] for e in entries] + [OTHER_TEXT]
@@ -369,6 +388,7 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
         single = form.provider.locator('option[value="claude-cli"]')
         expect(single).to_be_disabled()
         expect(single).to_contain_text("已有 1 個,僅限 1 個")
+        assert "claude-cli" in _check_disabled_providers(form, a)
         screens.shot("members")
         obs["2_members"] = {"api_providers": api_providers, "cli_providers": cli_providers,
                             "claude_models_match_yaml": True, "claude_cli_second_disabled": True}
@@ -428,7 +448,9 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
         goto(page, a, "/ui/")
         wait_loaded(page, "#members-table")
         dash = {d["id"]: d for d in a.get("/api/dashboard")["deployments"]}
-        row = lambda d: page.locator(f'#members-body tr[data-member="{d}"]')  # noqa: E731
+        def row(dep_id: str) -> Any:
+            return page.locator(f'#members-body tr[data-member="{dep_id}"]')
+
         expect(row("api-b").locator('[data-field="remaining"]')).to_have_text(f"${dash['api-b']['remaining']:.2f}")
         assert 5.0 < dash["api-b"]["remaining"] <= 6.0          # 10 − 4(種入)− ③ 的 3 次假上游花費
         expect(row("openai-1").locator('[data-field="cooling"]')).to_have_text(f"冷卻至 {_local(until)}(限流)")
@@ -463,6 +485,8 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
         expect(page.locator('#payload-panel[data-loaded="true"]')).to_have_count(1)
         payload_text = page.locator("#payload-text").text_content() or ""
         assert "m4b-operation-" in payload_text
+        pre_info = page.locator("#payload-text").evaluate("(el) => [el.tagName, el.childElementCount]")
+        assert pre_info == ["PRE", 0], pre_info          # 純文字:<pre> 內沒有任何子元素
         screens.shot("ledger")
         page.locator("#payload-close").click()
         expect(page.locator("#payload-panel")).to_be_hidden()
@@ -470,7 +494,7 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
         csv_rows = list(csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig"))))
         assert len(csv_rows) == total and {r["route_name"] for r in csv_rows} == {"review"}
         obs["6_ledger"] = {"filter": {"route": "review"}, "total": total, "csv_rows": len(csv_rows),
-                           "payload_plain_text": True}
+                           "payload_element": {"tag": pre_info[0], "child_elements": pre_info[1]}}
 
         # ⑦ UI-7:匯出 A(③ 之後)→ 第二資料目錄 replace 預覽 → 確認匯入 → 匯出 B(AC-10)
         open_settings(page, a)
@@ -479,7 +503,9 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
         with a.http() as c:
             assert file_a == c.get("/api/config/export").content
         b = ServeGw(tmp, "b", env["fake_bin"], env["serves"])
+        assert all(x.startswith("127.0.0.1:") for x in procs.listening(b.serve.proc.pid))
         open_settings(page, b)
+        snap_b = db_snapshot(b)
         choose_import(page, file_a, mode="replace")
         assert import_requests(guard) == []
         page.locator("#import-preview").click()
@@ -487,6 +513,9 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
         expect(dialog).to_be_visible()
         expect(dialog).to_have_class("dialog dialog-danger")
         expect(dialog.locator('[data-count="deployments.created"]')).to_have_text("3")
+        previews = import_requests(guard)
+        assert previews and all(parse_qs(urlsplit(u).query).get("dry_run") == ["true"] for u in previews), previews
+        assert db_snapshot(b) == snap_b                  # 預覽(dry_run)不寫入
         with page.expect_response(lambda r: "/api/config/import" in r.url and "dry_run" not in r.url) as ir:
             dialog.locator('[data-role="confirm"]').click()
         result = ir.value.json()
@@ -575,6 +604,7 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
             page.wait_for_load_state("networkidle")
             screens.html(f"nav-{label}")
     finally:
+        screens.close()
         violations = [str(v) for v in close_and_collect(opened)]
 
     assert violations == [], "畫面違規:\n" + "\n".join(_safe(v) for v in violations)
@@ -590,6 +620,9 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
     hits = [str(p.relative_to(tmp)) for p in files for s in secrets if s.encode() in p.read_bytes()]
     hits += [k for k, v in screens.captured for s in secrets if s.encode() in v]
     assert hits == [], hits
+    readable = {k.split("?")[0].removeprefix("api:") for k, _ in screens.captured if k.startswith("api:")}
+    missing = sorted(u for u in set(screens.unreadable) if u not in readable)
+    assert missing == [], f"這些 /api/ 回應從未讀到 body,無法搜尋:{missing}"
     n_html = sum(1 for k, _ in screens.captured if k.startswith("html:"))
     n_api = sum(1 for k, _ in screens.captured if k.startswith("api:"))
     obs["nfr4"] = {"secrets": len(secrets), "files_searched": len(files), "html_searched": n_html,
