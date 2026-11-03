@@ -2,7 +2,3 @@
 .members-layout { display: flex; flex-direction: column; gap: 20px; }
 #member-editor { max-width: 960px; }
 #member-table-host a, #member-table-host td.mono { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
-.member-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-.test-result { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--surface-soft); display: flex; flex-direction: column; gap: 4px; }
-.test-result.ok { border-color: #B5DCC7; background: var(--ok-bg); }
-.test-result.bad { border-color: var(--err-line); background: var(--err-bg); }

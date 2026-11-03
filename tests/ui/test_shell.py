@@ -16,7 +16,6 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -25,12 +24,9 @@ from playwright.sync_api import Browser, Page, expect
 
 from tests.helpers import TEST_KEY, TEST_KEY_ENV
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import NAV, PAGES, api, close_and_collect, goto, guard_of, import_module, open_context
+from tests.helpers.ui import MakeGw, NewPage, NAV, PAGES, api, close_and_collect, goto, guard_of, import_module, open_context
 
 REPO = Path(__file__).resolve().parents[2]
-
-NewPage = Callable[..., Page]
-MakeGw = Callable[..., LiveGateway]
 
 
 @pytest.fixture
@@ -424,7 +420,6 @@ def test_non_local_request_blocked_and_recorded(page: Page) -> None:
     taken = guard.take(lambda v: v.kind == "request" or (v.kind == "console" and "net::ERR" in v.text))
     guard.assert_clean()
     assert any(v.kind == "request" and v.url.startswith("http://example.invalid/") for v in taken)
-
 
 
 def test_close_and_collect_catches_late_events(browser: Browser, gw: LiveGateway) -> None:

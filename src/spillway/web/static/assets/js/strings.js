@@ -31,6 +31,25 @@ export const COOLING_REASON = Object.freeze({
   rate_limited: "限流",
 });
 
+// 排除原因(routing EXCLUDE_REASONS;dry-run 的 excluded[].reason)
+export const EXCLUDE_REASON = Object.freeze({
+  disabled: "停用",
+  mode_chat_excludes_cli: "chat route 不使用 CLI 成員",
+  ctx_exceeded: "超過 context 上限",
+  tools_unsupported: "不支援 tools",
+  vision_unsupported: "不支援圖片",
+  adapter_unavailable: "模組不可用",
+  cooling: "冷卻中",
+  concurrency_full: "同時執行數已滿",
+  quota_exhausted: "額度用完",
+  unhealthy: "健康檢查失敗",
+  skipped_precheck: "預估超過剩餘額度",
+  shutting_down: "停機中",
+});
+
+// route 的「記錄 context」三態(選單值 → 標籤);值 null / true / false 見 ui.js 的 recordChoice
+export const RECORD_CONTEXT = Object.freeze({ inherit: "依全域預設", on: "開", off: "關" });
+
 // 額度類型(budget.type)
 export const BUDGET_TYPE = Object.freeze({ usd: "USD", credit_pool: "點數池(USD)", none: "不設額度" });
 
@@ -48,6 +67,19 @@ export const TEXT = Object.freeze({
   rotate_token: "重新產生 token",
   unlimited: "不限",
   cooling_until: "冷卻至",
+  dash: "—",
+  disabled: "停用",
+  normal: "正常",
+  save: "儲存",
+  delete: "刪除",
+  saved: "已儲存",
+  all_group: "all(全部 route)",
+  target_group: "群組",
+  target_all_tags: "tags(全部成員)",
+  tag_placeholder: "輸入 tag 後按 Enter",
+  tag_add: "+ tag",
+  tag_remove: "移除",
+  tag_none: "未設定",
 });
 
 export function label(table, value) {

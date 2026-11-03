@@ -10,22 +10,18 @@ slot、到新 slot 區、slot 整列)與鍵盤替代得到相同結果;空 slot 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from playwright.sync_api import Page, expect
 
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import api, goto, guard_of, import_module
+from tests.helpers.ui import MakeGw, NewPage, api, goto, guard_of, import_module
 from tests.helpers.ui_routes import (
     add_members, api_body, card, create_route, drag_card, drag_slot, editor_slots, effective_slots,
     local_body, new_slot_zone, open_editor, put_order, route_order, route_order_full, set_cooldown,
     set_enabled, slot, slot_head,
 )
-
-NewPage = Callable[..., Page]
-MakeGw = Callable[..., LiveGateway]
 
 
 @pytest.fixture

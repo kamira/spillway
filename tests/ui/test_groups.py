@@ -6,17 +6,13 @@ L2:選擇器三列(all / any / none)加入、移除 tag 後,畫面在 300 ms 防
 """
 from __future__ import annotations
 
-from collections.abc import Callable
 
 import pytest
 from playwright.sync_api import Page, expect
 
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import api, guard_of
-from tests.helpers.ui_members import MemberForm, open_groups, requests_of, seed_group, seed_member, seed_route
-
-NewPage = Callable[..., Page]
-MakeGw = Callable[..., LiveGateway]
+from tests.helpers.ui import MakeGw, NewPage, api, guard_of, seed_group
+from tests.helpers.ui_members import MemberForm, open_groups, requests_of, seed_member, seed_route
 
 
 @pytest.fixture

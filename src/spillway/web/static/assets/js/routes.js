@@ -4,7 +4,11 @@
 
 import { getJSON, sendJSON } from "./api.js";
 import { byId, clear, h } from "./dom.js";
-import { confirmDialog, initShell, setLoading, showError, showMessage, withBusy } from "./ui.js";
+import { TEXT } from "./strings.js";
+import {
+  confirmDialog, field, fillGroupSelect, initShell, parseList, recordLabel, recordSelect, recordValue, setLoading,
+  showError, showMessage, targetSummary, withBusy,
+} from "./ui.js";
 
 export const T = Object.freeze({
   name: "名稱",
@@ -15,14 +19,9 @@ export const T = Object.freeze({
   record: "記錄 context",
   actions: "操作",
   edit: "編輯",
-  del: "刪除",
   yes: "是",
   no: "否",
-  record_inherit: "依全域預設",
-  record_on: "開",
-  record_off: "關",
   empty: "尚未建立任何 route。",
-  group: "群組",
   target_kind: "目標類型",
   target_group: "群組",
   target_tags: "tags 選擇器",
@@ -42,36 +41,12 @@ export const T = Object.freeze({
   group_required: "請選擇群組",
 });
 
-export function parseList(text) {
-  const out = [];
-  for (const t of String(text || "").split(/[,\s]+/)) {
-    if (t && !out.includes(t)) out.push(t);
-  }
-  return out;
-}
-
-export function recordLabel(v) {
-  if (v === null || v === undefined) return T.record_inherit;
-  return v ? T.record_on : T.record_off;
-}
-
-export function recordValue(choice) {
-  return { inherit: null, on: true, off: false }[choice] ?? null;
-}
-
-export function targetSummary(target) {
-  if (target && typeof target.group === "string") return `${T.group} ${target.group}`;
-  const sel = (target && target.tags) || {};
-  const parts = ["all", "any", "none"].filter((k) => sel[k] && sel[k].length).map((k) => `${k}: ${sel[k].join(", ")}`);
-  return parts.length ? `tags ${parts.join(";")}` : "tags(全部成員)";
-}
-
 function editHref(name) {
   return `/ui/route.html?name=${encodeURIComponent(name)}`;
 }
 
 async function onDelete(name) {
-  const ok = await confirmDialog({ title: `${T.delete_title} ${name}`, body: T.delete_body, confirmLabel: T.del, danger: true });
+  const ok = await confirmDialog({ title: `${T.delete_title} ${name}`, body: T.delete_body, confirmLabel: TEXT.delete, danger: true });
   if (!ok) return;
   try {
     await sendJSON("DELETE", `/api/routes/${encodeURIComponent(name)}`);
@@ -91,13 +66,13 @@ function renderList(routes) {
     return;
   }
   const rows = routes.map((r) => {
-    const del = h("button", { type: "button", class: "btn sm danger", "data-role": "delete", "aria-label": `${T.del} ${r.name}` }, T.del);
+    const del = h("button", { type: "button", class: "btn sm danger", "data-role": "delete", "aria-label": `${TEXT.delete} ${r.name}` }, TEXT.delete);
     del.addEventListener("click", () => withBusy(del, () => onDelete(r.name)));
     return h("tr", { "data-route": r.name },
       h("td", {}, h("a", { href: editHref(r.name), class: "mono" }, r.name)),
       h("td", { "data-col": "mode" }, r.mode),
       h("td", { "data-col": "target", class: "mono small" }, targetSummary(r.target)),
-      h("td", { "data-col": "tags" }, h("span", { class: "route-tags" }, ...r.tags.map((t) => h("span", { class: "chip" }, t)))),
+      h("td", { "data-col": "tags" }, h("span", { class: "chips" }, ...r.tags.map((t) => h("span", { class: "chip" }, t)))),
       h("td", { "data-col": "precheck" }, r.budget_precheck ? T.yes : T.no),
       h("td", { "data-col": "record" }, recordLabel(r.record_context)),
       h("td", { class: "nowrap" }, h("a", { href: editHref(r.name), class: "btn sm" }, T.edit), " ", del));
@@ -123,38 +98,27 @@ function input(id, attrs = {}) {
   return h("input", { type: "text", id, name: id, autocomplete: "off", ...attrs });
 }
 
-function fieldEl(labelText, control, hint, attrs = {}) {
-  return h("label", { class: "f", ...attrs }, labelText, control, hint ? h("span", { class: "hint" }, hint) : null);
-}
-
 async function renderForm() {
   const form = byId("route-new");
   clear(form);
-  let groups = [];
-  try {
-    groups = (await getJSON("/api/groups")).groups.map((g) => g.name);
-  } catch (err) {
-    showError(err);
-  }
+  const group = h("select", { id: "new-group" });
+  const groups = await fillGroupSelect(group, { emptyLabel: T.no_groups });
   const name = input("new-name", { required: true, maxlength: "200" });
   const mode = h("select", { id: "new-mode" }, h("option", { value: "chat" }, "chat"), h("option", { value: "task" }, "task"));
   const kind = h("select", { id: "new-target-kind" },
     h("option", { value: "group" }, T.target_group), h("option", { value: "tags" }, T.target_tags));
-  const group = h("select", { id: "new-group" },
-    ...(groups.length ? groups.map((g) => h("option", { value: g }, g)) : [h("option", { value: "" }, T.no_groups)]));
   const all = input("new-all");
   const any = input("new-any");
   const none = input("new-none");
   const tags = input("new-tags");
   const pre = h("input", { type: "checkbox", id: "new-precheck" });
-  const rec = h("select", { id: "new-record" },
-    h("option", { value: "inherit" }, T.record_inherit), h("option", { value: "on" }, T.record_on),
-    h("option", { value: "off" }, T.record_off));
+  const rec = recordSelect({ id: "new-record" });
   kind.value = groups.length ? "group" : "tags";
 
-  const groupField = fieldEl(T.target_group, group);
+  const groupField = field(T.target_group, group);
   const tagFields = h("div", { class: "route-form-grid" },
-    fieldEl(T.all, all, T.sep_hint), fieldEl(T.any, any, T.sep_hint), fieldEl(T.none, none, T.sep_hint));
+    field(T.all, all, { hint: T.sep_hint }), field(T.any, any, { hint: T.sep_hint }),
+    field(T.none, none, { hint: T.sep_hint }));
   const sync = () => {
     groupField.hidden = kind.value !== "group";
     tagFields.hidden = kind.value !== "tags";
@@ -165,11 +129,11 @@ async function renderForm() {
   const submit = h("button", { type: "submit", class: "btn primary", id: "new-submit" }, T.create);
   form.append(
     h("div", { class: "route-form-grid" },
-      fieldEl(T.name, name), fieldEl(T.mode, mode), fieldEl(T.target_kind, kind), groupField),
+      field(T.name, name), field(T.mode, mode), field(T.target_kind, kind), groupField),
     tagFields,
     h("div", { class: "route-form-grid" },
-      fieldEl(T.tags, tags, T.route_tags_hint),
-      fieldEl(T.record, rec),
+      field(T.tags, tags, { hint: T.route_tags_hint }),
+      field(T.record, rec),
       h("label", { class: "check" }, pre, T.precheck_label)),
     h("div", { class: "row end" }, submit));
 

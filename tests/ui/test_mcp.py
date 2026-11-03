@@ -7,20 +7,17 @@ L2:5 種工具 ×(all、coding)顯示的 variants 數、路徑、內容與 `GET 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
 
 import pytest
-from playwright.sync_api import Page, Route, expect
+from playwright.sync_api import Route, expect
 
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import api, goto, guard_of
-from tests.helpers.ui_mcp import (BLOB_SPY, DENY_CLIPBOARD, TOOLS, mcp_config, mcp_variants, open_mcp, seed_group,
+from tests.helpers.ui import MakeGw, NewPage, api, goto, guard_of, seed_group
+from tests.helpers.ui_mcp import (BLOB_SPY, DENY_CLIPBOARD, TOOLS, mcp_config, mcp_variants, open_mcp,
                                   select_mcp)
 
-NewPage = Callable[..., Page]
-MakeGw = Callable[..., LiveGateway]
 
 ALLOWED_BLOB_TYPES = {"text/plain;charset=utf-8", "application/octet-stream"}
 

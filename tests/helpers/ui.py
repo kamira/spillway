@@ -24,11 +24,19 @@
 - `goto(page, gw, path)`:開啟頁面並等到共用外框初始化(`html[data-shell="ready"]`)。
 - `import_module(page, name)`:在頁面中動態 import `assets/js/<name>`,存到 `window.__mods[name]`
   (之後以 `page.evaluate("… window.__mods['api.js'] …")` 呼叫)。
+- `wait_loaded(page, selector)`:等到 `selector` 的元素帶 `data-loaded="true"`(頁面完成一次載入)。
+- `query_of(url) -> dict[str, str]`:網址的 query(單值)。
+- 型別別名:`NewPage`(`new_page` fixture)、`MakeGw`(`make_ui_gateway` fixture)。
 
 種資料與 DB(單一 adapter 層)
 - `api(gw, method, path, json=None, *, expect=(200, 201, 204)) -> httpx.Response`:優先經 `/api` 種資料。
 - `db_snapshot(gw) -> dict[str, list[tuple]]`:全表快照(比對「不寫入」用)。
 - `db_execute(gw, sql, params=())`:非經 `/api` 不可的寫入(例如種入帳本列)集中在這裡。
+- `member_body(dep_id, *, kind="api", tags=None, budget=None, **kw)`:`POST /api/deployments` 的 body
+  (api 成員的憑證參照為 `env:SPILLWAY_TEST_KEY`,只是參照,不含值;`kw` 覆寫任何欄位)。
+- `add_member(gw, dep_id, **kw) -> dict`;`add_route(gw, name, tag="r", *, target=None, **kw) -> dict`
+  (target 省略時為 `{"tags": {"any": [tag]}}`);`seed_group(gw, name, selector=None) -> dict`
+  (selector 省略時為 `{"any": [name]}`)。
 """
 from __future__ import annotations
 
@@ -37,14 +45,25 @@ import re
 import sqlite3
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Any
-from urllib.parse import urlsplit
+from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
-from playwright.sync_api import Browser, BrowserContext, ConsoleMessage, Dialog, Error, Page, Request, Route
+from playwright.sync_api import (Browser, BrowserContext, ConsoleMessage, Dialog, Error, Page, Request, Route,
+                                 expect)
 
-__all__ = ["NAV", "PAGES", "PageSpec", "PageGuard", "api", "db_execute", "db_snapshot", "close_and_collect", "goto", "guard_of",
-           "import_module", "is_local_url", "open_context"]
+from tests.helpers import TEST_KEY_ENV
+
+if TYPE_CHECKING:
+    from tests.helpers.live_gateway import LiveGateway
+
+__all__ = ["NAV", "PAGES", "MakeGw", "NewPage", "PageSpec", "PageGuard", "add_member", "add_route", "api",
+           "db_execute", "db_snapshot", "close_and_collect", "goto", "guard_of", "import_module", "is_local_url",
+           "member_body", "open_context", "query_of", "seed_group", "wait_loaded"]
+
+# fixture 的型別別名(tests/ui/conftest.py 的 new_page 與 make_ui_gateway)
+NewPage = Callable[..., Page]
+MakeGw = Callable[..., "LiveGateway"]
 
 # 導覽 8 項:鏡像 web/static/assets/js/strings.js 的正式清單 NAV(決策 20);各 HTML 的 <nav> 須與此一致
 NAV: list[tuple[str, str]] = [
@@ -228,6 +247,17 @@ def import_module(page: Page, name: str) -> list[str]:
            }""", name)
 
 
+def wait_loaded(page: Page, selector: str) -> None:
+    """等到 `selector` 的元素帶 `data-loaded="true"`。"""
+    expect(page.locator(f'{selector}[data-loaded="true"]')).to_have_count(1)
+
+
+def query_of(url: str) -> dict[str, str]:
+    q = parse_qs(urlsplit(url).query, keep_blank_values=True)
+    assert all(len(v) == 1 for v in q.values()), q
+    return {k: v[0] for k, v in q.items()}
+
+
 # ---- 種資料與 DB(單一 adapter 層)--------------------------------------------------------------
 
 def api(gw: Any, method: str, path: str, json: Any = None, *,
@@ -254,3 +284,36 @@ def db_execute(gw: Any, sql: str, params: Iterable[Any] = ()) -> None:
         except sqlite3.Error:
             conn.execute("ROLLBACK")
             raise
+
+
+# ---- 種資料:成員、route、群組 ---------------------------------------------------------------------
+
+def member_body(dep_id: str, *, kind: str = "api", tags: list[str] | None = None,
+                budget: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {"id": dep_id, "model_name": dep_id, "kind": kind, "tags": tags or ["r"]}
+    if kind == "api":
+        body.update(provider="openai", model="gpt-4o-mini", credential_ref=f"env:{TEST_KEY_ENV}",
+                    capabilities={"ctx": 100000, "tools": True, "vision": True,
+                                  "efforts": ["low", "medium", "high"]})
+    else:
+        body.update(provider="hosted_vllm", model="local-model",
+                    capabilities={"ctx": 32768, "tools": False, "vision": False, "efforts": []})
+    if budget is not None:
+        body["budget"] = budget
+    body.update(kw)
+    return body
+
+
+def add_member(gw: Any, dep_id: str, **kw: Any) -> dict[str, Any]:
+    return api(gw, "POST", "/api/deployments", member_body(dep_id, **kw), expect=(201,)).json()
+
+
+def add_route(gw: Any, name: str, tag: str = "r", *, target: dict[str, Any] | None = None,
+              **kw: Any) -> dict[str, Any]:
+    body = {"name": name, "target": target if target is not None else {"tags": {"any": [tag]}}, **kw}
+    return api(gw, "POST", "/api/routes", body, expect=(201,)).json()
+
+
+def seed_group(gw: Any, name: str, selector: dict[str, list[str]] | None = None) -> dict[str, Any]:
+    body = {"name": name, "selector": selector if selector is not None else {"any": [name]}}
+    return api(gw, "POST", "/api/groups", body, expect=(201,)).json()

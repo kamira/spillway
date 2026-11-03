@@ -14,14 +14,14 @@
 import { getJSON, sendJSON } from "./api.js";
 import { clear, h, setText } from "./dom.js";
 import { BUDGET_TYPE, KIND, TEXT, WINDOW, label } from "./strings.js";
-import { showError, showMessage, withBusy } from "./ui.js";
+import { field, showError, showMessage, tagInput, withBusy } from "./ui.js";
 
 const OTHER = "__other__";
 const EFFORTS = ["none", "low", "medium", "high", "max"];
 const KINDS = ["cli", "api", "local"];
 
 // 本表單專用的字串(共用字串在 strings.js)
-const S = Object.freeze({
+const T = Object.freeze({
   kind: "類型",
   id: "成員 id",
   provider: "供應商",
@@ -48,10 +48,6 @@ const S = Object.freeze({
   window: "週期",
   anchor: "重置日(1–28)",
   tags: "Tag",
-  tag_placeholder: "輸入 tag 後按 Enter",
-  tag_add: "+ tag",
-  tag_remove: "移除",
-  tag_none: "未設定",
   enabled: "啟用",
   params: "params(JSON)",
   params_help_title: "CLI 常用鍵",
@@ -61,9 +57,6 @@ const S = Object.freeze({
     ["max_concurrency", "同時執行上限(整數)"],
     ["timeout", "逾時秒數"],
   ],
-  save: "儲存",
-  cancel: "取消",
-  loading_adapters: "載入中…",
   choose_provider: "— 無可用的供應商 —",
   single_full: "已有 1 個,僅限 1 個",
   unavailable: "模組不可用",
@@ -89,13 +82,8 @@ function deepCopy(v) {
   return v === undefined ? undefined : JSON.parse(JSON.stringify(v));
 }
 
-function field(labelText, control, { hint, id } = {}) {
-  return h("label", { class: "f", for: id || null }, labelText, control,
-    hint ? h("span", { class: "hint" }, hint) : null);
-}
-
 export function mountMemberForm(container, {
-  initial = null, onSaved = null, onCancel = null, defaults = {}, requireTag = false, submitLabel = S.save,
+  initial = null, onSaved = null, onCancel = null, defaults = {}, requireTag = false, submitLabel = TEXT.save,
 } = {}) {
   const uid = `mf${++seq}`;
   const editing = initial !== null && initial !== undefined;
@@ -116,7 +104,6 @@ export function mountMemberForm(container, {
   const state = {
     kind: base.kind,
     modules: null,            // /api/adapters 的 modules;null = 載入中
-    tags: [...(base.tags || [])],
     modelNameAuto: !editing && !base.model_name,
     destroyed: false,
     upstreamPending: false,   // params 不合法時改過上游欄位
@@ -131,23 +118,23 @@ export function mountMemberForm(container, {
     "aria-pressed": k === state.kind ? "true" : "false", class: k === state.kind ? "on" : null }, KIND[k]));
   const kindSeg = h("div", { class: "seg", role: "group", "aria-labelledby": fid("kind-l") }, ...kindButtons);
   const providerSel = h("select", { id: fid("provider"), name: "provider", disabled: true },
-    h("option", { value: "" }, S.loading_adapters));
+    h("option", { value: "" }, TEXT.loading));
   const providerNote = h("span", { class: "hint", "data-role": "provider-note" });
   const llmProviderInput = h("input", { type: "text", id: fid("llm-provider"), name: "llm_provider",
     class: "mono", autocomplete: "off" });
-  const llmProviderField = field(S.llm_provider, llmProviderInput, { hint: S.llm_provider_hint, id: fid("llm-provider") });
+  const llmProviderField = field(T.llm_provider, llmProviderInput, { hint: T.llm_provider_hint, id: fid("llm-provider") });
   const modelSel = h("select", { id: fid("model"), name: "model", disabled: true },
-    h("option", { value: "" }, S.loading_adapters));
+    h("option", { value: "" }, TEXT.loading));
   const modelsError = h("span", { class: "hint warn-text", "data-role": "models-error", hidden: true });
   const modelManual = h("input", { type: "text", id: fid("model-manual"), name: "model_manual", class: "mono",
     autocomplete: "off" });
-  const modelManualField = field(S.model_manual, modelManual, { id: fid("model-manual") });
+  const modelManualField = field(T.model_manual, modelManual, { id: fid("model-manual") });
   const modelNameInput = h("input", { type: "text", id: fid("model-name"), name: "model_name", class: "mono",
     autocomplete: "off", value: base.model_name || "", required: true });
   const upstreamInput = h("input", { type: "url", id: fid("upstream"), name: "upstream", class: "mono",
     autocomplete: "off", placeholder: "http://127.0.0.1:11434/v1" });
   const upstreamHint = h("span", { class: "hint" });
-  const upstreamField = field(S.upstream, upstreamInput, { id: fid("upstream") });
+  const upstreamField = field(T.upstream, upstreamInput, { id: fid("upstream") });
   upstreamField.append(upstreamHint);
   const credInput = h("input", { type: "text", id: fid("credential"), name: "credential_ref", class: "mono",
     autocomplete: "off", spellcheck: "false", placeholder: "env:OPENAI_API_KEY",
@@ -162,57 +149,55 @@ export function mountMemberForm(container, {
   const windowSel = h("select", { id: fid("window"), name: "window" },
     ...["monthly", "weekly", "daily", "none"].map((w) => h("option", { value: w, title: w }, label(WINDOW, w))));
   const anchorInput = h("input", { type: "number", id: fid("anchor"), name: "reset_anchor", min: "1", max: "28", step: "1" });
-  const anchorField = field(S.anchor, anchorInput, { id: fid("anchor") });
+  const anchorField = field(T.anchor, anchorInput, { id: fid("anchor") });
   const budgetFields = h("div", { class: "grid2", "data-role": "budget-fields" },
-    field(S.limit, limitInput, { hint: S.limit_hint, id: fid("limit") }),
-    field(S.window, windowSel, { id: fid("window") }),
+    field(T.limit, limitInput, { hint: T.limit_hint, id: fid("limit") }),
+    field(T.window, windowSel, { id: fid("window") }),
     anchorField);
-  const tagList = h("div", { class: "row", "data-role": "tags" });
-  const tagInput = h("input", { type: "text", id: fid("tag"), name: "tag", autocomplete: "off",
-    placeholder: S.tag_placeholder, "aria-label": "新增 tag" });
-  const tagAdd = h("button", { type: "button", class: "btn sm" }, S.tag_add);
+  const tagBox = tagInput({ tags: base.tags || [], chipsAttrs: { "data-role": "tags" },
+    inputAttrs: { id: fid("tag"), name: "tag", "aria-label": "新增 tag" } });
   const enabledBox = h("input", { type: "checkbox", name: "enabled", checked: base.enabled !== false });
   const paramsInput = h("textarea", { id: fid("params"), name: "params", class: "mono", autocomplete: "off",
     spellcheck: "false", rows: "6" });
   const formError = h("p", { class: "error", role: "alert", "data-role": "form-error", hidden: true });
   const formNote = h("p", { class: "hint warn-text", role: "status", "data-role": "form-note", hidden: true });
   const submitBtn = h("button", { type: "submit", class: "btn primary", "data-role": "submit", disabled: true }, submitLabel);
-  const cancelBtn = onCancel ? h("button", { type: "button", class: "btn", "data-role": "cancel" }, S.cancel) : null;
+  const cancelBtn = onCancel ? h("button", { type: "button", class: "btn", "data-role": "cancel" }, TEXT.cancel) : null;
 
   const form = h("form", { class: "member-form stack", novalidate: true, "data-member-form": editing ? "edit" : "create" },
-    h("div", { class: "f" }, h("span", { id: fid("kind-l") }, S.kind), kindSeg),
+    h("div", { class: "f" }, h("span", { id: fid("kind-l") }, T.kind), kindSeg),
     h("div", { class: "grid2" },
-      field(S.id, idInput, { id: fid("id") }),
-      h("div", { class: "f" }, h("label", { for: fid("provider") }, S.provider), providerSel, providerNote),
-      h("div", { class: "f" }, h("label", { for: fid("model") }, S.model), modelSel, modelsError),
-      field(S.model_name, modelNameInput, { hint: S.model_name_hint, id: fid("model-name") }),
+      field(T.id, idInput, { id: fid("id") }),
+      h("div", { class: "f" }, h("label", { for: fid("provider") }, T.provider), providerSel, providerNote),
+      h("div", { class: "f" }, h("label", { for: fid("model") }, T.model), modelSel, modelsError),
+      field(T.model_name, modelNameInput, { hint: T.model_name_hint, id: fid("model-name") }),
       modelManualField,
       llmProviderField),
     upstreamField,
-    field(S.credential, credInput, { hint: S.credential_hint, id: fid("credential") }),
+    field(T.credential, credInput, { hint: T.credential_hint, id: fid("credential") }),
     h("hr"),
-    h("h3", {}, S.caps),
+    h("h3", {}, T.caps),
     h("div", { class: "grid2" },
-      field(S.ctx, ctxInput, { id: fid("ctx") }),
-      h("div", { class: "f" }, h("span", {}, S.features), h("div", { class: "row" },
+      field(T.ctx, ctxInput, { id: fid("ctx") }),
+      h("div", { class: "f" }, h("span", {}, T.features), h("div", { class: "row" },
         h("label", { class: "check" }, toolsBox, "tools"),
         h("label", { class: "check" }, visionBox, "vision")))),
-    h("div", { class: "f" }, h("span", {}, S.efforts), h("div", { class: "row", "data-role": "efforts" },
+    h("div", { class: "f" }, h("span", {}, T.efforts), h("div", { class: "row", "data-role": "efforts" },
       ...effortBoxes.map((b) => h("label", { class: "check" }, b, b.value)))),
     h("hr"),
-    h("h3", {}, S.budget),
-    field(S.budget_type, budgetType, { id: fid("budget-type") }),
+    h("h3", {}, T.budget),
+    field(T.budget_type, budgetType, { id: fid("budget-type") }),
     budgetFields,
     h("hr"),
-    h("h3", {}, S.tags),
-    tagList,
-    h("div", { class: "row" }, tagInput, tagAdd),
-    h("label", { class: "check" }, enabledBox, S.enabled),
+    h("h3", {}, T.tags),
+    tagBox.chips,
+    h("div", { class: "row" }, tagBox.input, tagBox.button),
+    h("label", { class: "check" }, enabledBox, T.enabled),
     h("hr"),
     h("div", { class: "f" },
-      h("label", { for: fid("params") }, S.params),
-      h("div", { class: "hint params-help" }, h("strong", {}, S.params_help_title),
-        h("ul", { class: "params-keys" }, ...S.params_help.map(([k, d]) => h("li", {}, h("code", {}, k), `:${d}`)))),
+      h("label", { for: fid("params") }, T.params),
+      h("div", { class: "hint params-help" }, h("strong", {}, T.params_help_title),
+        h("ul", { class: "params-keys" }, ...T.params_help.map(([k, d]) => h("li", {}, h("code", {}, k), `:${d}`)))),
       paramsInput),
     h("div", { class: "f" }, formError, formNote),
     h("div", { class: "row end" }, cancelBtn, submitBtn));
@@ -229,7 +214,6 @@ export function mountMemberForm(container, {
   } else {
     budgetType.value = "none";
   }
-  renderTags();
   syncBudget();
   syncKindFields();
   modelManualField.hidden = true;
@@ -257,29 +241,8 @@ export function mountMemberForm(container, {
   function syncKindFields() {
     const showUp = state.kind === "api" || state.kind === "local";
     upstreamField.hidden = !showUp;
-    setText(upstreamHint, state.kind === "local" ? S.upstream_hint_local : S.upstream_hint_api);
+    setText(upstreamHint, state.kind === "local" ? T.upstream_hint_local : T.upstream_hint_api);
     upstreamInput.required = state.kind === "local";
-  }
-
-  function renderTags() {
-    clear(tagList);
-    if (!state.tags.length) tagList.append(h("span", { class: "muted" }, S.tag_none));
-    for (const t of state.tags) {
-      const x = h("button", { type: "button", class: "chip-x", "aria-label": `${S.tag_remove} ${t}` }, "×");
-      x.addEventListener("click", () => {
-        state.tags = state.tags.filter((v) => v !== t);
-        renderTags();
-      });
-      tagList.append(h("span", { class: "chip", "data-tag": t }, t, x));
-    }
-  }
-
-  function addTag() {
-    const t = tagInput.value.trim();
-    if (!t) return;
-    if (!state.tags.includes(t)) state.tags.push(t);
-    tagInput.value = "";
-    renderTags();
   }
 
   function moduleOf(provider) {
@@ -312,10 +275,10 @@ export function mountMemberForm(container, {
         let reason = "";
         const own = editing && initial.provider === p;
         if (!m.available) {
-          reason = `${S.unavailable}:${m.unavailable_reason || ""}`;
+          reason = `${T.unavailable}:${m.unavailable_reason || ""}`;
           disabled = !own;
         } else if (m.cardinality === "single" && m.existing_members > 0 && !own) {
-          reason = S.single_full;
+          reason = T.single_full;
           disabled = true;
         }
         if (reason) text = `${p}(${reason})`;
@@ -331,13 +294,13 @@ export function mountMemberForm(container, {
         pick = fb.providers[0];
       } else {
         // 模組存在但不支援此類型 → 「此類型不支援」;找不到任何模組 → 「模組不可用」
-        const why = moduleOf(preferred) ? S.kind_unsupported : S.unavailable;
+        const why = moduleOf(preferred) ? T.kind_unsupported : T.unavailable;
         opts.push(h("option", { value: preferred, "data-module": "", "data-reason": why, title: why },
           `${preferred}(${why})`));
       }
     }
     providerSel.append(...opts);
-    if (!opts.length) providerSel.append(h("option", { value: "" }, S.choose_provider));
+    if (!opts.length) providerSel.append(h("option", { value: "" }, T.choose_provider));
     const usable = opts.filter((o) => !o.disabled);
     if (pick && opts.some((o) => o.value === pick && !o.disabled)) providerSel.value = pick;
     else if (usable.length) providerSel.value = usable[0].value;
@@ -363,11 +326,11 @@ export function mountMemberForm(container, {
       const key = m.provider ? `${m.provider}\u0000${m.id}` : m.id;
       modelSel.append(h("option", { value: key, "data-id": m.id, title: m.id }, m.label || m.id));
     }
-    modelSel.append(h("option", { value: OTHER }, S.other));
+    modelSel.append(h("option", { value: OTHER }, T.other));
     modelSel.disabled = false;
     const err = mod && mod.models_error;
     modelsError.hidden = !err;
-    setText(modelsError, err ? `${S.models_error}${err}` : "");
+    setText(modelsError, err ? `${T.models_error}${err}` : "");
     llmProviderField.hidden = !isFallback(mod);
     let match = null;
     if (preferredModel) {
@@ -499,7 +462,7 @@ export function mountMemberForm(container, {
     if (state.upstreamPending) {
       state.upstreamPending = false;
       mergeUpstream(p);
-      if (state.syncConflict) showFormNote(S.sync_note);
+      if (state.syncConflict) showFormNote(T.sync_note);
       return;
     }
     if (typeof p.api_base === "string") upstreamInput.value = p.api_base;
@@ -507,48 +470,41 @@ export function mountMemberForm(container, {
   });
   budgetType.addEventListener("change", syncBudget);
   windowSel.addEventListener("change", syncBudget);
-  tagInput.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      addTag();
-    }
-  });
-  tagAdd.addEventListener("click", addTag);
   if (cancelBtn) cancelBtn.addEventListener("click", () => onCancel());
 
   function buildBody() {
     clearFormError();
     const id = editing ? initial.id : idInput.value.trim();
-    if (!id || /[\s/]/.test(id) || id === "." || id === "..") return showFormError(S.err_id, idInput);
+    if (!id || /[\s/]/.test(id) || id === "." || id === "..") return showFormError(T.err_id, idInput);
     const opt = providerSel.selectedOptions[0];
     if (!state.modules || !opt || !opt.value || (opt.disabled && !(editing && opt.value === initial.provider))) {
-      return showFormError(S.err_provider, providerSel);
+      return showFormError(T.err_provider, providerSel);
     }
     const mod = selectedModule();
     const provider = isFallback(mod) && llmProviderInput.value.trim() ? llmProviderInput.value.trim() : opt.value;
     const model = currentModelId();
-    if (!model) return showFormError(S.err_model, modelSel.value === OTHER ? modelManual : modelSel);
+    if (!model) return showFormError(T.err_model, modelSel.value === OTHER ? modelManual : modelSel);
     const modelName = modelNameInput.value.trim();
-    if (!modelName) return showFormError(S.err_model_name, modelNameInput);
+    if (!modelName) return showFormError(T.err_model_name, modelNameInput);
     const params = parseParams();
-    if (!params) return showFormError(S.err_params, paramsInput);
+    if (!params) return showFormError(T.err_params, paramsInput);
     let note = null;
     if (state.kind === "api" || state.kind === "local") {
       const up = upstreamInput.value.trim();
-      if (state.kind === "local" && !up) return showFormError(S.err_upstream, upstreamInput);
+      if (state.kind === "local" && !up) return showFormError(T.err_upstream, upstreamInput);
       if (up) {
-        if (state.syncConflict || (typeof params.api_base === "string" && params.api_base !== up)) note = S.sync_note;
+        if (state.syncConflict || (typeof params.api_base === "string" && params.api_base !== up)) note = T.sync_note;
         params.api_base = up;
       } else {
         delete params.api_base;
       }
     }
     const caps = editing ? deepCopy(initial.capabilities) || {} : {};
-    if (ctxInput.validity.badInput) return showFormError(S.err_ctx, ctxInput);
+    if (ctxInput.validity.badInput) return showFormError(T.err_ctx, ctxInput);
     const ctxText = ctxInput.value.trim();
     if (ctxText) {
       const n = Number(ctxText);
-      if (!Number.isInteger(n) || n < 1) return showFormError(S.err_ctx, ctxInput);
+      if (!Number.isInteger(n) || n < 1) return showFormError(T.err_ctx, ctxInput);
       caps.ctx = n;
     } else {
       delete caps.ctx;
@@ -558,26 +514,26 @@ export function mountMemberForm(container, {
     caps.efforts = effortBoxes.filter((b) => b.checked).map((b) => b.value);
     let budget = null;
     if (budgetType.value !== "none") {
-      if (limitInput.validity.badInput) return showFormError(S.err_limit, limitInput);
-      if (windowSel.value === "monthly" && anchorInput.validity.badInput) return showFormError(S.err_anchor, anchorInput);
+      if (limitInput.validity.badInput) return showFormError(T.err_limit, limitInput);
+      if (windowSel.value === "monthly" && anchorInput.validity.badInput) return showFormError(T.err_anchor, anchorInput);
       const lt = limitInput.value.trim();
       const limit = lt === "" ? null : Number(lt);
-      if (limit !== null && (!Number.isFinite(limit) || limit < 0)) return showFormError(S.err_limit, limitInput);
+      if (limit !== null && (!Number.isFinite(limit) || limit < 0)) return showFormError(T.err_limit, limitInput);
       let anchor = null;
       if (windowSel.value === "monthly" && anchorInput.value.trim() !== "") {
         anchor = Number(anchorInput.value.trim());
-        if (!Number.isInteger(anchor) || anchor < 1 || anchor > 28) return showFormError(S.err_anchor, anchorInput);
+        if (!Number.isInteger(anchor) || anchor < 1 || anchor > 28) return showFormError(T.err_anchor, anchorInput);
       }
       budget = { type: budgetType.value, limit_amount: limit, window: windowSel.value, reset_anchor: anchor };
     }
-    addTag();
-    if (requireTag && !state.tags.length) return showFormError(S.err_tag, tagInput);
+    tagBox.commit();
+    if (requireTag && !tagBox.tags().length) return showFormError(T.err_tag, tagBox.input);
     const cred = credInput.value.trim();
     return {
       body: {
         id, model_name: modelName, kind: state.kind, provider, model, params,
         credential_ref: cred || null, capabilities: caps, enabled: enabledBox.checked,
-        tags: [...state.tags], budget,
+        tags: tagBox.tags(), budget,
       },
       note,
     };
@@ -597,7 +553,7 @@ export function mountMemberForm(container, {
           : await sendJSON("POST", "/api/deployments", built.body);
         if (state.destroyed) return;
         state.syncConflict = false;
-        showMessage(built.note ? `${S.saved}(${built.note})` : S.saved, built.note ? "warn" : "ok");
+        showMessage(built.note ? `${T.saved}(${built.note})` : T.saved, built.note ? "warn" : "ok");
         if (onSaved) await onSaved(saved, { created: !editing });
       } catch (err) {
         if (!state.destroyed) showError(err);

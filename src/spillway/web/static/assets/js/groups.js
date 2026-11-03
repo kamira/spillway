@@ -7,7 +7,10 @@
 
 import { getJSON, sendJSON } from "./api.js";
 import { byId, clear, h, setText } from "./dom.js";
-import { confirmDialog, initShell, kindBadge, setLoading, showError, showMessage, withBusy } from "./ui.js";
+import { TEXT } from "./strings.js";
+import {
+  confirmDialog, initShell, kindBadge, latest, memberHref, setLoading, showError, showMessage, tagInput, withBusy,
+} from "./ui.js";
 
 const PREVIEW_DELAY_MS = 300;
 const ROWS = [
@@ -16,24 +19,18 @@ const ROWS = [
   ["none", "排除"],
 ];
 
-const S = Object.freeze({
+const T = Object.freeze({
   members_count: (n) => `${n} 個成員`,
   empty_groups: "尚未建立群組",
   new_group: "新增群組",
   edit_group: "群組條件",
   name: "名稱",
-  tag_placeholder: "輸入 tag 後按 Enter",
-  tag_add: "+ tag",
-  tag_remove: "移除",
-  unset: "未設定",
   preview: (n) => `符合的成員(${n})`,
   preview_note: "即時預覽",
   preview_failed: "預覽失敗",
-  disabled: "停用",
   routes: "使用此群組的 route:",
   no_routes: "無",
   mcp: "MCP 端點:",
-  save: "儲存",
   delete: "刪除群組",
   saved: "已儲存群組",
   deleted: "已刪除群組",
@@ -47,7 +44,7 @@ const S = Object.freeze({
 const state = { groups: [], routes: [], editor: null };
 
 function memberLink(id, attrs = {}) {
-  return h("a", { href: `/ui/members.html#${encodeURIComponent(id)}`, class: "mono", ...attrs }, id);
+  return h("a", { href: memberHref(id), class: "mono", ...attrs }, id);
 }
 
 // ---- 清單 ------------------------------------------------------------------------------------
@@ -55,14 +52,14 @@ function memberLink(id, attrs = {}) {
 function renderGroups() {
   const list = clear(byId("group-list"));
   if (!state.groups.length) {
-    list.append(h("p", { class: "empty" }, S.empty_groups));
+    list.append(h("p", { class: "empty" }, T.empty_groups));
     return;
   }
   for (const g of state.groups) {
     const on = state.editor && state.editor.name === g.name;
     const btn = h("button", { type: "button", "data-group": g.name, "aria-current": on ? "true" : null },
       h("span", { class: "mono" }, g.name),
-      h("span", { class: "muted" }, S.members_count(g.members.length)));
+      h("span", { class: "muted" }, T.members_count(g.members.length)));
     btn.addEventListener("click", () => openEditor(g));
     list.append(btn);
   }
@@ -79,15 +76,15 @@ function renderTags(deployments) {
   }
   const tags = [...byTag.keys()].sort();
   if (!tags.length) {
-    list.append(h("li", { class: "muted" }, S.tags_empty));
+    list.append(h("li", { class: "muted" }, T.tags_empty));
     return;
   }
   for (const t of tags) {
     const members = byTag.get(t);
     list.append(h("li", { "data-tag": t },
       h("span", { class: "chip" }, t),
-      h("span", { class: "muted" }, S.members_count(members.length)),
-      h("span", { class: "tag-members" }, ...members.map((d) =>
+      h("span", { class: "muted" }, T.members_count(members.length)),
+      h("span", { class: "chips" }, ...members.map((d) =>
         memberLink(d.id, { "data-member": d.id })))));
   }
 }
@@ -122,98 +119,75 @@ function createEditor(group) {
   const sel = { all: [], any: [], none: [] };
   if (group) for (const [k] of ROWS) sel[k] = [...(group.selector[k] || [])];
   let timer = null;
-  let reqSeq = 0;
+  const previewGuard = latest();
   let destroyed = false;
 
   const section = clear(byId("group-editor"));
   const nameInput = h("input", { type: "text", id: "group-name", class: "mono", autocomplete: "off",
-    value: name, disabled: !isNew, "aria-label": S.name });
-  const rows = {};
+    value: name, disabled: !isNew, "aria-label": T.name });
   const rowEls = ROWS.map(([key, text]) => {
-    const chips = h("span", { class: "row", "data-chips": key });
-    const input = h("input", { type: "text", "data-tag-input": key, autocomplete: "off",
-      placeholder: S.tag_placeholder, "aria-label": `${text} ${key} tag` });
-    const add = h("button", { type: "button", class: "btn sm" }, S.tag_add);
-    const commit = () => {
-      const t = input.value.trim();
-      if (!t) return;
-      if (!sel[key].includes(t)) sel[key].push(t);
-      input.value = "";
-      renderChips(key);
-      schedulePreview();
-    };
-    input.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") {
-        ev.preventDefault();
-        commit();
-      }
+    const box = tagInput({
+      tags: sel[key],
+      chipClass: key === "none" ? "chip red" : "chip blue",
+      removeLabel: (t) => `${TEXT.tag_remove} ${key} ${t}`,
+      chipsTag: "span",
+      chipsAttrs: { "data-chips": key },
+      inputAttrs: { "data-tag-input": key, "aria-label": `${text} ${key} tag` },
+      onChange: (tags) => {
+        sel[key] = tags;
+        schedulePreview();
+      },
     });
-    add.addEventListener("click", commit);
-    rows[key] = { chips };
     return h("div", { class: "selrow", "data-row": key },
       h("div", {}, h("strong", {}, text), h("div", { class: "muted small" }, key)),
-      h("div", { class: "row" }, chips, input, add));
+      h("div", { class: "row" }, box.chips, box.input, box.button));
   });
   const previewTitle = h("strong", { "data-role": "preview-title" });
   const previewList = h("ul", { class: "plain", "data-role": "preview" });
   const routesBox = h("div", { "data-role": "routes" });
   const mcpBox = h("div", { "data-role": "mcp" });
-  const saveBtn = h("button", { type: "button", class: "btn primary", "data-role": "save" }, S.save);
-  const delBtn = isNew ? null : h("button", { type: "button", class: "btn", "data-role": "delete" }, S.delete);
+  const saveBtn = h("button", { type: "button", class: "btn primary", "data-role": "save" }, TEXT.save);
+  const delBtn = isNew ? null : h("button", { type: "button", class: "btn", "data-role": "delete" }, T.delete);
 
   section.append(
-    h("div", { class: "row" }, h("h2", { id: "group-editor-title" }, isNew ? S.new_group : S.edit_group),
-      h("label", { class: "row" }, S.name, nameInput)),
+    h("div", { class: "row" }, h("h2", { id: "group-editor-title" }, isNew ? T.new_group : T.edit_group),
+      h("label", { class: "row" }, T.name, nameInput)),
     h("div", {}, ...rowEls),
     h("div", { class: "stack tight" },
-      h("div", { class: "preview-head" }, previewTitle, h("span", { class: "muted small" }, S.preview_note)),
+      h("div", { class: "preview-head" }, previewTitle, h("span", { class: "muted small" }, T.preview_note)),
       previewList),
     isNew ? null : h("div", { class: "row" }, routesBox, mcpBox),
     h("div", { class: "row end" }, delBtn, saveBtn));
   section.hidden = false;
 
-  function renderChips(key) {
-    const box = clear(rows[key].chips);
-    if (!sel[key].length) box.append(h("span", { class: "muted" }, S.unset));
-    for (const t of sel[key]) {
-      const x = h("button", { type: "button", class: "chip-x", "aria-label": `${S.tag_remove} ${key} ${t}` }, "×");
-      x.addEventListener("click", () => {
-        sel[key] = sel[key].filter((v) => v !== t);
-        renderChips(key);
-        schedulePreview();
-      });
-      box.append(h("span", { class: key === "none" ? "chip red" : "chip blue", "data-tag": t }, t, x));
-    }
-  }
-
   function renderPreview(members) {
     previewList.removeAttribute("data-stale");
     previewList.removeAttribute("aria-busy");
-    setText(previewTitle, S.preview(members.length));
+    setText(previewTitle, T.preview(members.length));
     clear(previewList);
-    if (!members.length) previewList.append(h("li", { class: "muted" }, S.no_members));
+    if (!members.length) previewList.append(h("li", { class: "muted" }, T.no_members));
     for (const m of members) {
       previewList.append(h("li", { "data-member": m.id },
         memberLink(m.id),
         kindBadge(m.kind),
-        m.enabled ? null : h("span", { class: "badge b-muted" }, S.disabled)));
+        m.enabled ? null : h("span", { class: "badge b-muted" }, TEXT.disabled)));
     }
   }
 
   async function runPreview() {
     timer = null;
-    const mine = ++reqSeq;
+    const isLatest = previewGuard();
     try {
       const r = await sendJSON("POST", "/api/groups/preview", { selector: { ...sel } });
-      if (destroyed || mine !== reqSeq) return;
+      if (destroyed || !isLatest()) return;
       renderPreview(r.members || []);
     } catch (err) {
-      if (destroyed || mine !== reqSeq) return;
+      if (destroyed || !isLatest()) return;
       // 預覽失敗:清掉舊結果並標為過時,畫面不留與目前條件不符的成員集合(審議 M4)
       clear(previewList);
       previewList.setAttribute("data-stale", "true");
       previewList.removeAttribute("aria-busy");
-      setText(previewTitle, S.preview_failed);
+      setText(previewTitle, T.preview_failed);
       showError(err);
     }
   }
@@ -228,13 +202,13 @@ function createEditor(group) {
     clear(routesBox);
     clear(mcpBox);
     const refs = state.routes.filter((r) => r.target && r.target.group === name).map((r) => r.name);
-    routesBox.append(S.routes);
-    if (!refs.length) routesBox.append(h("span", { class: "muted" }, S.no_routes));
+    routesBox.append(T.routes);
+    if (!refs.length) routesBox.append(h("span", { class: "muted" }, T.no_routes));
     refs.forEach((r, i) => {
       if (i) routesBox.append(", ");
       routesBox.append(h("a", { href: `/ui/route.html?name=${encodeURIComponent(r)}`, class: "mono" }, r));
     });
-    mcpBox.append(S.mcp, h("a", { href: "/ui/mcp.html", class: "mono" }, `/mcp/${encodeURIComponent(name)}`));
+    mcpBox.append(T.mcp, h("a", { href: "/ui/mcp.html", class: "mono" }, `/mcp/${encodeURIComponent(name)}`));
   }
 
   saveBtn.addEventListener("click", () => withBusy(saveBtn, async () => {
@@ -244,7 +218,7 @@ function createEditor(group) {
       if (isNew) {
         const n = nameInput.value.trim();
         if (!n) {
-          showError({ message: S.name_required });
+          showError({ message: T.name_required });
           nameInput.focus();
           return;
         }
@@ -252,7 +226,7 @@ function createEditor(group) {
       } else {
         saved = await sendJSON("PUT", `/api/groups/${encodeURIComponent(name)}`, body);
       }
-      showMessage(`${S.saved} ${saved.name}`, "ok");
+      showMessage(`${T.saved} ${saved.name}`, "ok");
       await loadAll();
       // 儲存期間使用者已切到別的群組:不把畫面切回來
       if (!destroyed) openEditor(state.groups.find((g) => g.name === saved.name) || saved);
@@ -263,15 +237,15 @@ function createEditor(group) {
 
   if (delBtn) {
     delBtn.addEventListener("click", async () => {
-      const ok = await confirmDialog({ title: `${S.delete_title} ${name}`, body: S.delete_body,
-        confirmLabel: S.delete, danger: true });
+      const ok = await confirmDialog({ title: `${T.delete_title} ${name}`, body: T.delete_body,
+        confirmLabel: T.delete, danger: true });
       if (!ok) return;
       await withBusy(delBtn, async () => {
         try {
           await sendJSON("DELETE", `/api/groups/${encodeURIComponent(name)}`);
           if (state.editor) state.editor.destroy();
           state.editor = null;
-          showMessage(`${S.deleted} ${name}`, "ok");
+          showMessage(`${T.deleted} ${name}`, "ok");
           await loadAll();
         } catch (err) {
           showError(err);
@@ -280,7 +254,6 @@ function createEditor(group) {
     });
   }
 
-  for (const [k] of ROWS) renderChips(k);
   if (!isNew) renderRefs();
   if (group && Array.isArray(group.members)) renderPreview(group.members);
   runPreview();

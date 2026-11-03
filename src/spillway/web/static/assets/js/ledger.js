@@ -10,14 +10,14 @@
 import { getJSON, withQuery } from "./api.js";
 import { byId, clear, h, setAttr, setText } from "./dom.js";
 import { STATUS, TEXT, label } from "./strings.js";
-import { codeLabel, errorText, fmtLocal, initShell, showError, showMessage, timeEl } from "./ui.js";
+import { errorText, fmtInt, fmtLocal, initShell, latest, showError, showMessage, statusBadge, timeEl,
+  toIsoZ } from "./ui.js";
 
 const CSV_MAX_ROWS = 100000;
 const DAY_MS = 86400000;
 const FILTER_KEYS = ["from", "to", "deployment", "route", "status", "min_depth"];
 
 const T = Object.freeze({
-  dash: "—",
   deleted: "(已刪除)",
   empty: "沒有符合條件的紀錄",
   pageInfo: (page, pages, total) => `第 ${page} / ${Math.max(pages, 1)} 頁,共 ${total.toLocaleString("en-US")} 列`,
@@ -46,19 +46,16 @@ const state = {
   deploymentsLoaded: false,   // 成員清單未載入成功時不判定孤兒列
   retentionDays: null,
   lastPage: 1,                // 最後一次成功回應的 data.page(上/下一頁由它 ±1)
-  loadSeq: 0,
-  payloadSeq: 0,
   selected: null,
 };
+
+const loadGuard = latest();
+const payloadGuard = latest();
 
 // ---- 日期換算(本地日期 ↔ ISO)-------------------------------------------------------------------
 
 function pad(n) {
   return String(n).padStart(2, "0");
-}
-
-function isoOf(d) {
-  return d.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 function parseLocalDate(value) {
@@ -70,13 +67,13 @@ function parseLocalDate(value) {
 // 起:該日本地 00:00
 function fromDateToIso(value) {
   const p = parseLocalDate(value);
-  return p ? isoOf(new Date(p[0], p[1], p[2], 0, 0, 0, 0)) : null;
+  return p ? toIsoZ(new Date(p[0], p[1], p[2], 0, 0, 0, 0)) : null;
 }
 
 // 訖:隔日本地 00:00(不含)
 function toDateToIso(value) {
   const p = parseLocalDate(value);
-  return p ? isoOf(new Date(p[0], p[1], p[2] + 1, 0, 0, 0, 0)) : null;
+  return p ? toIsoZ(new Date(p[0], p[1], p[2] + 1, 0, 0, 0, 0)) : null;
 }
 
 function localDateOf(d) {
@@ -96,26 +93,16 @@ function isoToToDate(iso) {
 
 // ---- 格式化 ---------------------------------------------------------------------------------------
 
-function fmtInt(n) {
-  return n === null || n === undefined ? T.dash : Number(n).toLocaleString("en-US");
-}
-
 function fmtCost(n) {
-  return n === null || n === undefined ? T.dash : `$${Number(n).toFixed(4)}`;
+  return n === null || n === undefined ? TEXT.dash : `$${Number(n).toFixed(4)}`;
 }
 
 function fmtLatency(ms) {
-  return ms === null || ms === undefined ? T.dash : `${(Number(ms) / 1000).toFixed(1)} s`;
-}
-
-function statusBadge(status) {
-  const cls = { ok: "b-ok", error: "b-err", quota_exhausted: "b-warn", rate_limited: "b-warn",
-    skipped_precheck: "b-muted" }[status] || "b-muted";
-  return codeLabel(STATUS, status, { class: `badge ${cls}` });
+  return ms === null || ms === undefined ? TEXT.dash : `${(Number(ms) / 1000).toFixed(1)} s`;
 }
 
 function memberText(depId) {
-  if (depId === null || depId === undefined) return [h("span", { class: "muted" }, T.dash)];
+  if (depId === null || depId === undefined) return [h("span", { class: "muted" }, TEXT.dash)];
   const nodes = [h("span", { class: "mono" }, depId)];
   if (state.deploymentsLoaded && !state.deployments.has(depId)) {
     nodes.push(h("span", { class: "muted ledger-orphan" }, T.deleted));
@@ -215,10 +202,10 @@ function renderRows(items) {
     const tr = h("tr", { class: "clickable", tabindex: "0", "data-ledger-id": r.id,
       "aria-selected": state.selected === r.id ? "true" : "false" },
     h("td", { class: "nowrap" }, timeEl(r.ts)),
-    h("td", { class: "mono" }, r.route_name ?? T.dash),
+    h("td", { class: "mono" }, r.route_name ?? TEXT.dash),
     h("td", { class: "ledger-member-cell" }, ...memberText(r.deployment_id)),
-    h("td", { class: "num" }, r.slot ?? T.dash),
-    h("td", {}, r.effort ?? T.dash),
+    h("td", { class: "num" }, r.slot ?? TEXT.dash),
+    h("td", {}, r.effort ?? TEXT.dash),
     h("td", { class: "num" }, `${fmtInt(r.est_tokens_in)} / ${fmtInt(r.est_tokens_out_p90)}`),
     h("td", { class: "num" }, `${fmtInt(r.tokens_in)} / ${fmtInt(r.tokens_out)}`),
     h("td", { class: "num" }, fmtCost(r.est_cost_usd_p90)),
@@ -239,7 +226,7 @@ function renderRows(items) {
 }
 
 async function load() {
-  const seq = ++state.loadSeq;
+  const isLatest = loadGuard();
   const table = byId("ledger-table");
   table.setAttribute("aria-busy", "true");
   table.removeAttribute("data-loaded");
@@ -250,7 +237,7 @@ async function load() {
   syncUrl();
   try {
     const data = await getJSON(withQuery("/api/ledger", apiParams(true)));
-    if (seq !== state.loadSeq) return;
+    if (!isLatest()) return;
     const lastPage = Math.max(Number(data.pages) || 0, 1);
     if (Number(data.page) > lastPage) {
       // 網址的 page 超過最後一頁:改到最後一頁重新查詢(網址一併同步)
@@ -265,9 +252,9 @@ async function load() {
     byId("page-next").disabled = data.page >= data.pages;
     updateExport(Number(data.total));
   } catch (err) {
-    if (seq === state.loadSeq) showError(err);
+    if (isLatest()) showError(err);
   } finally {
-    if (seq === state.loadSeq) {
+    if (isLatest()) {
       table.removeAttribute("aria-busy");
       table.setAttribute("data-loaded", "true");
     }
@@ -292,7 +279,7 @@ function markSelected(id) {
 function keptUntilIso(ts) {
   const t = Date.parse(ts);
   if (Number.isNaN(t) || state.retentionDays === null || Number(state.retentionDays) <= 0) return null;
-  return isoOf(new Date(t + Number(state.retentionDays) * DAY_MS));
+  return toIsoZ(new Date(t + Number(state.retentionDays) * DAY_MS));
 }
 
 function payloadNotice(text, kind) {
@@ -348,12 +335,12 @@ function renderPayload(row, p) {
 }
 
 async function openPayload(row) {
-  const seq = ++state.payloadSeq;
+  const isLatest = payloadGuard();
   markSelected(row.id);
   const panel = byId("payload-panel");
   const meta = byId("payload-meta");
   const body = byId("payload-body");
-  setText(byId("payload-title"), `${T.title} · ${fmtLocal(row.ts)} · ${row.deployment_id ?? T.dash}`);
+  setText(byId("payload-title"), `${T.title} · ${fmtLocal(row.ts)} · ${row.deployment_id ?? TEXT.dash}`);
   panel.setAttribute("data-ledger-id", String(row.id));
   panel.removeAttribute("data-loaded");
   clear(meta);
@@ -364,22 +351,22 @@ async function openPayload(row) {
   panel.hidden = false;
   try {
     const p = await getJSON(`/api/ledger/${encodeURIComponent(row.id)}/payload`);
-    if (seq !== state.payloadSeq) return;
+    if (!isLatest()) return;
     renderPayload(row, p);
   } catch (err) {
-    if (seq !== state.payloadSeq) return;
+    if (!isLatest()) return;
     loading.remove();
     if (err && err.status === 410) body.append(payloadNotice(T.expired, "warn-text"));
     else if (err && err.status === 404) body.append(payloadNotice(T.notRecorded, "muted"));
     else body.append(payloadNotice(errorText(err), "danger-text"));
   } finally {
-    if (seq === state.payloadSeq) panel.setAttribute("data-loaded", "true");
+    if (isLatest()) panel.setAttribute("data-loaded", "true");
   }
 }
 
 // 關閉(與 pagehide)時清空內容,不把 prompt 與回應留在 DOM(含 bfcache)
 function closePayload() {
-  state.payloadSeq += 1;
+  payloadGuard.invalidate();
   const panel = byId("payload-panel");
   panel.hidden = true;
   panel.removeAttribute("data-ledger-id");

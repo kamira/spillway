@@ -9,10 +9,9 @@
 
 import { getJSON, withQuery } from "./api.js";
 import { byId, clear, h } from "./dom.js";
-import { clearMessage, initShell, setLoading, showError } from "./ui.js";
+import { clearMessage, fillGroupSelect, initShell, latest, setLoading, showError } from "./ui.js";
 
 const T = Object.freeze({
-  all_group: "all(全部 route)",
   cat_connection: "連線",
   cat_tools: "工具",
   cat_notifications: "通知",
@@ -53,7 +52,8 @@ const T = Object.freeze({
   sdk_errors_note: "由 MCP SDK 產生(JSON-RPC 或純文字),不是 spec 9.1.2 格式。",
 });
 
-const state = { group: "all", catalog: null, items: new Map(), seq: 0 };
+const state = { group: "all", catalog: null, items: new Map() };
+const catalogGuard = latest();
 
 function pretty(value) {
   return JSON.stringify(value, null, 2);
@@ -213,14 +213,14 @@ function renderDetail() {
 }
 
 async function loadCatalog() {
-  const seq = ++state.seq;
+  const isLatest = catalogGuard();
   document.documentElement.removeAttribute("data-ref-ready");
   const detail = byId("ref-detail");
   setLoading(detail, true);
   try {
     const cat = await getJSON(withQuery("/api/mcp/catalog", { group: state.group }));
-    if (seq !== state.seq) return;
-    clearMessage();
+    if (!isLatest()) return;
+    clearMessage("catalog");
     state.catalog = cat;
     state.items = buildItems(cat);
     setLoading(detail, false);
@@ -228,33 +228,15 @@ async function loadCatalog() {
     renderDetail();
     document.documentElement.setAttribute("data-ref-ready", state.group);
   } catch (err) {
-    if (seq !== state.seq) return;
+    if (!isLatest()) return;
     state.catalog = null;
     state.items = new Map();
     setLoading(detail, false);
     clear(detail);
     clear(byId("ref-index"));
-    showError(err);
+    showError(err, { source: "catalog" });
     document.documentElement.setAttribute("data-ref-ready", "error");
   }
-}
-
-async function loadGroups() {
-  const sel = byId("ref-group");
-  clear(sel);
-  sel.append(h("option", { value: "all" }, T.all_group));
-  let names = [];
-  try {
-    const data = await getJSON("/api/groups");
-    names = (data.groups || []).map((g) => g.name);
-  } catch (err) {
-    showError(err);
-  }
-  for (const n of names) sel.append(h("option", { value: n }, n));
-  if (state.group !== "all" && !names.includes(state.group)) {
-    sel.append(h("option", { value: state.group }, state.group));
-  }
-  sel.value = state.group;
 }
 
 function syncQuery() {
@@ -269,7 +251,7 @@ async function main() {
   window.addEventListener("hashchange", () => {
     if (state.items.size) renderDetail();
   });
-  await loadGroups();
+  await fillGroupSelect(byId("ref-group"), { includeAll: true, current: state.group });
   byId("ref-group").addEventListener("change", (ev) => {
     state.group = ev.target.value;
     syncQuery();

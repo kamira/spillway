@@ -6,18 +6,16 @@
 - `insert_ledger(gw, ledger_id, ts, *, deployment, route="rt", status="ok", **cols)`:寫入一列帳本(指定 id)。
 - `insert_payload(gw, ledger_id, ts, request_json, response_text=None, *, truncated=False, redacted=False)`。
 - `bulk_ledger(gw, count, ts, *, deployment="bulk", route="rt", status="ok")`:以遞迴 CTE 一次寫入大量列。
-- `query_of(url) -> dict[str, str]`:網址的 query(單值)。
 """
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
 
 from spillway.clock import to_iso
 from tests.helpers.ui import db_execute
 
-__all__ = ["bulk_ledger", "insert_ledger", "insert_payload", "query_of"]
+__all__ = ["bulk_ledger", "insert_ledger", "insert_payload"]
 
 _COLS = ("route_name", "deployment_id", "effort", "tokens_in", "tokens_out", "cost_usd", "status", "slot",
          "fallback_depth", "latency_ms", "est_tokens_in", "est_tokens_out_p50", "est_tokens_out_p90",
@@ -51,9 +49,3 @@ def bulk_ledger(gw: Any, count: int, ts: datetime, *, deployment: str = "bulk", 
                    "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < ?) "
                    "SELECT ?, ?, ?, ?, 0 FROM c",
                [count, to_iso(ts), route, deployment, status])
-
-
-def query_of(url: str) -> dict[str, str]:
-    q = parse_qs(urlsplit(url).query, keep_blank_values=True)
-    assert all(len(v) == 1 for v in q.values()), q
-    return {k: v[0] for k, v in q.items()}

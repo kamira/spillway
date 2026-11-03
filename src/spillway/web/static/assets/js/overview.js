@@ -9,16 +9,13 @@
 import { getJSON, sendJSON } from "./api.js";
 import { byId, clear, h, setText } from "./dom.js";
 import { BUDGET_TYPE, COOLING_REASON, TEXT, WINDOW, label } from "./strings.js";
-import { codeLabel, fmtLocal, fmtUSD, initShell, kindBadge, navigate, showError, showMessage, timeEl,
-  withBusy } from "./ui.js";
+import { codeLabel, fmtLocal, fmtUSD, initShell, kindBadge, latest, memberHref, navigate, showError, showMessage,
+  timeEl, withBusy } from "./ui.js";
 
 const T = Object.freeze({
-  dash: "—",
   days: (n) => `${n} 天`,
   underOneDay: "< 1 天",
   usedPct: (pct) => `已使用 ${pct}%`,
-  normal: "正常",
-  disabled: "停用",
   clearCooldown: "清除冷卻",
   cooldownCleared: (id) => `已清除 ${id} 的冷卻`,
   noMembers: "尚未加入成員",
@@ -28,10 +25,6 @@ const T = Object.freeze({
   generatedAt: "資料時間 ",
   memberLink: (id) => `前往成員 ${id}`,
 });
-
-function memberHref(id) {
-  return `/ui/members.html#${encodeURIComponent(id)}`;
-}
 
 function wantsSkipWizard() {
   return new URLSearchParams(window.location.search).get("skip_wizard") === "1";
@@ -64,7 +57,7 @@ function remainingCell(row) {
 }
 
 function daysCell(row) {
-  if (row.est_days_left === null || row.est_days_left === undefined) return h("span", { class: "muted" }, T.dash);
+  if (row.est_days_left === null || row.est_days_left === undefined) return h("span", { class: "muted" }, TEXT.dash);
   const days = Number(row.est_days_left);
   if (days > 0 && days < 1) return h("span", {}, T.underOneDay);
   return h("span", {}, T.days(Math.floor(days)));
@@ -76,15 +69,15 @@ function statusCell(row) {
       `${TEXT.cooling_until} `, timeEl(row.cooling_until), "(",
       codeLabel(COOLING_REASON, row.cooling_reason), ")");
   }
-  if (!row.enabled) return h("span", { class: "badge b-muted" }, T.disabled);
-  return h("span", { class: "badge b-ok" }, T.normal);
+  if (!row.enabled) return h("span", { class: "badge b-muted" }, TEXT.disabled);
+  return h("span", { class: "badge b-ok" }, TEXT.normal);
 }
 
 function memberCell(row, dep) {
   const tags = dep && Array.isArray(dep.tags) ? dep.tags : [];
   return h("div", { class: "stack tight" },
     h("a", { class: "mono overview-member-link", href: memberHref(row.id), title: T.memberLink(row.id) }, row.id),
-    tags.length ? h("div", { class: "row overview-tags" }, ...tags.map((t) => h("span", { class: "chip" }, t))) : null);
+    tags.length ? h("div", { class: "chips tight overview-tags" }, ...tags.map((t) => h("span", { class: "chip" }, t))) : null);
 }
 
 function renderRows(rows, deps, reload) {
@@ -130,12 +123,12 @@ function renderSummary(rows) {
   setText(byId("stat-requests"), rows.reduce((sum, r) => sum + Number(r.requests_24h || 0), 0));
 }
 
-let dashSeq = 0;
+const dashGuard = latest();
 
 async function loadDashboard() {
-  const seq = ++dashSeq;
+  const isLatest = dashGuard();
   const [dash, depsResp] = await Promise.all([getJSON("/api/dashboard"), getJSON("/api/deployments")]);
-  if (seq !== dashSeq) return;      // 較新的一次載入已在進行,舊回應不渲染
+  if (!isLatest()) return;      // 較新的一次載入已在進行,舊回應不渲染
   const rows = Array.isArray(dash.deployments) ? dash.deployments : [];
   const deps = new Map((depsResp.deployments || []).map((d) => [d.id, d]));
   renderSummary(rows);
@@ -149,7 +142,8 @@ async function main() {
   try {
     const settings = await getJSON("/api/settings");
     if (settings.first_run && !wantsSkipWizard()) {
-      navigate("/ui/wizard.html");
+      // 換掉目前的歷史項:從精靈按返回鍵不會再回到這裡被導向一次
+      navigate("/ui/wizard.html", { replace: true });
       return;
     }
     const counts = settings.counts || {};

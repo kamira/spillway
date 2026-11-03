@@ -16,12 +16,9 @@ from playwright.sync_api import Page, Request, Response, expect
 
 from spillway.clock import FakeClock
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import api, goto, guard_of
-from tests.helpers.ui_ledger import bulk_ledger, insert_ledger, insert_payload, query_of
-from tests.helpers.ui_overview import add_member, add_route
+from tests.helpers.ui import MakeGw, NewPage, add_member, add_route, api, goto, guard_of, query_of, wait_loaded
+from tests.helpers.ui_ledger import bulk_ledger, insert_ledger, insert_payload
 
-NewPage = Callable[..., Page]
-MakeGw = Callable[..., LiveGateway]
 
 NOW = datetime(2026, 11, 3, 12, 0, 0, tzinfo=timezone.utc)
 XSS = "<img src=x onerror=alert(1)><script>alert(2)</script>"
@@ -29,10 +26,6 @@ XSS = "<img src=x onerror=alert(1)><script>alert(2)</script>"
 
 def is_list(r: Request | Response) -> bool:
     return urlsplit(r.url).path == "/api/ledger"
-
-
-def wait_loaded(page: Page) -> None:
-    expect(page.locator('#ledger-table[data-loaded="true"]')).to_have_count(1)
 
 
 def ids(page: Page) -> list[int]:
@@ -53,7 +46,7 @@ def gw(make_ui_gateway: MakeGw) -> LiveGateway:
 def open_ledger(new_page: NewPage, gw: LiveGateway, path: str = "/ui/ledger.html", **kw) -> Page:  # noqa: ANN003
     page = new_page(**kw)
     goto(page, gw, path)
-    wait_loaded(page)
+    wait_loaded(page, "#ledger-table")
     return page
 
 
@@ -61,7 +54,7 @@ def change(page: Page, action: Callable[[], None]) -> dict[str, str]:
     """執行改變篩選的動作,回傳 /api/ledger 請求的 query,並確認網址 query 與它相同。"""
     with page.expect_request(is_list) as req:
         action()
-    wait_loaded(page)
+    wait_loaded(page, "#ledger-table")
     sent = query_of(req.value.url)
     assert query_of(page.url) == sent, (page.url, req.value.url)
     return sent
@@ -107,7 +100,7 @@ def test_filters_sync_url_api_and_export(new_page: NewPage, gw: LiveGateway) -> 
     # 以目前網址重新開啟:篩選欄位還原,請求參數相同
     with page.expect_request(is_list) as req:
         page.reload()
-    wait_loaded(page)
+    wait_loaded(page, "#ledger-table")
     assert query_of(req.value.url) == q
     expect(page.locator("#f-from")).to_have_value("2026-11-03")
     expect(page.locator("#f-to")).to_have_value("2026-11-03")
@@ -293,7 +286,6 @@ def test_error_html_is_text(new_page: NewPage, gw: LiveGateway) -> None:
     assert guard_of(page).dialogs == []
 
 
-
 def test_double_click_next_moves_one_page(new_page: NewPage, gw: LiveGateway) -> None:
     for i in range(1, 121):
         insert_ledger(gw, i, NOW - timedelta(minutes=i), deployment="m1")
@@ -302,7 +294,7 @@ def test_double_click_next_moves_one_page(new_page: NewPage, gw: LiveGateway) ->
     page.on("request", lambda r: sent.append(query_of(r.url)) if is_list(r) else None)
     page.locator("#page-next").dblclick()
     expect(page.locator("#page-info")).to_have_text("第 2 / 3 頁,共 120 列")
-    wait_loaded(page)
+    wait_loaded(page, "#ledger-table")
     assert ids(page) == list(range(51, 101))
     assert query_of(page.url) == {"page": "2"}
     assert sent and all(q == {"page": "2"} for q in sent), sent
@@ -318,7 +310,7 @@ def test_page_out_of_range_clamps_to_last(new_page: NewPage, gw: LiveGateway) ->
     page.on("request", lambda r: pages.append(query_of(r.url).get("page")) if is_list(r) else None)
     goto(page, gw, "/ui/ledger.html?page=9")
     expect(page.locator("#page-info")).to_have_text("第 3 / 3 頁,共 120 列")
-    wait_loaded(page)
+    wait_loaded(page, "#ledger-table")
     assert ids(page) == list(range(101, 121))
     assert query_of(page.url) == {"page": "3"}
     assert pages == ["9", "3"]
@@ -337,7 +329,7 @@ def test_export_link_disabled_when_list_fails(new_page: NewPage, gw: LiveGateway
     page = new_page()
     page.route(lambda url: urlsplit(url).path == "/api/ledger", _fail_500)
     goto(page, gw, "/ui/ledger.html?status=error")
-    wait_loaded(page)
+    wait_loaded(page, "#ledger-table")
     expect(page.locator("#msgbar")).to_contain_text("測試用的 500")
     export = page.locator("#export-csv")
     expect(export).to_have_attribute("aria-disabled", "true")
@@ -346,7 +338,7 @@ def test_export_link_disabled_when_list_fails(new_page: NewPage, gw: LiveGateway
     # 改篩選後仍失敗:連結保持停用,不沿用舊篩選
     with page.expect_request(is_list):
         page.locator("#f-route").select_option("rt")
-    wait_loaded(page)
+    wait_loaded(page, "#ledger-table")
     expect(export).to_have_attribute("aria-disabled", "true")
     assert export.get_attribute("href") is None
 
@@ -358,7 +350,7 @@ def test_member_list_failure_does_not_mark_orphans(new_page: NewPage, gw: LiveGa
     page = new_page()
     page.route(lambda url: urlsplit(url).path == "/api/deployments", _fail_500)
     goto(page, gw, "/ui/ledger.html")
-    wait_loaded(page)
+    wait_loaded(page, "#ledger-table")
     expect(page.locator("#msgbar")).to_contain_text("測試用的 500")
     cell = lambda i: page.locator(f'#ledger-body tr[data-ledger-id="{i}"] td.ledger-member-cell')  # noqa: E731
     expect(cell(1)).to_have_text("m1")

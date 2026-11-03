@@ -28,7 +28,7 @@ from urllib.parse import quote
 from playwright.sync_api import Locator, Page, expect
 
 from tests.helpers import TEST_KEY_ENV
-from tests.helpers.ui import api, db_execute, goto
+from tests.helpers.ui import add_route, api, db_execute, goto
 
 __all__ = ["add_members", "api_body", "card", "create_route", "drag_card", "drag_slot", "editor_slots",
            "effective_slots", "local_body", "new_slot_zone", "open_editor", "put_order", "route_order",
@@ -63,7 +63,7 @@ def add_members(gw: Any, *bodies: dict[str, Any]) -> None:
 
 
 def create_route(gw: Any, name: str, target: dict[str, Any], *, mode: str = "task", **kw: Any) -> dict[str, Any]:
-    return api(gw, "POST", "/api/routes", {"name": name, "target": target, "mode": mode, **kw}, expect=(201,)).json()
+    return add_route(gw, name, target=target, mode=mode, **kw)
 
 
 def _entry(e: str | Sequence[Any]) -> dict[str, Any]:

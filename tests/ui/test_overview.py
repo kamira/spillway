@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -18,12 +17,10 @@ from playwright.sync_api import Page, expect
 
 from spillway.clock import FakeClock
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import api, goto, guard_of
+from tests.helpers.ui import MakeGw, NewPage, add_member, add_route, api, goto, guard_of, wait_loaded
 from tests.helpers.ui_ledger import insert_ledger
-from tests.helpers.ui_overview import add_member, add_route, set_cooldown
+from tests.helpers.ui_overview import set_cooldown
 
-NewPage = Callable[..., Page]
-MakeGw = Callable[..., LiveGateway]
 
 NOW = datetime(2026, 10, 30, 12, 0, 0, tzinfo=timezone.utc)
 TPE = ZoneInfo("Asia/Taipei")
@@ -41,10 +38,6 @@ def usd(x: float) -> str:
 
 def row(page: Page, dep_id: str):  # noqa: ANN201
     return page.locator(f'#members-body tr[data-member="{dep_id}"]')
-
-
-def wait_loaded(page: Page) -> None:
-    expect(page.locator('#members-table[data-loaded="true"]')).to_have_count(1)
 
 
 @pytest.fixture
@@ -75,7 +68,7 @@ def test_rows_and_summary_match_dashboard(new_page: NewPage, seeded: LiveGateway
     dash = {d["id"]: d for d in api(gw, "GET", "/api/dashboard").json()["deployments"]}
     page = new_page()
     goto(page, gw, "/ui/")
-    wait_loaded(page)
+    wait_loaded(page, "#members-table")
     expect(page.locator("#members-body tr")).to_have_count(len(dash))
     assert page.locator("#members-body tr").evaluate_all("rs => rs.map(r => r.dataset.member)") == list(dash)
 
@@ -120,7 +113,7 @@ def test_usage_meter_matches_dashboard(new_page: NewPage, seeded: LiveGateway) -
     dash = {d["id"]: d for d in api(gw, "GET", "/api/dashboard").json()["deployments"]}
     page = new_page()
     goto(page, gw, "/ui/")
-    wait_loaded(page)
+    wait_loaded(page, "#members-table")
     for dep_id, d in dash.items():
         meter = row(page, dep_id).locator("meter")
         if d["unlimited"]:
@@ -141,7 +134,7 @@ def test_clear_cooldown(new_page: NewPage, seeded: LiveGateway) -> None:
     gw = seeded
     page = new_page()
     goto(page, gw, "/ui/")
-    wait_loaded(page)
+    wait_loaded(page, "#members-table")
     with page.expect_response(lambda r: r.url.endswith("/api/deployments/d-cool/clear-cooldown")) as resp:
         row(page, "d-cool").get_by_role("button", name="清除冷卻").click()
     assert resp.value.status == 200 and resp.value.request.method == "POST"
@@ -160,7 +153,7 @@ def test_member_id_links_to_members_page(new_page: NewPage, gw: LiveGateway) -> 
     add_route(gw, "rt")
     page = new_page()
     goto(page, gw, "/ui/")
-    wait_loaded(page)
+    wait_loaded(page, "#members-table")
     link = page.locator('#members-body a.overview-member-link').filter(has_text=odd)
     expect(link).to_have_attribute("href", "/ui/members.html#" + quote(odd, safe=""))
     assert quote(odd, safe="") == "a%23b%3Fc%25d%26e"
@@ -184,7 +177,7 @@ def test_first_run_redirects_to_wizard(new_page: NewPage, gw: LiveGateway) -> No
 def test_skip_wizard_stays_on_overview(new_page: NewPage, gw: LiveGateway) -> None:
     page = new_page()
     goto(page, gw, "/ui/?skip_wizard=1")
-    wait_loaded(page)
+    wait_loaded(page, "#members-table")
     expect(page).to_have_url(gw.url("/ui/?skip_wizard=1"))
     expect(page.locator("main h1")).to_have_text("總覽")
     expect(page.locator("#members-body")).to_have_text("尚未加入成員")
@@ -197,7 +190,7 @@ def test_resume_banner_when_members_but_no_routes(new_page: NewPage, gw: LiveGat
     add_member(gw, "only", kind="local")
     page = new_page()
     goto(page, gw, "/ui/")
-    wait_loaded(page)
+    wait_loaded(page, "#members-table")
     expect(page).to_have_url(gw.url("/ui/"))           # 有成員 → first_run 為 false,不導向
     banner = page.locator("#resume-banner")
     expect(banner).to_be_visible()
@@ -207,7 +200,7 @@ def test_resume_banner_when_members_but_no_routes(new_page: NewPage, gw: LiveGat
     expect(page).to_have_url(gw.url("/ui/wizard.html"))
     add_route(gw, "rt")
     goto(page, gw, "/ui/")
-    wait_loaded(page)
+    wait_loaded(page, "#members-table")
     expect(page.locator("#resume-banner")).to_be_hidden()
 
 
@@ -216,7 +209,7 @@ def test_html_in_user_data_is_text(new_page: NewPage, gw: LiveGateway) -> None:
     add_route(gw, "rt", tag=XSS_IMG)
     page = new_page()
     goto(page, gw, "/ui/")
-    wait_loaded(page)
+    wait_loaded(page, "#members-table")
     chips = row(page, "xss").locator(".chip")
     expect(chips).to_have_text([XSS_IMG, XSS_SCRIPT])
     assert page.locator("main img").count() == 0

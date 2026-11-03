@@ -2,24 +2,21 @@
 
 /* ---- 清單頁 ---- */
 .route-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
-.route-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* ---- 編輯頁 ---- */
 .route-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 20px; align-items: start; }
 .route-settings .f { font-weight: 400; }
-.route-settings .f > .label { font-weight: 600; color: var(--muted); }
+.route-settings .f > .field-label { color: var(--muted); }
 .route-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 16px; align-items: start; }
 .slot-list { display: flex; flex-direction: column; gap: 12px; }
 .slot-cards { display: flex; flex-wrap: wrap; gap: 12px; }
-.slothead[draggable="true"] { cursor: grab; }
 .slothead .slot-tools { margin-left: auto; display: flex; gap: 6px; }
 .slot-summary { display: flex; flex-wrap: wrap; gap: 6px; }
-.member-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: grab; }
+.member-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .member-head .mono { font-weight: 600; }
 .member-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .member-controls label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .member-controls select { min-height: 36px; }
-.member.dragging, .slot.dragging { opacity: 0.5; }
 .drop { min-height: 64px; display: flex; align-items: center; justify-content: center; }
 .dry-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
 .weight-scale { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }

@@ -1,5 +1,4 @@
 /* UI-8 API 參考(CHG-20261103-01 T7;決策 4、19)。左側可折疊索引 + 右側內容窗格。 */
-.ref-label { font-size: 13px; font-weight: 600; }
 .ref-index { gap: 8px; position: sticky; top: 16px; }
 .ref-index details { border-bottom: 1px solid var(--line-soft); padding-bottom: 6px; }
 .ref-index details:last-child { border-bottom: 0; }

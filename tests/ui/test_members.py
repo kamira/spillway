@@ -10,7 +10,6 @@ L2:連動選單(類型 → 供應商 → 模型,內容與 `/api/adapters`、`mod
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -20,7 +19,7 @@ from playwright.sync_api import Page, Route, expect
 from tests.contract.fakemods import write_module
 from tests.helpers import TEST_KEY_ENV, dead_base
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import api, guard_of, import_module
+from tests.helpers.ui import MakeGw, NewPage, api, guard_of, import_module
 from tests.helpers.ui_members import (
     BROKEN_PROVIDER,
     MemberForm,
@@ -33,9 +32,6 @@ from tests.helpers.ui_members import (
 REPO = Path(__file__).resolve().parents[2]
 CLAUDE_MODELS = REPO / "src" / "spillway" / "adapters" / "claude_cli" / "models.yaml"
 OTHER_TEXT = "其他(手動輸入)"
-
-NewPage = Callable[..., Page]
-MakeGw = Callable[..., LiveGateway]
 
 
 @pytest.fixture
@@ -466,7 +462,6 @@ def test_mount_member_form_contract(new_page: NewPage, gw: LiveGateway, fake_api
     assert get_member(gw, "w1")["tags"] == ["default"]
     page.evaluate("() => window.__handle.destroy()")
     expect(page.locator("#wizard-host form")).to_have_count(0)
-
 
 
 # ---- 施工審議 T5 修正(M1–M6、選修)----------------------------------------------------------------

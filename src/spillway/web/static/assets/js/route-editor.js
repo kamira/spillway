@@ -12,10 +12,10 @@
 
 import { getJSON, sendJSON } from "./api.js";
 import { byId, clear, h, setText } from "./dom.js";
-import { TEXT } from "./strings.js";
+import { EXCLUDE_REASON, TEXT } from "./strings.js";
 import {
-  clearMessage, confirmDialog, fmtUSD, initShell, kindBadge, setLoading, showError, showMessage, timeEl,
-  withBusy,
+  clearMessage, codeLabel, confirmDialog, field, fmtUSD, initShell, kindBadge, parseList, recordSelect, recordValue,
+  setLoading, showError, showMessage, targetSummary, timeEl, withBusy,
 } from "./ui.js";
 
 // ---- 頁面字串 ---------------------------------------------------------------------------------
@@ -24,10 +24,8 @@ export const T = Object.freeze({
   missing_name: "缺少 route 名稱;請從 Route 清單開啟編輯頁。",
   restore: "還原預設順序",
   dry_run: "Dry-run",
-  save: "儲存",
   dirty: "有未儲存的變更",
   dirty_hint: "離開頁面前會提示。",
-  saved: "已儲存",
   no_changes: "沒有未儲存的變更",
   restored: "已還原預設順序",
   restore_title: "還原預設順序",
@@ -35,16 +33,12 @@ export const T = Object.freeze({
   restore_empty_body: "畫面上已沒有任何卡片,儲存等同還原預設順序:刪除這條 route 的手動順序。",
   restore_confirm: "還原預設",
   target: "目標",
-  group: "群組",
   mode: "模式",
   route_tags: "Route tag",
   route_tags_hint: "以逗號或空白分隔",
   precheck: "預估額度檢查",
   precheck_hint: "勾選:P90 預估超過剩餘即事先跳過。不勾選:用完才跳過,下次可用時自動恢復。",
   record: "記錄 context",
-  record_inherit: "依全域預設",
-  record_on: "開",
-  record_off: "關",
   source: "順序來源",
   manual: "手動",
   default: "預設",
@@ -70,8 +64,6 @@ export const T = Object.freeze({
   weight: "權重",
   move_to: "移到…",
   move_new: "新 slot",
-  disabled: "停用",
-  cooling: "冷卻至",
   unsorted: "未排序",
   remaining: "剩餘",
   dry_h: "Dry-run 結果",
@@ -92,22 +84,6 @@ export const T = Object.freeze({
 });
 
 const WEIGHTS = Object.freeze([["high", "高", 3], ["medium", "中", 2], ["low", "低", 1]]);
-
-// 排除原因(routing EXCLUDE_REASONS)→ 繁中;原值放在 title
-const EXCLUDE_REASON = Object.freeze({
-  disabled: "停用",
-  mode_chat_excludes_cli: "chat route 不使用 CLI 成員",
-  ctx_exceeded: "超過 context 上限",
-  tools_unsupported: "不支援 tools",
-  vision_unsupported: "不支援圖片",
-  adapter_unavailable: "模組不可用",
-  cooling: "冷卻中",
-  concurrency_full: "同時執行數已滿",
-  quota_exhausted: "額度用完",
-  unhealthy: "健康檢查失敗",
-  skipped_precheck: "預估超過剩餘額度",
-  shutting_down: "停機中",
-});
 
 // ---- 純函式:拖曳與鍵盤操作的狀態轉換 ---------------------------------------------------------
 
@@ -179,14 +155,6 @@ export function orderKey(slots) {
 // PUT …/order 的 body
 export function orderBody(slots) {
   return { slots: slots.map((s) => s.entries.map((e) => ({ deployment: e.deployment, effort: e.effort ?? null, weight: e.weight }))) };
-}
-
-export function parseTags(text) {
-  const out = [];
-  for (const t of String(text || "").split(/[,\s]+/)) {
-    if (t && !out.includes(t)) out.push(t);
-  }
-  return out;
 }
 
 function settingsKey(s) {
@@ -261,19 +229,9 @@ function renderDirty() {
 
 function targetText(target) {
   if (target && typeof target.group === "string") {
-    return [T.group + " ", h("a", { href: "/ui/groups.html", class: "mono" }, target.group)];
+    return [`${TEXT.target_group} `, h("a", { href: "/ui/groups.html", class: "mono" }, target.group)];
   }
-  const sel = (target && target.tags) || {};
-  const parts = [];
-  for (const k of ["all", "any", "none"]) {
-    if (sel[k] && sel[k].length) parts.push(`${k}: ${sel[k].join(", ")}`);
-  }
-  return [h("span", { class: "mono" }, parts.length ? `tags ${parts.join(";")}` : "tags(全部成員)")];
-}
-
-function field(labelText, control, hint) {
-  return h("label", { class: "f" }, h("span", { class: "label" }, labelText), control,
-    hint ? h("span", { class: "hint" }, hint) : null);
+  return [h("span", { class: "mono" }, targetSummary(target))];
 }
 
 function renderSettings() {
@@ -285,32 +243,28 @@ function renderSettings() {
 
   const tags = h("input", { type: "text", id: "route-tags", autocomplete: "off" });
   tags.value = s.tags.join(", ");
-  tags.addEventListener("input", () => { s.tags = parseTags(tags.value); renderDirty(); });
+  tags.addEventListener("input", () => { s.tags = parseList(tags.value); renderDirty(); });
 
   const pre = h("input", { type: "checkbox", id: "route-precheck" });
   pre.checked = s.budget_precheck;
   pre.addEventListener("change", () => { s.budget_precheck = pre.checked; renderDirty(); });
 
-  const rec = h("select", { id: "route-record" },
-    h("option", { value: "inherit" }, T.record_inherit),
-    h("option", { value: "on" }, T.record_on),
-    h("option", { value: "off" }, T.record_off));
-  rec.value = s.record_context === null ? "inherit" : (s.record_context ? "on" : "off");
+  const rec = recordSelect({ id: "route-record" }, s.record_context);
   rec.addEventListener("change", () => {
-    s.record_context = { inherit: null, on: true, off: false }[rec.value];
+    s.record_context = recordValue(rec.value);
     renderDirty();
   });
 
   const manual = state.ordered === "manual";
   return h("section", { class: "card", "aria-label": T.settings },
     h("div", { class: "route-settings" },
-      h("div", { class: "f" }, h("span", { class: "label" }, T.target), h("span", { id: "route-target" }, ...targetText(state.route.target))),
+      h("div", { class: "f" }, h("span", { class: "field-label" }, T.target), h("span", { id: "route-target" }, ...targetText(state.route.target))),
       field(T.mode, mode),
-      field(T.route_tags, tags, T.route_tags_hint),
-      h("div", { class: "f" }, h("span", { class: "label" }, T.budget),
+      field(T.route_tags, tags, { hint: T.route_tags_hint }),
+      h("div", { class: "f" }, h("span", { class: "field-label" }, T.budget),
         h("label", { class: "check" }, pre, T.precheck), h("span", { class: "hint" }, T.precheck_hint)),
       field(T.record, rec),
-      h("div", { class: "f" }, h("span", { class: "label" }, T.source),
+      h("div", { class: "f" }, h("span", { class: "field-label" }, T.source),
         h("span", { id: "order-source", "data-ordered": state.ordered },
           h("strong", {}, manual ? T.manual : T.default)),
         h("span", { class: "hint" }, manual ? T.manual_note : T.default_note))),
@@ -413,9 +367,9 @@ function renderCard(entry, slotIndex) {
   const kind = dep ? dep.kind : (state.dash.get(entry.deployment) || {}).kind;
   const row = state.dash.get(entry.deployment);
   const marks = [];
-  if (dep && dep.enabled === false) marks.push(h("span", { class: "badge b-muted", "data-mark": "disabled" }, T.disabled));
+  if (dep && dep.enabled === false) marks.push(h("span", { class: "badge b-muted", "data-mark": "disabled" }, TEXT.disabled));
   if (row && row.cooling_until) {
-    marks.push(h("span", { class: "badge b-warn", "data-mark": "cooling" }, `${T.cooling} `, timeEl(row.cooling_until)));
+    marks.push(h("span", { class: "badge b-warn", "data-mark": "cooling" }, `${TEXT.cooling_until} `, timeEl(row.cooling_until)));
   }
   // chat route 不使用 CLI 成員:卡片照樣保留並寫入順序(改回 task 時仍有效),只加提示
   if (kind === "cli" && state.settings && state.settings.mode === "chat") {
@@ -591,7 +545,7 @@ async function onSave() {
       await sendJSON("PUT", routePath("/order"), orderBody(state.slots));
     }
     await reload();
-    showMessage(T.saved, "ok");
+    showMessage(TEXT.saved, "ok");
   } catch (err) {
     renderDirty();
     showError(err);
@@ -603,10 +557,6 @@ async function onSave() {
 function dryRunSlotLabel(number) {
   const pos = state.numbers.indexOf(number);
   return pos >= 0 ? `${T.slot} ${pos + 1}` : `${T.slot} ${number ?? ""}`;
-}
-
-function excludedLabel(code) {
-  return h("span", { title: code }, Object.prototype.hasOwnProperty.call(EXCLUDE_REASON, code) ? EXCLUDE_REASON[code] : code);
 }
 
 async function onDryRun() {
@@ -628,7 +578,7 @@ async function onDryRun() {
     if (plan.excluded.length) {
       out.append(h("p", { class: "muted small" }, T.dry_excluded),
         h("ul", { class: "plain", id: "dry-excluded" }, ...plan.excluded.map((x) => h("li", { "data-deployment": x.deployment },
-          h("span", { class: "mono" }, x.deployment), excludedLabel(x.reason)))));
+          h("span", { class: "mono" }, x.deployment), codeLabel(EXCLUDE_REASON, x.reason)))));
     }
   } catch (err) {
     setLoading(out, false);
@@ -642,7 +592,7 @@ function renderActions() {
   const actions = byId("route-actions");
   const restore = h("button", { type: "button", class: "btn", id: "btn-restore" }, T.restore);
   const dry = h("button", { type: "button", class: "btn", id: "btn-dry-run" }, T.dry_run);
-  const save = h("button", { type: "button", class: "btn primary", id: "btn-save" }, T.save);
+  const save = h("button", { type: "button", class: "btn primary", id: "btn-save" }, TEXT.save);
   restore.addEventListener("click", () => withBusy(restore, onRestore));
   dry.addEventListener("click", () => withBusy(dry, onDryRun));
   save.addEventListener("click", () => withBusy(save, onSave));

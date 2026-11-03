@@ -2,4 +2,3 @@
 .groups-layout > #tag-card { grid-column: 1 / -1; }
 .selrow input[type=text] { min-width: 180px; }
 .preview-head { display: flex; align-items: baseline; gap: 10px; }
-.tag-members { display: flex; flex-wrap: wrap; gap: 6px; }

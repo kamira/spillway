@@ -9,7 +9,7 @@
 
 import { getJSON, withQuery } from "./api.js";
 import { byId, clear, h, setText } from "./dom.js";
-import { clearMessage, codeLabel, initShell, setLoading, showError, showMessage } from "./ui.js";
+import { clearMessage, codeLabel, fillGroupSelect, initShell, latest, setLoading, showError, showMessage } from "./ui.js";
 import { label } from "./strings.js";
 
 const TOOLS = Object.freeze([
@@ -25,7 +25,6 @@ const FORMAT = Object.freeze({ command: "命令", json: "JSON", toml: "TOML" });
 const SEVERITY = Object.freeze({ info: "說明", warn: "注意" });
 
 const T = Object.freeze({
-  all_group: "all(全部 route)",
   copy: "複製",
   download: "下載檔案",
   copied: "已複製到剪貼簿",
@@ -38,7 +37,8 @@ const T = Object.freeze({
   downloaded: "已下載",
 });
 
-const state = { group: "all", tool: "claude-code", seq: 0 };
+const state = { group: "all", tool: "claude-code" };
+const configGuard = latest();
 
 // AM-12:檔名去除 / 與 \;去除後為空時用預設名
 function safeFilename(name) {
@@ -85,7 +85,7 @@ async function copyContent(pre, content, hint) {
 function variantCard(v, index) {
   const pre = h("pre", { class: "wrap", tabindex: "0", "data-role": "content",
     "aria-label": v.label }, v.content);
-  const hint = h("p", { class: "mcp-copy-hint", role: "status", "data-role": "copy-hint", hidden: true });
+  const hint = h("p", { class: "note warn", role: "status", "data-role": "copy-hint", hidden: true });
   const copyBtn = h("button", { type: "button", class: "btn primary", "data-role": "copy" }, T.copy);
   copyBtn.addEventListener("click", () => copyContent(pre, v.content, hint));
   const actions = [];
@@ -128,7 +128,7 @@ function renderConfig(cfg) {
   const notes = byId("mcp-notes");
   clear(notes);
   for (const n of cfg.notes || []) {
-    notes.append(h("li", { class: `mcp-note note-${n.severity === "warn" ? "warn" : "info"}`, role: "note",
+    notes.append(h("li", { class: `note ${n.severity === "warn" ? "warn" : "info"}`, role: "note",
       "data-severity": n.severity },
     h("strong", {}, `${label(SEVERITY, n.severity)}:`), n.text));
   }
@@ -183,7 +183,7 @@ function renderTabs() {
 }
 
 async function loadConfig() {
-  const seq = ++state.seq;
+  const isLatest = configGuard();
   const box = byId("mcp-variants");
   setLoading(box, true);
   document.documentElement.removeAttribute("data-mcp-ready");
@@ -192,38 +192,20 @@ async function loadConfig() {
       getJSON(withQuery("/api/mcp/config", { group: state.group, tool: state.tool })),
       getJSON(withQuery("/api/mcp/catalog", { group: state.group })),
     ]);
-    if (seq !== state.seq) return;
-    clearMessage();
+    if (!isLatest()) return;
+    clearMessage("config");
     setLoading(box, false);
     renderConfig(cfg);
     renderCatalog(cat);
     document.documentElement.setAttribute("data-mcp-ready", `${state.group}|${state.tool}`);
   } catch (err) {
-    if (seq !== state.seq) return;
+    if (!isLatest()) return;
     setLoading(box, false);
     // 失敗時清掉上一個組合的內容,避免顯示與選單不符的舊資料
     for (const id of ["mcp-variants", "mcp-env", "mcp-notes", "mcp-endpoint", "mcp-toollist"]) clear(byId(id));
-    showError(err);
+    showError(err, { source: "config" });
     document.documentElement.setAttribute("data-mcp-ready", "error");
   }
-}
-
-async function loadGroups() {
-  const sel = byId("mcp-group");
-  clear(sel);
-  sel.append(h("option", { value: "all" }, T.all_group));
-  let names = [];
-  try {
-    const data = await getJSON("/api/groups");
-    names = (data.groups || []).map((g) => g.name);
-  } catch (err) {
-    showError(err);
-  }
-  for (const n of names) sel.append(h("option", { value: n }, n));
-  if (state.group !== "all" && !names.includes(state.group)) {
-    sel.append(h("option", { value: state.group }, state.group));
-  }
-  sel.value = state.group;
 }
 
 async function main() {
@@ -234,7 +216,7 @@ async function main() {
   const t = params.get("tool");
   if (t && TOOLS.some(([k]) => k === t)) state.tool = t;
   renderTabs();
-  await loadGroups();
+  await fillGroupSelect(byId("mcp-group"), { includeAll: true, current: state.group });
   byId("mcp-group").addEventListener("change", (ev) => {
     state.group = ev.target.value;
     loadConfig();

@@ -2,7 +2,7 @@
 
 只用 Playwright **sync** API 與同步 httpx(`gw.http()`);T9 的 behave 步驟可直接匯入。
 
-- `seed_group(gw, name, any_tags=None)`:經 `/api/groups` 建立群組。
+- 群組以 `tests.helpers.ui.seed_group` 建立。
 - `mcp_config(gw, group, tool)`、`mcp_catalog(gw, group="all")`:同步讀取伺服端的期望值。
 - `open_mcp(page, gw, group="all", tool="claude-code")`:開啟 UI-5 並等到該組合載入完成。
 - `select_mcp(page, *, group=None, tool=None)`:切換群組或工具分頁並等待載入完成。
@@ -20,10 +20,10 @@ from urllib.parse import quote
 
 from playwright.sync_api import Page
 
-from tests.helpers.ui import api, goto
+from tests.helpers.ui import goto
 
 __all__ = ["BLOB_SPY", "DENY_CLIPBOARD", "TOOLS", "mcp_catalog", "mcp_config", "mcp_variants", "open_mcp",
-           "open_reference", "seed_group", "select_mcp"]
+           "open_reference", "select_mcp"]
 
 TOOLS = ("claude-code", "codex", "cursor", "gemini", "stdio")
 
@@ -51,10 +51,6 @@ DENY_CLIPBOARD = """
   Object.defineProperty(Navigator.prototype, "clipboard", { configurable: true, get: () => denied });
 })();
 """
-
-
-def seed_group(gw: Any, name: str, any_tags: list[str] | None = None) -> None:
-    api(gw, "POST", "/api/groups", {"name": name, "selector": {"any": any_tags or [name]}}, expect=(201,))
 
 
 def mcp_config(gw: Any, group: str, tool: str) -> dict[str, Any]:

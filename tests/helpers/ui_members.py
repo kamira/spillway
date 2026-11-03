@@ -2,8 +2,10 @@
 
 只用 Playwright **sync** API 與同步 `gw.http()`(經 `tests.helpers.ui.api`),不在主 thread 使用 asyncio。
 
-- `member_body(dep_id, **kw)`:`POST /api/deployments` 的 body(預設 openai api 成員,憑證 `env:SPILLWAY_TEST_KEY`)。
-- `seed_member(gw, dep_id, **kw) -> dict`、`seed_group(gw, name, selector)`、`seed_route(gw, name, target)`。
+- `member_body(dep_id, **kw)`:本畫面的預設成員(openai `gpt-5.5`、上游 `127.0.0.1:9`、tag `chat`、`budget: null`),
+  以 `tests.helpers.ui.member_body` 組出。
+- `seed_member(gw, dep_id, **kw) -> dict`、`seed_route(gw, name, target, mode="chat")`(經 `ui.add_route`);
+  群組用 `tests.helpers.ui.seed_group`。
 - `broken_adapter_dir(root) -> Path`:在 `root` 寫出無法 import 的模組 `broken`(provider `broken-p`;
   同 `tests/integration/admin/test_admin_adapters.py` 的 `pre_import="import not_a_real_pkg_xyz\\n"`)。
 - `MemberForm(page)`:成員表單的定位器與常用操作(類型、供應商、模型、欄位、送出)。
@@ -19,22 +21,25 @@ from playwright.sync_api import Locator, Page, expect
 
 from tests.contract.fakemods import write_module
 from tests.helpers import TEST_KEY_ENV
+from tests.helpers import ui
 from tests.helpers.ui import api, goto
 
 __all__ = ["MemberForm", "broken_adapter_dir", "member_body", "open_groups", "open_members", "requests_of",
-           "seed_group", "seed_member", "seed_route"]
+           "seed_member", "seed_route"]
 
 BROKEN_PROVIDER = "broken-p"
 
 
 def member_body(dep_id: str, **kw: Any) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "id": dep_id, "model_name": dep_id, "kind": "api", "provider": "openai", "model": "gpt-5.5",
+    fields: dict[str, Any] = {
+        "kind": "api", "provider": "openai", "model": "gpt-5.5",
         "params": {"api_base": "http://127.0.0.1:9/v1"}, "credential_ref": f"env:{TEST_KEY_ENV}",
         "capabilities": {"ctx": 1000, "tools": True, "vision": False, "efforts": []},
         "enabled": True, "tags": ["chat"], "budget": None,
     }
-    body.update(kw)
+    fields.update(kw)
+    body = ui.member_body(dep_id, **fields)
+    body.setdefault("budget", None)      # 明確送出 budget: null
     return body
 
 
@@ -42,12 +47,8 @@ def seed_member(gw: Any, dep_id: str, **kw: Any) -> dict[str, Any]:
     return api(gw, "POST", "/api/deployments", member_body(dep_id, **kw), expect=(201,)).json()
 
 
-def seed_group(gw: Any, name: str, selector: dict[str, list[str]]) -> dict[str, Any]:
-    return api(gw, "POST", "/api/groups", {"name": name, "selector": selector}, expect=(201,)).json()
-
-
 def seed_route(gw: Any, name: str, target: dict[str, Any], mode: str = "chat") -> dict[str, Any]:
-    return api(gw, "POST", "/api/routes", {"name": name, "target": target, "mode": mode}, expect=(201,)).json()
+    return ui.add_route(gw, name, target=target, mode=mode)
 
 
 def broken_adapter_dir(root: Path) -> Path:

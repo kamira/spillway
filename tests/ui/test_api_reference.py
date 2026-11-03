@@ -8,18 +8,14 @@ hash 直接開啟對應項目;切換群組後內容等於該群組的 catalog;�
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from urllib.parse import quote
 
 import pytest
 from playwright.sync_api import Page, expect
 
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import guard_of
-from tests.helpers.ui_mcp import mcp_catalog, open_reference, seed_group
-
-NewPage = Callable[..., Page]
-MakeGw = Callable[..., LiveGateway]
+from tests.helpers.ui import MakeGw, NewPage, guard_of, seed_group
+from tests.helpers.ui_mcp import mcp_catalog, open_reference
 
 
 @pytest.fixture
