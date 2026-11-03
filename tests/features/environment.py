@@ -59,6 +59,47 @@ def after_all(context):
         shutil.rmtree(root, ignore_errors=True)
 
 
+# CHG-20261103-01 T9(決策 22,AM-5):Playwright(sync API)只在 m4b_ui feature 啟動與停止。sync API 會把主
+# thread 標成「有執行中的事件迴圈」,所以只在這個 feature 期間存在;步驟不可使用 context.gw(asyncio.Runner)。
+M4B_UI_FEATURE = "m4b_ui.feature"
+
+
+def _is_m4b_ui(feature) -> bool:
+    return Path(str(feature.filename)).name == M4B_UI_FEATURE or "m4b_ui" in feature.tags
+
+
+def before_feature(context, feature):
+    if not _is_m4b_ui(feature):
+        return
+    from playwright.sync_api import sync_playwright
+
+    context.playwright = sync_playwright().start()
+    try:
+        context.browser = context.playwright.chromium.launch(headless=True)
+    except BaseException:
+        context.playwright.stop()
+        context.playwright = None
+        raise
+
+
+def after_feature(context, feature):
+    if not _is_m4b_ui(feature):
+        return
+    import asyncio
+
+    browser = getattr(context, "browser", None)
+    pw = getattr(context, "playwright", None)
+    try:
+        if browser is not None:
+            browser.close()
+    finally:
+        context.browser = None
+        if pw is not None:
+            pw.stop()
+        context.playwright = None
+    assert asyncio._get_running_loop() is None, "Playwright 的事件迴圈標記外洩到主 thread"
+
+
 def before_scenario(context, scenario):
     tmp_root = Path(tempfile.gettempdir()).resolve()
     context.tmp = Path(tempfile.mkdtemp(prefix="spillway-behave-")).resolve()
