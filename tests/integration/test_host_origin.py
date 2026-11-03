@@ -245,6 +245,8 @@ KNOWN_GETS: dict[str, dict[str, str]] = {
     "/api/dashboard": {},
     "/api/adapters": {},
     "/api/mcp/config": {},
+    "/api/routes/{name}/effective-order": {"name": "rt"},         # CHG-20261103-01 T2
+    "/api/mcp/catalog": {},                                        # CHG-20261103-01 T2
     "/": {},                                                       # CHG-20261103-01 T3
 }
 KNOWN_MOUNTS: dict[str, str] = {"/mcp": "/mcp/all", "/ui": "/ui/"}   # mount 路徑 → 以 GET 呼叫的 URL(/ui:CHG-20261103-01 T3)
