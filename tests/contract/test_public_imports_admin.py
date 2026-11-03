@@ -16,7 +16,7 @@ import pytest
 
 SUBMODULES = (
     "common", "models", "secrets", "deployments", "groups", "routes", "planning",
-    "ledger", "settings", "dashboard", "adapters", "config_io", "config_file",
+    "ledger", "settings", "dashboard", "adapters", "config_http", "config_file",
 )
 MAX_LINES = 400
 LOGGER_NAME = "spillway.api.admin"

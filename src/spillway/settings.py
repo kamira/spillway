@@ -27,6 +27,7 @@ import spillway
 from spillway.store import repo
 from spillway.store.db import transaction
 
+
 def package_version() -> str:
     """版本字串的單一定義(CHG-20261103-01 決策 21 ③):已安裝套件的版本;取不到(未安裝的原始碼樹)時用
     `spillway.__version__`。`GET /api/settings` 與 MCP `serverInfo.version` 都用它。"""
