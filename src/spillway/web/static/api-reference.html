@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>API 參考 · Spillway</title>
 <link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/api-reference.css">
 <script type="module" src="assets/js/api-reference.js"></script>
 </head>
 <body>
@@ -25,7 +26,16 @@
 <div class="head">
 <div>
 <h1>API 參考</h1>
+<p class="sub">MCP 介面的連線方式、工具、通知與錯誤碼;內容由執行中的 spillway 產生。</p>
 </div>
+<div class="row">
+<label for="ref-group" class="muted ref-label">群組</label>
+<select id="ref-group"></select>
+</div>
+</div>
+<div class="split ref-layout">
+<aside class="card ref-index" aria-label="API 參考索引" id="ref-index"></aside>
+<section class="card ref-detail" aria-live="polite" id="ref-detail"></section>
 </div>
 </main>
 </div>
