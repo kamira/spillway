@@ -40,6 +40,7 @@ import pytest
 
 from tests.acceptance import procs
 from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install
+from tests.helpers import redact_tokens
 from tests.features.support.mcp_proc import (
     INIT_BODY,
     MCP_ACCEPT,
@@ -51,7 +52,6 @@ from tests.features.support.mcp_proc import (
     mcp_http_session,
     pid_alive,
     raw_get_stream,
-    redact,
     stdio_session,
 )
 
@@ -186,7 +186,7 @@ class Op:
         self.token = r.stdout.strip()
         if self.token:
             self.register(self.token)
-        assert r.returncode == 0, redact(r.stderr, TOKENS)
+        assert r.returncode == 0, redact_tokens(r.stderr, TOKENS)
         one_line = bool(self.token) and len(r.stdout.splitlines()) == 1
         assert one_line, "init 的 stdout 應只有一行 token"
         in_stderr = self.token in r.stderr
@@ -230,7 +230,7 @@ class Op:
     # -- HTTP
     def ok(self, r: httpx.Response, status: int = 200) -> Any:
         assert r.status_code == status, \
-            f"{r.request.method} {r.request.url.path} → {r.status_code} {redact(r.text, TOKENS)}"
+            f"{r.request.method} {r.request.url.path} → {r.status_code} {redact_tokens(r.text, TOKENS)}"
         return r.json() if r.content else None
 
     def seed(self) -> None:
@@ -378,8 +378,8 @@ async def test_m3b_operation_auth_and_tools(op: Op):
             _parse(v)                                                   # 每個 variant 依其 format 可解析
         cfgs[tool] = {"variants": [f"{v['scope']}:{v['format']}" for v in cfg["variants"]],
                       "env": cfg["env"], "token_free": all(t not in text for t in op.tokens),
-                      "url_port_ok": tool == "stdio" or f"{op.serve.url}/mcp/{GROUP}" in cfg["content"]}
-        assert cfg["env"] == ["SPILLWAY_TOKEN"] and "SPILLWAY_TOKEN" in cfg["content"], cfg
+                      "url_port_ok": tool == "stdio" or f"{op.serve.url}/mcp/{GROUP}" in cfg["variants"][0]["content"]}
+        assert cfg["env"] == ["SPILLWAY_TOKEN"] and "SPILLWAY_TOKEN" in cfg["variants"][0]["content"], cfg
         assert cfgs[tool]["token_free"] and cfgs[tool]["url_port_ok"], (tool, cfgs[tool])
     obs["mcp_config"] = cfgs
 
@@ -458,7 +458,7 @@ async def test_m3b_operation_stdio(op: Op):
     bridge_home = op.tmp / "bridge-home"
     ok = await stdio_session(group=GROUP, port=op.serve.port, token=op.token, bridge_home=bridge_home,
                              fake_bin=op.fake.bin_dir, call=("ask", {"route": "review", "prompt": PROMPT}))
-    assert ok.error is None and ok.init is not None, (ok.error, ok.returncode, redact(ok.stderr, TOKENS))
+    assert ok.error is None and ok.init is not None, (ok.error, ok.returncode, redact_tokens(ok.stderr, TOKENS))
     assert ok.call is not None and ok.call.isError is False, ok.call
     denied = await stdio_session(group=GROUP, port=op.serve.port, token=op.token, depth="1",
                                  bridge_home=bridge_home, fake_bin=op.fake.bin_dir)

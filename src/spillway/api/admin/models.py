@@ -5,6 +5,7 @@ CHG-20261101-02 決策 1、4、9)。
 """
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal
 
@@ -23,9 +24,33 @@ from spillway import credentials
 from spillway.adapters.base import SignalsError, validate_signals
 from spillway.api import redact_echo, validation_message
 from spillway.domain import Budget, Deployment
+from spillway.settings import MCP_ALL_GROUP
 from spillway.store import repo
 
 from .secrets import _secret_message, _secret_paths
+
+
+_BAD_NAME_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp", "Zs"})
+
+
+def group_name_problem(name: str) -> str | None:
+    """群組名稱規則(CHG-20261102-02 決策 11):合法 → `None`,否則回傳原因。
+
+    不可為 `.`、`..`、`all`(保留給 `/mcp/all`);不可含 Unicode 類別 Cc、Cf、Cs、Co、Cn、Zl、Zp、Zs
+    的字元或 `/`;長度 1–200;必須已是 NFC(不默默正規化)。只用於建立與匯入,不作用於路徑參數。"""
+    if not 1 <= len(name) <= 200:
+        return "長度必須為 1–200 個字元"
+    if name in (".", ".."):
+        return "不可為 . 或 .."
+    if name == MCP_ALL_GROUP:
+        return f"{MCP_ALL_GROUP} 為保留的群組名稱(/mcp/all)"
+    if "/" in name:
+        return "不可含 /"
+    if any(unicodedata.category(ch) in _BAD_NAME_CATEGORIES for ch in name):
+        return "不可含空白、控制、格式、代理、私用或未指派字元"
+    if not unicodedata.is_normalized("NFC", name):
+        return "必須是 Unicode NFC 正規化形式"
+    return None
 
 
 EffortLit = Literal["none", "low", "medium", "high", "max"]

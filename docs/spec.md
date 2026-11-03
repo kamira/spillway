@@ -10,6 +10,8 @@
 
 修訂：2026-11-02 CHG-20261102-01（8.1 MCP server：群組端點與 session 綁定、群組名 `all` 保留、檢查順序、401 `unauthorized`、遞迴防護 403、工具輸出與錯誤結果、`list_changed` 送達範圍、`mcp-stdio` 結束碼；8.2 設定輸出一律以 `SPILLWAY_TOKEN` 參照 token、回應 `variants`／`notes`、模板與 `TOOL_FORMATS`、8.2.4 改為實作的實際輸出；新增 9.1.4 Host／Origin；9.2 `/api/mcp/config` 參數、`/mcp/<group>`、新增 9.2.5 群組名 `all` 保留；第 10 節 8 個畫面、UI-5 刪除「內嵌 token 切換」、新增 UI-8；AC-9、AC-11 改寫；新增 12.3 AC-22）
 
+修訂：2026-11-02 CHG-20261102-02（3.1 設定檔規則：`merge`／`replace` 語意改為新增或整筆取代並刪除檔案外實體、`targets` 形狀、逐欄匯出規則、匯入請求邊界、嚴格解析、驗證與欄位路徑、套用順序、自動備份、設定檔為可信輸入與 `privileged`、`dry_run`、回應；3.2 範例 `limit` → `limit_amount` 並補欄位；8.1.2 `mcp-stdio` 依 body 且錯誤碼與狀態碼成對判斷拒絕、token 去除前後空白；8.1.3 token 去除前後空白；8.2.1 移除頂層 `format`、`path`、`content`；9.1.4 重複 `Host` 改寫為 400／403 兩路徑；9.2 新增 `/api/ledger/export.csv`、`GET /api/settings`，`/api/config/import` 註明 `mode` 必填與 `dry_run`；9.2.5 群組名稱規則；新增 9.2.6 帳本 CSV、9.2.7 設定總覽；第 10 節 UI-8 名稱「API 參考」）
+
 ## 1 範圍與名詞定義
 
 本規格定義單人使用的 LLM 路由閘道之資料模型、路由規則、介面與驗收標準；目的、選型與風險見企劃書。
@@ -195,28 +197,62 @@ CREATE TABLE settings (
 
 3.1.2 匯入必須在單一交易內完成；任一欄位驗證失敗時整批不寫入，並回傳錯誤欄位路徑。
 
-3.1.3 匯入模式必須二擇一：`merge`（以 id 或 name 為鍵更新）、`replace`（先清空設定表再寫入，帳本保留）。
+3.1.3 匯入模式必須二擇一：`merge`（以成員 `id`、群組與 route 的名稱為鍵新增或整筆取代；檔案外的實體不動）、`replace`（檔案內的實體同樣新增或整筆取代，並刪除檔案外的成員、群組、route；帳本保留）。兩種模式皆不先清空設定表（3.1.10）。
 
-3.1.4 `targets` 的外層清單順序即 slot 順序；內層清單順序即 `position`。
+3.1.4 `targets` 為 list（slot）of list（position），每項 `{deployment, effort?, weight?}`，格式同 9.3 的 `slots` 項目；外層清單順序即 slot 順序，內層清單順序即 `position`；slot 不可為空清單；同一 route 的 `targets` 不可重複同一成員；`deployment` 必須是檔案中（merge 時另含資料庫中）存在的成員，不要求屬於 route 目標（不屬於目標者由路由略過，4.3）。
 
-3.1.5 未列 `targets` 的 route，系統依 4.3 的預設順序產生 slot。
+3.1.5 未列 `targets` 的 route，系統依 4.3 的預設順序產生 slot（匯入時清除該 route 既有的手動排序）。
+
+3.1.6 匯出規則（逐欄；匯出 → 空資料庫以 `replace` 匯入 → 再匯出，兩檔必須逐位元組相同）：
+
+| 層級 | 排序與欄位順序 | 省略條件 | 備註 |
+| --- | --- | --- | --- |
+| 頂層 | `version`、`settings`、`deployments`、`groups`、`routes` | 一律輸出；空值寫 `{}`／`[]` | `version` 為 `1` |
+| `settings` | `record_context_default`、`context_retention_days`、`context_max_bytes` | 等於初始值（2.4）的鍵 | 只含這三個鍵；`record_context_default` 為 bool，其餘為整數 |
+| `deployments` | 依 `id` 排序；`id`、`model_name`、`kind`、`provider`、`model`、`params`、`credential_ref`、`capabilities`、`enabled`、`tags`、`budget` | `params == {}`、`credential_ref` 為 null、`capabilities == {}`、`enabled` 為 true、`tags == []`、沒有額度設定 | `params`、`capabilities` 照資料庫原樣輸出（不遞迴省略）；`tags` 依存放排序 |
+| `budget` | `type`、`limit_amount`、`window`、`reset_anchor` | `limit_amount`、`reset_anchor` 為 null | `type: none`、`window: none` 不省略 |
+| `groups` | 依名稱排序；值為 `{all, any, none}` | 空清單 | — |
+| `routes` | 依名稱排序；`target`、`mode`、`tags`、`record_context`、`budget_precheck`、`targets` | `mode == chat`、`tags == []`、`record_context` 為 null、`budget_precheck` 為 false、沒有手動排序 | `record_context: false` 不省略；`target` 為 `{group: <名稱>}` 或 `{tags: {all, any, none}}`（全空時為 `{tags: {}}`，不省略）；`tags` 保留原順序與重複值 |
+| `targets` 項目 | `deployment`、`effort`、`weight` | `effort` 為 null、`weight == medium` | `effort: none` 不省略；slot 依資料庫的 slot 遞增輸出，中間的空號重新編號 |
+
+匯出檔不含：存取 token 雜湊、冷卻（`cooldowns`）、帳本（`usage_ledger`）、`usage_payloads`（2.4.7）、埠號與其他 `settings` 鍵。YAML 輸出不使用 anchor／alias，行尾為 `\n`，文字為 UTF-8（非 ASCII 字元不跳脫）；含 U+0085、U+2028、U+2029 的字串以雙引號輸出。`GET /api/config/export` 回應 `Content-Type: application/yaml; charset=utf-8`、`Content-Disposition: attachment; filename="spillway-config-<UTC yyyymmddThhmmssZ>.yaml"`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`。既有成員的 `params` 或 `capabilities` 含疑似憑證的鍵名或值（現行寫入規則之前寫入的舊列）時，匯出必須回傳 HTTP 422，錯誤碼 `validation_error`，訊息只列位置（例 `deployments[<id>].params.<路徑>`），不含值。
+
+3.1.7 匯入請求：`POST /api/config/import?mode=merge|replace[&dry_run=true]`。`mode` 必填，缺少或不是 `merge`、`replace` 時回傳 HTTP 422。`Content-Type` 必須為 `application/yaml`、`application/x-yaml` 或 `text/yaml`（參數只可為 `charset=utf-8`），其他或未帶時回傳 422；body 上限 1 MiB（1,048,576 bytes），`Content-Length` 超過時不讀取即回傳 422，未帶 `Content-Length`（chunked）時累計超過上限立即回傳 422；body 以 UTF-8 解碼（可帶 BOM），失敗時回傳 422。以上錯誤碼皆為 `validation_error`；Host／Origin 依 9.1.4。
+
+3.1.8 解析規則（嚴格）：不支援 anchor／alias 與任何明確 tag（含 `!!binary`、`!!set`）；巢狀深度上限 32 層；同一 mapping 不可有重複鍵；鍵必須是字串；日期與時間值視為字串；bool 只認 `true`、`false`（不分大小寫），`on`、`yes` 等為字串；頂層必須是 mapping 且 `version` 為 `1`；檔案格式未定義的鍵一律拒絕（`params` 與 `capabilities` 的內容除外，兩者照管理 API 的規則保存）。違反時回傳 HTTP 422，錯誤碼 `validation_error`；YAML 語法錯誤的訊息只含行、列與問題描述，不可回顯輸入內容。
+
+3.1.9 驗證：檔案中的成員、群組、route 與 `settings` 必須通過與管理 API 相同的規則（9.2：`credential_ref` 格式、`params` 不可含憑證鍵名或值、`params.signals`、群組名稱 9.2.5、route 名稱、`targets` 不可重複成員；另檢查重複的成員 `id`）。解析與欄位驗證階段一次回傳全部錯誤（上限 20 筆，以「; 」串接），寫入後的檢查（3.1.10）回傳第一筆；訊息不回顯輸入值。欄位路徑：list 索引為 0 起算的 `[i]`；鍵符合 `^[A-Za-z0-9_-]+$` 時寫 `.鍵`，否則寫 `["…"]`（JSON 字串跳脫）；例 `deployments[1].kind`、`routes["a.b"].targets[0][1].deployment`。
+
+3.1.10 套用：系統必須在單一寫入交易內依序 ① 檢查 `targets` 參照的成員存在（3.1.4）；② `replace` 時寫入自動備份（3.1.11）；③ 新增或整筆取代檔案中的成員（含 tag、額度）、群組、route，每條檔案中的 route 都以檔案的 `targets` 取代其手動排序（未列時清除，3.1.5）；`settings` 只覆寫檔案中出現的鍵；④ 只限 `replace`：刪除檔案外的 route、群組、成員（連同其 tag、額度、冷卻與排序），並將檔案中沒有的 `settings` 鍵（3.1.6 的三個鍵）回到初始值；⑤ 對最終狀態檢查：route 的 `target.group` 必須存在（否則 422，路徑 `routes.<名稱>.target.group`），`single` 模組的 provider 至多 1 個成員（否則 409 `provider_single`，2.1.4、9.2.3）。任一步失敗時整批回滾。帳本、`usage_payloads`、存取 token 雜湊與其他 `settings` 鍵不受影響；仍存在的成員保留冷卻狀態，被刪除成員的冷卻一併刪除。成功後（`dry_run` 除外），系統必須讓受影響成員的健康快取失效，並發送 `notifications/tools/list_changed`（8.1.5）。
+
+3.1.11 自動備份：`replace`（非 `dry_run`）在同一交易的寫鎖內、刪除之前，將匯入前的設定以 3.1.6 的格式寫入資料目錄下的 `backups/config-<UTC yyyymmddThhmmssZ>.yaml`（同名已存在時加 `-2`、`-3`…，不覆寫）；目錄新建時權限 0700、檔案 0600；`backups` 為 symlink 或不是目錄時回傳 HTTP 500，錯誤碼 `internal_error`，不匯入。備份不會自動清理。`replace` 在刪除任何資料前，須先在同一寫鎖內檢查匯入前的設定能通過 3.1.6 的憑證鍵名掃描與 3.1.9 的解析；不能通過時回傳 HTTP 422，錯誤碼 `validation_error`，列出位置（不含值），不刪除、不寫備份；`dry_run=true` 回傳同一個 422。因此 `replace` 寫下的備份一定可以通過匯入，以 `replace` 匯入備份檔即可還原設定。要繼續時，先以管理 API 修正所列資料列再重試。
+
+3.1.12 設定檔是可信輸入：匯入等同以擁有者權限執行的設定（可改變憑證參照、上游位址與 CLI 參數），只可匯入可信來源。回應的 `privileged` 列出匯入後相對匯入前新增或變更了下列欄位的成員 `id`（依 `id` 排序；只含 id，不含值；被刪除的成員不列）：`credential_ref`；`params` 頂層的 URL 類鍵（`api_base`、`base_url`、`url`、`endpoint`，或以 `_url`、`_base`、`_endpoint` 結尾）；`kind: cli` 成員的 `params.extra_args`、`params.effort_args`、`params.cwd`。`params.timeout` 等其他鍵不列入。`dry_run=true` 時系統同樣解析、驗證、套用並檢查，之後回滾：不寫入、不寫備份、不讓健康快取失效、不發送 `list_changed`；回應同樣的計數與 `privileged`，`backup` 為 null；驗證失敗時回傳與非 `dry_run` 相同的錯誤。伺服端不強制確認 privileged 變更。
+
+3.1.13 匯入成功回應：`{"mode", "dry_run", "created", "updated", "deleted", "backup", "privileged"}`；`created`、`updated`、`deleted` 各為 `{"deployments", "groups", "routes"}` 計數（`updated` 為檔案中且匯入前已存在的實體數，不論內容是否改變；`merge` 的 `deleted` 皆為 0）；`backup` 為 `backups/` 下的檔名，`merge` 與 `dry_run` 為 null。
+
+3.1.14 已知限制：① 備份不自動清理，不驗證 `credential_ref` 指向的變數或 keyring 項目是否存在；② 3.1.10 ⑤ 的最終狀態檢查涵蓋整個資料庫，既有資料已違反規則（route 指向不存在的群組、`single` 群組有兩個同 provider 成員）時，每一次 `merge` 匯入都被擋下；③ 改變成員的 `provider` 不列入 `privileged`。
 
 ### 3.2 範例
+
+範例是合法的匯入檔；匯出時省略預設值（例如 `record_context_default: true`、`context_retention_days: 7`、`enabled: true`）。範例鍵順序不代表匯出順序；匯出的鍵順序與排序依 3.1.6 的匯出規則。
 
 ```yaml
 version: 1
 settings:
   record_context_default: true    # 預設開啟
   context_retention_days: 7       # 預設 7 天
+  context_max_bytes: 262144       # 預設 262144（256 KiB）
 deployments:
   - id: claude-sub
     model_name: sonnet
     kind: cli
     provider: claude-cli
     model: claude-sonnet-5-5
+    params: {extra_args: [--verbose]}
     tags: [coding, review]
     capabilities: {ctx: 200000, tools: true, efforts: [low, medium, high, max]}
-    budget: {type: credit_pool, limit: 100, window: monthly, reset_anchor: 1}
+    budget: {type: credit_pool, limit_amount: 100, window: monthly, reset_anchor: 1}
   - id: anthropic-api
     model_name: sonnet
     kind: api
@@ -224,15 +260,16 @@ deployments:
     model: claude-sonnet-5-5
     credential_ref: env:ANTHROPIC_API_KEY
     tags: [coding, review]
-    budget: {type: usd, limit: 30, window: monthly}
+    budget: {type: usd, limit_amount: 30, window: monthly}
   - id: deepseek-api
     model_name: deepseek
     kind: api
     provider: deepseek
     model: deepseek-chat
     credential_ref: keyring:spillway:deepseek
+    enabled: false                  # 省略 = true
     tags: [coding, cheap]
-    budget: {type: usd, limit: 10, window: monthly}
+    budget: {type: usd, limit_amount: 10, window: monthly}
   - id: qwen-local
     model_name: qwen-coder
     kind: local
@@ -532,19 +569,19 @@ LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1�
 
 8.1.1 傳輸：Streamable HTTP（有 session），端點 `http://127.0.0.1:<port>/mcp/<group>`；`/mcp/all` 暴露全部 route。`<group>` 不是既有群組且不是 `all` 時，開新 session 的請求（不帶 `Mcp-Session-Id`）必須回傳 HTTP 404，錯誤碼 `not_found`。群組名 `all` 為保留字（9.2.5）。
 
-8.1.2 不支援 HTTP 的工具必須使用 stdio 橋接命令 `spillway mcp-stdio --group <group> [--port 8787]`，橋接將請求轉發至 `http://127.0.0.1:<port>/mcp/<group>`（主機固定，不提供 `--host`）；token 取自環境變數 `SPILLWAY_TOKEN`。橋接不開啟資料庫、不經系統代理。結束碼：
+8.1.2 不支援 HTTP 的工具必須使用 stdio 橋接命令 `spillway mcp-stdio --group <group> [--port 8787]`，橋接將請求轉發至 `http://127.0.0.1:<port>/mcp/<group>`（主機固定，不提供 `--host`）；token 取自環境變數 `SPILLWAY_TOKEN`，先去除前後空白（含結尾換行）。橋接不開啟資料庫、不經系統代理。結束碼：
 
 | 結束碼 | 情況 |
 | --- | --- |
 | 0 | stdin 結束，且進行中的請求皆已回應 |
-| 1 | 閘道未啟動、其他 HTTP 狀態或傳輸錯誤、閘道連線意外結束、stdin 結束後 5 秒內未收到回應 |
-| 2 | `SPILLWAY_TOKEN` 未設定、空白或含 CR/LF，或 `SPILLWAY_DEPTH` 含 CR/LF；不連線 |
-| 3 | 被閘道拒絕（HTTP 401、403、404、503） |
+| 1 | 閘道未啟動；不是閘道拒絕的 HTTP 錯誤（含 MCP SDK 傳輸層的 503「Too many open sessions」、404「Session not found」、body 不是 9.1.2 格式或錯誤碼與狀態碼不成對）；GET 通知串流被拒（例如停機時重連）；其他傳輸錯誤、閘道連線意外結束、stdin 結束後 5 秒內未收到回應 |
+| 2 | `SPILLWAY_TOKEN` 未設定、去除前後空白後為空或含 CR/LF，或 `SPILLWAY_DEPTH` 含 CR/LF；不連線 |
+| 3 | 被閘道拒絕：POST 的回應為下方成對的狀態碼與 9.1.2 錯誤碼 |
 | 130 | Ctrl-C（SIGINT） |
 
-被閘道拒絕時，橋接必須對每個尚未回應的 request 寫出 JSON-RPC 錯誤 `{"code": -32000, "message": "<錯誤碼>: rejected by gateway (HTTP <狀態碼>)", "data": {"code": "<錯誤碼>", "http_status": <狀態碼>}}`；錯誤碼依狀態碼為 401 `unauthorized`、403 `recursion_blocked`、404 `not_found`、503 `shutting_down`。結束碼 1 的錯誤不帶 `data.code`。
+橋接只檢查 POST 且狀態碼 ≥ 400 的回應（2xx 不讀 body；3xx 交給 MCP SDK 的同源轉址；GET 與 DELETE 由 SDK 處理）。狀態碼為 401、403、404、503 時讀取 body（上限 64 KiB，`Content-Type` 必須為 `application/json`）；body 為 9.1.2 格式（`error.code` 為字串）且錯誤碼與狀態碼成對——401 `unauthorized`；403 `recursion_blocked`、`host_not_allowed` 或 `origin_not_allowed`；404 `not_found`；503 `shutting_down`——才視為被閘道拒絕：橋接必須對每個尚未回應的 request 寫出 JSON-RPC 錯誤 `{"code": -32000, "message": "<錯誤碼>: rejected by gateway (HTTP <狀態碼>)", "data": {"code": "<錯誤碼>", "http_status": <狀態碼>}}`，結束碼 3。其他 HTTP 錯誤寫出 `{"code": -32000, "message": "gateway error (HTTP <狀態碼>)", "data": {"http_status": <狀態碼>}}`（不帶 `data.code`），結束碼 1；閘道未啟動與其他傳輸錯誤的 JSON-RPC 錯誤不帶 `data`。橋接不轉印對方回應的 `message`。
 
-8.1.3 驗證：請求必須帶 `Authorization: Bearer <token>`；token 於首次設定時產生，`settings` 只存其 SHA-256 雜湊。適用於 `/mcp/*` 的 POST、GET、DELETE；scheme 比對不分大小寫；token 雜湊每次請求讀取，rotate 立即生效（舊 token 下一次請求即被拒）。缺少 header、格式錯誤、雜湊不符或尚未產生 token 時回傳 HTTP 401，錯誤碼 `unauthorized`，並帶 `WWW-Authenticate: Bearer`（不帶 `resource_metadata`）。
+8.1.3 驗證：請求必須帶 `Authorization: Bearer <token>`；token 於首次設定時產生，`settings` 只存其 SHA-256 雜湊。適用於 `/mcp/*` 的 POST、GET、DELETE；scheme 比對不分大小寫；token 雜湊每次請求讀取，rotate 立即生效（舊 token 下一次請求即被拒）。比對前先去除 header 值與 token 的前後空白（含結尾換行）。缺少 header、格式錯誤、雜湊不符或尚未產生 token 時回傳 HTTP 401，錯誤碼 `unauthorized`，並帶 `WWW-Authenticate: Bearer`（不帶 `resource_metadata`）。
 
 8.1.4 群組端點暴露的 route：`target.group` 等於該群組名稱者。Session 綁定建立它的群組：以同一 session id 改打別的群組時回傳 HTTP 404，body 為 MCP SDK 的 JSON-RPC 格式（例外於 9.1.2）。群組在 session 期間被刪除時，該 session 的 `tools/list` 回空清單、`ask` 回 `route_not_found`。
 
@@ -581,12 +618,11 @@ LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1�
      "path": null, "filename": null, "content": "…"}
   ],
   "env": ["SPILLWAY_TOKEN"],
-  "notes": [{"severity": "info", "text": "…"}],
-  "format": "toml", "path": "~/.codex/config.toml", "content": "…"
+  "notes": [{"severity": "info", "text": "…"}]
 }
 ```
 
-`variants` 為可套用的放置方式，第一項為建議做法；`scope` 為 `user` 或 `project`，`format` 為 `command`、`json` 或 `toml`；命令類的 `path`、`filename` 為 null。頂層 `format`、`path`、`content` 等於 `variants[0]`。`notes` 的 `severity` 為 `info` 或 `warn`。
+`variants` 為可套用的放置方式，第一項為建議做法；`scope` 為 `user` 或 `project`，`format` 為 `command`、`json` 或 `toml`；命令類的 `path`、`filename` 為 null。回應沒有頂層 `format`、`path`、`content`，一律讀 `variants`。`notes` 的 `severity` 為 `info` 或 `warn`。
 
 8.2.2 設定內容一律以環境變數 `SPILLWAY_TOKEN` 參照 token，不輸出明文（資料庫只存雜湊，閘道無法事後取得明文）。
 
@@ -747,7 +783,8 @@ env_vars = ["SPILLWAY_TOKEN"]
 
 9.1.4 Host／Origin 檢查（全部端點，含 `/v1`、`/api`、`/mcp`；先於路由執行）：
 
-- 每個請求必須剛好帶一個 `Host`，且完整符合 `^(127\.0\.0\.1|localhost)(:[0-9]{1,5})?$`（不分大小寫；埠號不比對）；否則回傳 HTTP 403，錯誤碼 `host_not_allowed`。`[::1]`、`localhost.`、`evil.localhost`、空值、重複的 `Host`、HTTP/1.0 無 `Host` 皆拒絕。
+- 每個請求必須剛好帶一個 `Host`，且完整符合 `^(127\.0\.0\.1|localhost)(:[0-9]{1,5})?$`（不分大小寫；埠號不比對）；否則回傳 HTTP 403，錯誤碼 `host_not_allowed`。`[::1]`、`localhost.`、`evil.localhost`、空值、HTTP/1.0 無 `Host` 皆拒絕。
+- 重複的 `Host`：經 uvicorn（h11）到達的請求由伺服器在進入應用程式前以 HTTP 400 拒絕（非 9.1.2 格式）；直接送進 ASGI 應用程式的重複 `Host` 由 middleware 回傳 HTTP 403，錯誤碼 `host_not_allowed`（縱深防禦）。
 - 請求帶 `Origin` 時，必須剛好一個，且完整等於（不分大小寫）`http://127.0.0.1:<port>` 或 `http://localhost:<port>`（`<port>` 為 serve 綁定埠）；結尾斜線、`null`、其他埠皆不符，回傳 HTTP 403，錯誤碼 `origin_not_allowed`。沒有 `Origin` 的請求（CLI、SDK）一律放行。
 - 錯誤格式依 9.1.2；websocket 請求被拒時以 close code 1008 關閉。
 - 不變式：所有 GET 端點不得改變狀態。
@@ -762,15 +799,17 @@ env_vars = ["SPILLWAY_TOKEN"]
 | GET / POST / PUT / DELETE | `/api/deployments[/{id}]` | 成員 CRUD（含 tag、額度） |
 | POST | `/api/deployments/{id}/test` | 送出一次測試呼叫並回傳結果 |
 | POST | `/api/deployments/{id}/clear-cooldown` | 清除冷卻（刪除該成員的 `cooldowns` 列） |
-| GET / POST / PUT / DELETE | `/api/groups[/{name}]` | 群組 CRUD；GET 含符合的成員預覽；名稱 `all` 為保留字（9.2.5） |
+| GET / POST / PUT / DELETE | `/api/groups[/{name}]` | 群組 CRUD；GET 含符合的成員預覽；建立時的名稱規則（含保留字 `all`）見 9.2.5 |
 | GET / POST / PUT / DELETE | `/api/routes[/{name}]` | Route CRUD |
 | PUT | `/api/routes/{name}/order` | 儲存拖曳結果：body 為 slot 清單，每個 slot 含成員 id、effort、優先權重 |
 | DELETE | `/api/routes/{name}/order` | 還原預設順序（4.3.4） |
 | POST | `/api/routes/{name}/dry-run` | 以範例請求模擬路由，回傳候選與順序，不呼叫上游 |
 | GET | `/api/ledger` | 帳本查詢；參數 `from`、`to`、`deployment`、`route`、`status`、`page` |
+| GET | `/api/ledger/export.csv` | 帳本 CSV 匯出（9.2.6）；篩選參數同 `/api/ledger`，不分頁 |
 | GET | `/api/mcp/config` | MCP 設定輸出（8.2）；參數 `group`（群組名或 `all`）、`tool`（`claude-code`、`codex`、`cursor`、`gemini`、`stdio`） |
-| POST | `/api/config/import` | 匯入 YAML；參數 `mode=merge\|replace` |
-| GET | `/api/config/export` | 匯出 YAML |
+| POST | `/api/config/import` | 匯入 YAML（3.1.7–3.1.13）；參數 `mode=merge\|replace`（必填）、`dry_run=true`（選填，預覽後回滾）；`replace` 先檢查匯入前的設定可通過憑證鍵名掃描與解析，否則 422 `validation_error`（3.1.11） |
+| GET | `/api/config/export` | 匯出 YAML（3.1.6） |
+| GET | `/api/settings` | 設定總覽（9.2.7） |
 | POST | `/api/settings/token/rotate` | 重新產生存取 token |
 | POST / GET / DELETE | `/mcp/<group>` | MCP Streamable HTTP 端點（8.1；需 Bearer token） |
 
@@ -792,7 +831,11 @@ env_vars = ["SPILLWAY_TOKEN"]
 
 9.2.4 `/api/deployments` 的成員物件與 `/api/dashboard` 的各成員必須帶頂層欄位 `cooling_until`（UTC ISO 8601 字串）與 `cooling_reason`（`quota_exhausted` 或 `rate_limited`）；兩者只在冷卻尚未到期時有值，到期後為 null（與 4.2.6「到期自動恢復」一致；`cooldowns` 列保留至下次設定或清除）。`budget` 物件不含冷卻欄位；`PUT` 帶 `budget: null` 只刪除額度設定，不影響冷卻。
 
-9.2.5 群組名 `all` 為保留字（`/mcp/all` 暴露全部 route）：`POST /api/groups` 的 `name` 為 `all` 時回傳 HTTP 422，錯誤碼 `validation_error`。群組沒有改名端點（`PUT /api/groups/{name}` 只取代選擇器）。
+9.2.5 群組名稱規則：建立或改名群組時（`POST /api/groups` 的 body 與設定匯入；目前沒有改名端點，`PUT /api/groups/{name}` 只取代選擇器），名稱必須為 1–200 個字元，不可為 `.`、`..` 或保留字 `all`（`/mcp/all` 暴露全部 route），不可含 `/` 或 Unicode 類別 Cc、Cf、Cs、Co、Cn、Zl、Zp、Zs 的字元（含空白、控制字元、雙向控制字元、孤立代理字元、私用字元），且必須已是 Unicode NFC 正規化形式（系統不自動正規化）；違反時回傳 HTTP 422，錯誤碼 `validation_error`。本規則不作用於 PUT、GET、DELETE 的路徑參數：既有名稱不符本規則的群組照常查詢、修改選擇器與刪除。成員 `id` 的規則不變。
+
+9.2.6 帳本 CSV（`GET /api/ledger/export.csv`）：篩選參數與 `GET /api/ledger` 相同（`from`、`to`、`deployment`、`route`、`status`），不分頁，依 `ts`、`id` 由新到舊；符合的列超過 100,000 列時回傳 HTTP 422，錯誤碼 `validation_error`（請縮小範圍）。欄位與順序：`id, ts, route_name, deployment_id, effort, tokens_in, tokens_out, cost_usd, status, slot, fallback_depth, latency_ms, est_tokens_in, est_tokens_out_p50, est_tokens_out_p90, est_cost_usd_p90, error`；第一列為標題；`ts` 為 UTC ISO 8601；null 輸出空字串；不含 `usage_payloads` 內容。字串欄位以 `=`、`+`、`-`、`@`、Tab、CR 開頭時，系統必須在值前加 `'`（試算表公式注入防護），數字欄不加。回應 `Content-Type: text/csv; charset=utf-8`，內容以 UTF-8 BOM 開頭、行尾 CRLF，並帶 `Content-Disposition: attachment; filename="spillway-ledger-<UTC yyyymmddThhmmssZ>.csv"`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`。上限以串流前的計數判斷；計數與串流讀取之間新增的列可能使輸出在第 100,000 列處截掉最舊的列。下載期間系統持有該次讀取的快照。
+
+9.2.7 設定總覽（`GET /api/settings`）：回應 `{"port", "data_dir", "version", "token_issued", "first_run", "counts": {"deployments", "groups", "routes", "ledger_ok"}, "context": {"record_context_default", "context_retention_days", "context_max_bytes", "payload_count", "payload_bytes"}}`。`port` 為 serve 綁定的埠（唯讀、顯示用，不含綁定位址）；`data_dir` 為資料庫所在目錄（與 `backups/` 同一目錄）；`version` 為已安裝的套件版本；`token_issued` 表示存取 token 是否已產生（回應不含 token 或其雜湊）；`first_run` 為 `counts.deployments == 0` 且 `counts.routes == 0`（不看群組；以 `replace` 匯入空設定後再次為 true）；`ledger_ok` 為 `status = ok` 的帳本列數；`payload_count`、`payload_bytes` 為 `usage_payloads` 的列數與 `bytes` 加總。
 
 ### 9.3 拖曳儲存格式
 
@@ -814,7 +857,7 @@ PUT /api/routes/review/order
 
 ## 10 Web UI 畫面清單
 
-Web UI 共 8 個畫面，左側固定導覽；UI-1–UI-7 的 layout 見 [UI layout 設計稿](ui/)，UI-8 沒有 layout 稿，版面於 M4 的 CHG 決定；目的與範圍見 [企劃書](proposal.md)。
+Web UI 共 8 個畫面，左側固定導覽；UI-1–UI-7 的 layout 見 [UI layout 設計稿](ui/)，UI-8 沒有 layout 稿，版面於 M4b 的 CHG 決定；目的與範圍見 [企劃書](proposal.md)。
 
 | 編號 | 畫面 | 用途 | 主要操作 |
 | --- | --- | --- | --- |
@@ -825,7 +868,7 @@ Web UI 共 8 個畫面，左側固定導覽；UI-1–UI-7 的 layout 見 [UI lay
 | UI-5 | MCP 設定 | 選群組與工具，顯示各放置方式（`variants`）的設定內容、放置路徑與注意事項（8.2.1） | 複製、下載 |
 | UI-6 | 帳本 | 每次嘗試的紀錄，含預估與實際 token、花費；點選列開啟請求與回應內容 | 篩選、匯出 CSV |
 | UI-7 | 設定 | 首次設定精靈、YAML 匯入匯出、存取 token、埠號、context 記錄預設與保存天數 | 匯入、匯出、重新產生 token |
-| UI-8 | （名稱待定；候選「API」「API 參考」「API 文件」「介面目錄」「開發者」） | 只列 MCP 介面，內容於執行期產生、與程式一致（資料來源 `mcp_catalog(app, group)`），依類型分四大類：連線（各群組端點 URL、傳輸、驗證方式、`mcp-stdio`）、工具（`ask`、`list_routes`、`quota_status` 的說明與 inputSchema／outputSchema）、通知（`tools/list_changed`）、錯誤碼；不列 `/api/*` 與 `/v1` | 以可折疊索引切換大類 |
+| UI-8 | API 參考 | 只列 MCP 介面，內容於執行期產生、與程式一致（資料來源 `mcp_catalog(app, group)`），依類型分四大類：連線（各群組端點 URL、傳輸、驗證方式、`mcp-stdio`）、工具（`ask`、`list_routes`、`quota_status` 的說明與 inputSchema／outputSchema）、通知（`tools/list_changed`）、錯誤碼；不列 `/api/*` 與 `/v1` | 以可折疊索引切換大類 |
 
 ### 10.1 拖曳規則（UI-4）
 

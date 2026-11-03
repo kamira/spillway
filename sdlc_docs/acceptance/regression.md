@@ -14,9 +14,9 @@
 
 | # | 指令 | 通過標準 | 涵蓋條件 | 來源 ACC | 範圍標籤 |
 |---|------|----------|----------|----------|----------|
-| R1 | `python -m pytest -q` | exit 0;0 failed(ACC-20261031-01 時為 1089 passed;ACC-20261101-01 時為 1340 passed;ACC-20261101-02 時為 1739 passed;ACC-20261102-01 時為 2194 passed) | 單元、合約、整合、fakes 與 acceptance 全部;含 AC-19 合約測試、管理 API 錯誤碼(FR-13、FR-25)、`stream: true` 400、retention 每小時排程、AC-7、NFR-1、NFR-2、NFR-3、NFR-5 | ACC-20261031-01 | 全部 |
-| R2 | `python -m behave tests/features` | exit 0;全部情境全過、0 skipped(ACC-20261031-01 時 5 features、18 scenarios、155 steps;ACC-20261101-01 時 6 features、22 scenarios、183 steps;ACC-20261101-02 時 7 features、31 scenarios、279 steps;ACC-20261102-01 時 8 features、40 scenarios、395 steps) | AC-3、AC-4、AC-5、AC-13、AC-14、AC-15、AC-18、AC-19、4.2.5(api 版)、4.2.6(api 版) | ACC-20261031-01 | routing、quota、estimate、ledger、redact、adapters、api |
-| R3 | `python -m pytest tests/acceptance -q -rs` | 全數 passed(ACC-20261031-01 時 9、ACC-20261101-01 時 10、ACC-20261101-02 時 12、ACC-20261102-01 時 17)且**必須 0 skipped**(缺 lsof 時 NFR-3 與操作驗收會被跳過;驗收平台 macOS 有 lsof,出現 skipped 即視為未通過) | AC-7、NFR-1(dry-run P95 < 20 ms)、NFR-2(dashboard P95 < 200 ms)、NFR-3(只聽 127.0.0.1)、NFR-5(payload 過期刪除)、Acceptance operation、NFR-4 預掃描(不計入 M2 閘門) | ACC-20261031-01 | api、cli、routing、ledger、store |
+| R1 | `python -m pytest -q` | exit 0;0 failed(ACC-20261031-01 時為 1089 passed;ACC-20261101-01 時為 1340 passed;ACC-20261101-02 時為 1739 passed;ACC-20261102-01 時為 2194 passed;ACC-20261102-02 時為 2578 passed) | 單元、合約、整合、fakes 與 acceptance 全部;含 AC-19 合約測試、管理 API 錯誤碼(FR-13、FR-25)、`stream: true` 400、retention 每小時排程、AC-7、NFR-1、NFR-2、NFR-3、NFR-5 | ACC-20261031-01 | 全部 |
+| R2 | `python -m behave tests/features` | exit 0;全部情境全過、0 skipped(ACC-20261031-01 時 5 features、18 scenarios、155 steps;ACC-20261101-01 時 6 features、22 scenarios、183 steps;ACC-20261101-02 時 7 features、31 scenarios、279 steps;ACC-20261102-01 時 8 features、40 scenarios、395 steps;ACC-20261102-02 時 9 features、50 scenarios、498 steps) | AC-3、AC-4、AC-5、AC-13、AC-14、AC-15、AC-18、AC-19、4.2.5(api 版)、4.2.6(api 版) | ACC-20261031-01 | routing、quota、estimate、ledger、redact、adapters、api |
+| R3 | `python -m pytest tests/acceptance -q -rs` | 全數 passed(ACC-20261031-01 時 9、ACC-20261101-01 時 10、ACC-20261101-02 時 12、ACC-20261102-01 時 17、ACC-20261102-02 時 19)且**必須 0 skipped**(缺 lsof 時 NFR-3 與操作驗收會被跳過;驗收平台 macOS 有 lsof,出現 skipped 即視為未通過) | AC-7、NFR-1(dry-run P95 < 20 ms)、NFR-2(dashboard P95 < 200 ms)、NFR-3(只聽 127.0.0.1)、NFR-5(payload 過期刪除)、Acceptance operation、NFR-4 預掃描(不計入 M2 閘門) | ACC-20261031-01 | api、cli、routing、ledger、store |
 
 R1 與 R2 合起來就是 CHG-20261030-02 的本機閘(`python -m pytest -q && python -m behave tests/features`)。
 
@@ -63,6 +63,15 @@ R1 與 R2 合起來就是 CHG-20261030-02 的本機閘(`python -m pytest -q && p
 | R43 | 停機期滿 503 JSON shutting_down(/v1)、Drained 子 task 於 lifespan 前被等待、Ctrl-C 結束碼 130 無 traceback。**須前景執行** | `tests/integration/test_graceful_shutdown.py` | ACC-20261102-01 | cli、安全 |
 | R44 | adapters.base.cli_common(工作目錄、截斷、整數解析三處合一;adapter 層 cwd 失敗回 error) | `tests/unit/adapters_base/test_cli_common.py`、`tests/unit/adapters_base/test_cli_cwd_adapters.py` | ACC-20261102-01 | adapters |
 | R45 | m3b 行為情境 9 個(群組端點、ask、list_routes、token、遞迴、list_changed、Host/Origin、設定輸出、停機) | `tests/features/m3b_mcp.feature` | ACC-20261102-01 | api(mcp)、routing、安全 |
+| R46 | M4a Acceptance operation 自動部分(往返逐位元組、黃金檔設定表快照、merge、dry_run 與 privileged、replace 備份與還原、422/409、CSV、總覽、群組名稱、stdio SDK 503);http-log 只四鍵、全目錄假金鑰與 token 命中 0。須前景執行 | `tests/acceptance/test_m4a_operation.py` | ACC-20261102-02 | api(admin)、cli、安全 |
+| R47 | 設定檔格式與往返(黃金檔、逐欄省略、行分隔字元往返、configio 不 import api 層) | `tests/unit/test_configio_dump.py`、`tests/unit/data/config_golden.yaml` | ACC-20261102-02 | api(admin)、store |
+| R48 | 匯入邊界與套用(嚴格 loader、yaml 型別、1 MiB、跨站 403、單一交易、備份規則、dry_run、privileged、replace 前置可還原檢查、健康失效與 list_changed、與管理 API 規則一致) | `tests/unit/test_configio_parse.py`、`tests/integration/admin/test_admin_config_io.py`、`tests/contract/test_import_admin_parity.py` | ACC-20261102-02 | api(admin)、安全、store |
+| R49 | 帳本 CSV(欄位、BOM、公式前置、10 萬列上限、generator 連線生命週期與中斷) | `tests/integration/admin/test_admin_ledger_csv.py` | ACC-20261102-02 | api(admin)、安全、store |
+| R50 | 設定總覽(形狀、first_run、token_issued、version、data_dir 來源) | `tests/integration/admin/test_admin_settings_overview.py` | ACC-20261102-02 | api(admin) |
+| R51 | 群組名稱規則與既有名稱可用;MCP 設定輸出無頂層相容欄位 | `tests/integration/admin/test_admin_groups.py`、`tests/integration/admin/test_admin_mcp_config.py` | ACC-20261102-02 | api(admin)、安全 |
+| R52 | mcp-stdio 錯誤對應成對(9.1.2 body 才以 3 結束)、測試用 session 上限、環境變數名稱常數契約 | `tests/integration/test_mcp_stdio.py`、`tests/contract/test_env_names.py` | ACC-20261102-02 | cli、api(mcp)、安全 |
+| R53 | 測試輸出遮罩 token(最長優先、裸字串) | `tests/unit/test_helpers.py` | ACC-20261102-02 | 測試基礎、安全 |
+| R54 | m4a 行為情境 10 個 | `tests/features/m4a_config.feature` | ACC-20261102-02 | api(admin)、安全 |
 
 ## Interaction spec(M2)
 

@@ -85,6 +85,7 @@ EXIT_SIGINT = settings.EXIT_SIGINT   # CHG-20261102-01 決策 19:serve 被 Ctrl-
 WORK_SUBDIRS = CLI_WORK_SUBDIRS   # 決策 10、11、20(CHG-20261102-01):CLI 模組未設定 cwd 時的工作目錄
 GRACEFUL_TIMEOUT = 30.0   # 決策 16 ②:停機時等待進行中請求的上限(秒)
 TEST_GRACEFUL_TIMEOUT_ENV = "SPILLWAY_TEST_GRACEFUL_TIMEOUT"   # 僅供測試,見 _test_graceful_timeout
+TEST_MCP_MAX_SESSIONS_ENV = "SPILLWAY_TEST_MCP_MAX_SESSIONS"   # 僅供測試,見 _test_mcp_max_sessions
 
 
 def _port(value: str) -> int:
@@ -247,6 +248,20 @@ def _test_graceful_timeout() -> float | None:
     return value if value > 0 else None
 
 
+def _test_mcp_max_sessions() -> int | None:
+    """**僅供測試**(CHG-20261102-02 決策 19):環境變數 `SPILLWAY_TEST_MCP_MAX_SESSIONS` 覆寫 serve 的 MCP
+    session 上限(預設 `api.mcp.server.MAX_SESSIONS`),讓子行程測試不必開 100 個 session。正式使用不要設定;
+    值不合法(非整數或 ≤ 0)時忽略。"""
+    raw = os.environ.get(TEST_MCP_MAX_SESSIONS_ENV)
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 def _run_server(host: str, port: int, graceful_timeout: float = GRACEFUL_TIMEOUT) -> int:
     if rc := _preflight(host, port, settings.data_dir()):
         return rc
@@ -255,7 +270,8 @@ def _run_server(host: str, port: int, graceful_timeout: float = GRACEFUL_TIMEOUT
 
     from spillway import app as app_module
 
-    app = app_module.create_app(issue_token=True, port=port)
+    mcp_kwargs = {} if (n := _test_mcp_max_sessions()) is None else {"mcp_max_sessions": n}
+    app = app_module.create_app(issue_token=True, port=port, **mcp_kwargs)
     runner = app.state.cli_runner
     # 決策 16 ④:第二次 Ctrl-C(force_exit)會略過 lifespan;finally 與 atexit 是子行程清理的最後防線
     atexit.register(runner.kill_all_sync)

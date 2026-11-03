@@ -42,9 +42,9 @@ from tests.features.support.mcp_proc import (
     group_alive,
     mcp_http_session,
     pid_alive,
-    redact,
     stdio_session,
 )
+from tests.helpers import redact_tokens
 from tests.helpers.live_gateway import start_live_gateway
 
 use_step_matcher("re")
@@ -281,7 +281,7 @@ def step_header_request(context, name, value, method, path):
 @step(r'HTTP 回應狀態為 (\d+) 且錯誤碼為 "([^"]+)"')
 def step_http_status_code(context, status, code):
     r = context.m3b_http
-    assert r.status_code == int(status), (r.status_code, redact(r.text, _secrets(context)))
+    assert r.status_code == int(status), (r.status_code, redact_tokens(r.text, _secrets(context)))
     assert r.headers["content-type"].startswith("application/json"), r.headers
     body = r.json()
     assert body["error"]["code"] == code, body
@@ -324,7 +324,7 @@ def step_stdio_error(context, code):
     out = context.m3b_stdio
     assert out.init is None and out.error is not None, (out.init, out.error)
     assert isinstance(out.error.data, dict) and out.error.data.get("code") == code, out.error
-    assert code in out.stderr, redact(out.stderr, _secrets(context))
+    assert code in out.stderr, redact_tokens(out.stderr, _secrets(context))
     leaked = context.m3b_token in out.stderr
     assert not leaked, "mcp-stdio stderr 含 token 明文"
 
@@ -409,7 +409,7 @@ def step_mcp_config(context, group, tools):
 
 
 def _contents(cfg: dict[str, Any]) -> list[str]:
-    return [cfg["content"], *(v["content"] for v in cfg["variants"])]
+    return [v["content"] for v in cfg["variants"]]
 
 
 @step(r'每份設定的 env 為 \["SPILLWAY_TOKEN"\] 且 content 含 "SPILLWAY_TOKEN"')
@@ -417,7 +417,6 @@ def step_config_env(context):
     for tool, cfg in context.m3b_configs.items():
         assert cfg["tool"] == tool and cfg["group"] == context.m3b_group, cfg
         assert cfg["env"] == ["SPILLWAY_TOKEN"], (tool, cfg["env"])
-        assert cfg["content"] == cfg["variants"][0]["content"], tool
         for text in _contents(cfg):
             assert "SPILLWAY_TOKEN" in text, tool
 
@@ -434,7 +433,7 @@ def step_config_url(context, url):
     for tool, cfg in context.m3b_configs.items():
         if tool == "stdio":
             continue
-        assert url in cfg["content"], tool
+        assert url in cfg["variants"][0]["content"], tool
 
 
 # ---------------------------------------------------------------- 停機(子行程 serve)

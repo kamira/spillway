@@ -16,13 +16,14 @@ from urllib.parse import quote
 import pytest
 
 from spillway.api.admin import mcp_config
+from spillway.store import repo
 from spillway.api.admin.mcp_config import TOOL_FORMATS, VariantSpec, build_context, render_config
 
 pytestmark = pytest.mark.anyio
 
 TOOLS = ["claude-code", "codex", "cursor", "gemini", "stdio"]
 EVIL = 'a"b;$(x)'
-TOP = {"group", "tool", "variants", "env", "notes", "format", "path", "content"}
+TOP = {"group", "tool", "variants", "env", "notes"}
 VARIANT = {"label", "scope", "format", "path", "filename", "content"}
 
 
@@ -52,8 +53,7 @@ async def test_shape_and_parse(client, tool):
     assert set(body) == TOP and body["tool"] == tool and body["group"] == "all"
     assert body["env"] == ["SPILLWAY_TOKEN"]
     assert body["variants"] and all(set(v) == VARIANT for v in body["variants"])
-    first = body["variants"][0]
-    assert (body["format"], body["path"], body["content"]) == (first["format"], first["path"], first["content"])
+    assert not {"format", "path", "content"} & set(body)
     for v in body["variants"]:
         assert v["scope"] in ("user", "project") and v["format"] in ("command", "json", "toml")
         assert _parse(v)
@@ -64,7 +64,7 @@ async def test_shape_and_parse(client, tool):
 
 async def test_url_name_and_port(client, make_app, make_client):
     r = (await _get(client, "cursor")).json()
-    cfg = json.loads(r["content"])
+    cfg = json.loads(r["variants"][0]["content"])
     assert cfg["mcpServers"] == {"spillway-all": {
         "url": "http://127.0.0.1:8787/mcp/all",
         "headers": {"Authorization": "Bearer ${env:SPILLWAY_TOKEN}"}}}
@@ -72,7 +72,7 @@ async def test_url_name_and_port(client, make_app, make_client):
     app.state.port = 9911
     async with make_client(app) as c:
         r = (await _get(c, "codex")).json()
-    assert tomllib.loads(r["content"])["mcp_servers"]["spillway-all"]["url"] == "http://127.0.0.1:9911/mcp/all"
+    assert tomllib.loads(r["variants"][0]["content"])["mcp_servers"]["spillway-all"]["url"] == "http://127.0.0.1:9911/mcp/all"
 
 
 async def test_claude_code(client):
@@ -146,8 +146,11 @@ HOSTILE = [EVIL, 'q"uote', "back\\slash", ".", "..", "a'b", "a$HOME`x`"]
 
 @pytest.mark.parametrize("group", HOSTILE)
 @pytest.mark.parametrize("tool", TOOLS)
-async def test_hostile_group_name_stays_parseable(client, tool, group):
-    await _mk_group(client, group)
+async def test_hostile_group_name_stays_parseable(client, db, tool, group):
+    if group in (".", ".."):          # CHG-20261102-02 決策 11:POST 已擋;以 save_group 種入既有資料
+        repo.save_group(db, repo.Group(group, {"all": [], "any": ["x"], "none": []}))
+    else:
+        await _mk_group(client, group)
     body = (await _get(client, tool, group)).json()
     url = f"http://127.0.0.1:8787/mcp/{quote(group, safe='')}"
     name = f"spillway-{group}"

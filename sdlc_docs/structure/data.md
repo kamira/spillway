@@ -1,6 +1,6 @@
 # 資料結構 — Spillway
 
-- 專案:spillway · 分支:main · 版本:v1.3(2026-11-02,CHG-20261102-01:無 schema 變更;`access_token_sha256` 的讀取方補 `/mcp/*` 的 Bearer 驗證;使用者於 CHG 確認閘確認,2026-11-02) · 前版 v1.2 已確認(2026-11-01,CHG-20261101-03:schema v2——冷卻獨立成 `cooldowns` 表、`budgets` 移除 `exhausted_until`;v1→v2 migration 的前置條件、備份與回滾;`access_token_sha256` 由 `spillway init`、serve 首次啟動、rotate 寫入;使用者於 CHG 確認閘確認,2026-11-01) · 前前版 v1.1 已確認(2026-10-30,CHG-20261030-02:`access_token_sha256` 產生時機改 M3 起、`bind_host`/`port` 鍵 M2 不讀取;使用者於 CHG 確認閘確認,2026-10-30) · v1.0 已確認(2026-10-29,使用者) · 日期:2026-11-02(UTC+0)
+- 專案:spillway · 分支:main · 版本:v1.4(2026-11-02,CHG-20261102-02:無 schema 變更;資料目錄 `backups/`;設定匯入匯出涵蓋與不含的表、replace 的刪除範圍與保留項;使用者於 CHG 確認閘確認,2026-11-02) · 前版 v1.3 已確認(2026-11-02,CHG-20261102-01:無 schema 變更;`access_token_sha256` 的讀取方補 `/mcp/*` 的 Bearer 驗證;使用者於 CHG 確認閘確認,2026-11-02) · 前版 v1.2 已確認(2026-11-01,CHG-20261101-03:schema v2——冷卻獨立成 `cooldowns` 表、`budgets` 移除 `exhausted_until`;v1→v2 migration 的前置條件、備份與回滾;`access_token_sha256` 由 `spillway init`、serve 首次啟動、rotate 寫入;使用者於 CHG 確認閘確認,2026-11-01) · 前前版 v1.1 已確認(2026-10-30,CHG-20261030-02:`access_token_sha256` 產生時機改 M3 起、`bind_host`/`port` 鍵 M2 不讀取;使用者於 CHG 確認閘確認,2026-10-30) · v1.0 已確認(2026-10-29,使用者) · 日期:2026-11-02(UTC+0)
 - 依據:docs/spec.md 第 2 節(DDL 正本)、第 3 節(YAML);sdlc_docs/structure/design.md D2、D3
 
 **DDL 正本是 `docs/spec.md` 2.3**,本文件不重抄欄位;只記關聯、約束、列舉、設定鍵與本設計新增的部分。實作的 `store/schema.sql` 是 schema v1 基線;v2(`cooldowns` 表、`budgets` 移除 `exhausted_until`)由 `store/db.py` 的 migration `_SCHEMA_V2` 套用,migration 後的結果必須與 spec 2.3 一致,差異走 CHG。
@@ -35,7 +35,7 @@ erDiagram
 ```
 
 - `routes.target` 以 JSON 參照 `groups.name`,**沒有外鍵**:刪除群組時,`api.admin` 必須拒絕(仍被 route 參照)或要求先改 route——由應用層保證。
-- `usage_ledger.deployment_id`、`route_name` **沒有外鍵**:成員或 route 刪除後帳本保留歷史(匯入 `replace` 也保留帳本,spec 3.1.3)。
+- `usage_ledger.deployment_id`、`route_name` **沒有外鍵**:成員或 route 刪除後帳本保留歷史(匯入 `replace` 也保留帳本,spec 3.1.3、3.1.10)。
 - 其他關聯 `ON DELETE CASCADE`(spec 2.3);刪除成員時其 `budgets`、`cooldowns` 列一併刪除。
 - 額度與冷卻分開存(CHG-20261101-03 決策 3、6):`QuotaService.mark` 只寫 `cooldowns`(單一 upsert,冷卻只延長不縮短),不再為沒有 `budgets` 列的成員建立 `type=none, window=none` 暫行列(取代 CHG-20261030-02 決策 59);`clear` 刪除 `cooldowns` 列;`PUT /api/deployments/{id}` 的 `budget: null` 只刪除 `budgets` 列。`cooldowns` 列到期後不自動刪除,保留到下次 mark 或 clear;API 只在未到期時回傳 `cooling_until`、`cooling_reason`(spec 9.2.4)。
 
@@ -96,6 +96,27 @@ v1 → v2 的內容(單一交易,CHG-20261101-03 決策 4):① 建 `cooldowns`;�
 5. `BEGIN IMMEDIATE` 後重讀 `user_version`,仍為 1 才套用;失敗回滾、原檔不變,錯誤訊息含備份位置,非 0 退出。
 
 回滾(擁有者手動):停止 serve;刪除 `spillway.db`、`spillway.db-wal`、`spillway.db-shm`;把 `spillway.db.v1.bak` 改名為 `spillway.db`;回退程式版本。v2 期間寫入的資料會遺失;v2 資料庫無法被 v1 程式開啟(`SchemaVersionError`)。
+
+## 設定匯入匯出涵蓋的資料(CHG-20261102-02,spec 3;design D38)
+
+| 表 / 鍵 | 匯出 | merge 匯入 | replace 匯入 |
+|---------|------|------------|--------------|
+| `deployments`、`deployment_tags`、`budgets` | 輸出(省略預設值,spec 3.1.6) | 檔案中的成員 UPSERT(tags、budget 整筆取代) | 同 merge,另刪除檔案外的成員(外鍵串聯其 tags、budget、cooldowns、route_targets) |
+| `groups` | 輸出 | UPSERT | 同 merge,另刪除檔案外的群組 |
+| `routes`、`route_targets` | 輸出(`targets` 只在有手動排序時) | 檔案中的 route UPSERT,排序以檔案的 `targets` 整筆取代(未列 = 清除) | 同 merge,另刪除檔案外的 route |
+| `settings`:`record_context_default`、`context_retention_days`、`context_max_bytes` | 只輸出與初始值不同的鍵 | 只覆寫檔案中出現的鍵 | 檔案中沒有的鍵以 `repo.delete_settings` 刪除(回到初始值) |
+| `settings`:`access_token_sha256`、`bind_host`、`port` 與其他鍵 | **不含** | 不動 | 不動(禁止整表 DELETE settings) |
+| `cooldowns` | **不含** | 不動 | 仍存在的成員保留;被刪成員的列由外鍵串聯刪除 |
+| `usage_ledger`、`usage_payloads` | **不含**(spec 2.4.7) | 不動 | 不動 |
+
+匯入的全部寫入在同一個 `BEGIN IMMEDIATE` 交易內;最終狀態檢查(route `target.group` 存在、`single` provider 至多 1 個成員)失敗或 `dry_run` 時整批回滾。`routes.target.group` 沒有外鍵,所以由最終狀態檢查保證;`route_targets` 參照的成員在寫入前檢查存在,不撞外鍵。
+
+## 資料目錄內的設定備份
+
+- `<資料目錄>/backups/config-<UTC yyyymmddThhmmssZ>.yaml`:`replace` 匯入(非 `dry_run`)在寫鎖內、刪除之前,以匯出格式寫入匯入前的設定;同名時加 `-2`、`-3`…,一律不覆寫。資料目錄一律取自 `db_path` 的上層目錄(不呼叫 `settings.data_dir()`)。
+- 權限:目錄新建時 0700(既有目錄不收緊),檔案 0600;`backups` 是 symlink 或不是目錄時拒絕匯入(500)。
+- 內容與匯出檔相同:不含 token 雜湊、冷卻、帳本、payload;以 `replace` 匯入備份即可還原設定(帳本與 payload 不在備份內,也不受還原影響)。
+- 不自動清理;備份不進版控(在 repo 外的資料目錄)。
 
 ## JSON 欄位形狀
 

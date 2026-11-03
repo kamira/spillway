@@ -67,10 +67,8 @@ _RC_WRAPPER = ("import os, subprocess, sys\n"
 
 
 def redact(text: str, secrets: Any) -> str:
-    for s in secrets or ():
-        if s:
-            text = text.replace(s, "<token>")
-    return text
+    from tests.helpers import redact_tokens
+    return redact_tokens(text, secrets)
 
 
 def is_list_changed(message: Any) -> bool:

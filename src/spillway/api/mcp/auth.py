@@ -3,8 +3,8 @@
 `McpEndpoint(app)` 由 `app.py` 以 `app.mount("/mcp", ...)` 掛載;外層的 `HostOriginMiddleware`(決策 4,
 T1)已先檢查 Host/Origin(順序 ①)。這裡對 `/mcp/*` 的**每一個方法**(POST、GET、DELETE)依序:
 
-② depth:所有 `x-spillway-depth` 值中只要有任一個不符 `^[0-9]+$`(含空字串、`-1`、`+1`),或數值 ≥ 1
-   → 403 `recursion_blocked`;只有全部為 `0`(或未帶)才放行。在驗證 token 之前判斷。
+② depth:所有遞迴深度 header(`settings.DEPTH_HEADER`,比對時轉小寫)的值中只要有任一個不符
+   `^[0-9]+$`(含空字串、`-1`、`+1`),或數值 ≥ 1 → 403 `recursion_blocked`;只有全部為 `0`(或未帶)才放行。在驗證 token 之前判斷。
 ③ Bearer:`authorization` 必須剛好一個,scheme 比對不分大小寫;token 雜湊**每次請求**從資料庫讀
    (`settings.get_access_token_hash`,rotate 立即生效);尚未產生 token(None)時先回 401 再做比對;
    `hmac.compare_digest(sha256(t), 雜湊)`。缺 header、格式錯、雜湊不符或尚未產生 token → 401
@@ -46,6 +46,8 @@ CLIENT_ID_PREFIX = "spillway-group:"
 
 _DEPTH_RE = re.compile(r"[0-9]+")
 _PATH_RE = re.compile(r"/([^/]+)")
+# CHG-20261102-02 決策 15:header 名單一定義在 settings;ASGI raw headers 的名稱為小寫 bytes
+_DEPTH_HEADER_RAW = settings.DEPTH_HEADER.lower().encode()
 
 Headers = list[tuple[bytes, bytes]]
 
@@ -60,7 +62,7 @@ def _values(headers: Headers, name: bytes) -> list[str] | None:
 
 def check_depth(headers: Headers) -> bool:
     """② 遞迴防護:未帶或全部為 0 才回 True。"""
-    values = _values(headers, b"x-spillway-depth")
+    values = _values(headers, _DEPTH_HEADER_RAW)
     if values is None:
         return False
     # 不用 int():超過 4300 位數的值會讓 int() 丟 ValueError(Python 的整數字串長度上限)→ 500
@@ -97,7 +99,7 @@ class McpEndpoint:
 
         if not check_depth(headers):
             await error_response(403, "recursion_blocked",
-                                 "偵測到遞迴呼叫(X-Spillway-Depth 必須為 0 或不帶)")(scope, receive, send)
+                                 f"偵測到遞迴呼叫({settings.DEPTH_HEADER} 必須為 0 或不帶)")(scope, receive, send)
             return
 
         conn = state.conn_factory()

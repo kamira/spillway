@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import socket
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 import keyring
@@ -26,7 +26,7 @@ from keyring.errors import PasswordDeleteError
 from spillway.domain import Deployment
 
 __all__ = ["TEST_KEY", "TEST_KEY_ENV", "fake_key_env", "api_member", "local_member",
-           "MemoryKeyring", "memory_keyring", "dead_base"]
+           "MemoryKeyring", "memory_keyring", "dead_base", "redact_tokens"]
 
 TEST_KEY = "sk-test-0000"
 TEST_KEY_ENV = "SPILLWAY_TEST_KEY"
@@ -107,3 +107,13 @@ def dead_base() -> str:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
     return f"http://127.0.0.1:{port}/v1"
+
+
+def redact_tokens(text: str, tokens: str | Iterable[str | None] | None) -> str:
+    """把 `text` 中每個 token 明文換成 `<token>`(CHG-20261102-02 決策 14;失敗訊息帶出 serve stderr
+    或回應本文時一律經它,避免測試輸出洩漏 token)。空字串與 None 略過;其餘文字不變。"""
+    if isinstance(tokens, str):
+        tokens = [tokens]
+    for tok in sorted({t for t in tokens or () if t}, key=len, reverse=True):   # 長的先換,避免殘留尾巴
+        text = text.replace(tok, "<token>")
+    return text

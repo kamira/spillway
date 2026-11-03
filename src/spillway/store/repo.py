@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -515,6 +516,63 @@ def count_ledger(
     return int(conn.execute("SELECT COUNT(*) FROM usage_ledger" + where, args).fetchone()[0])
 
 
+def iter_ledger(
+    conn: sqlite3.Connection,
+    *,
+    route_name: str | None = None,
+    deployment_id: str | None = None,
+    status: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    limit: int,
+    batch: int = 1000,
+) -> Iterator[list[LedgerRow]]:
+    """依條件逐批讀出帳本(條件與順序同 `list_ledger`:新到舊),每批至多 `batch` 列、合計至多 `limit` 列。
+
+    帳本 CSV 匯出用(CHG-20261102-02 決策 9):以 `fetchmany` 分批讀,不一次載入整個結果;
+    整段在一個讀交易內(`BEGIN` … `COMMIT`),各批看到同一份快照。呼叫端在中途停止迭代
+    (`close()`、例外)時回滾讀交易。呼叫端已在交易中時沿用,不另開也不提交。"""
+    where, args = _ledger_where(route_name, deployment_id, status, since, until)
+    sql = "SELECT * FROM usage_ledger" + where + " ORDER BY ts DESC, id DESC LIMIT ?"
+    args.append(limit)
+    own = not conn.in_transaction
+    if own:
+        conn.execute("BEGIN")
+    finished = False
+    try:
+        cur = conn.execute(sql, args)
+        try:
+            while True:
+                rows = cur.fetchmany(batch)
+                if not rows:
+                    break
+                yield [_ledger_from_row(r) for r in rows]
+        finally:
+            cur.close()
+        finished = True
+    finally:
+        if own and conn.in_transaction:
+            conn.execute("COMMIT" if finished else "ROLLBACK")
+
+
+def payload_stats(conn: sqlite3.Connection) -> tuple[int, int]:
+    """`usage_payloads` 的 `(列數, bytes 欄加總)`;沒有列時 `(0, 0)`(設定總覽,決策 10)。"""
+    n, total = conn.execute("SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM usage_payloads").fetchone()
+    return int(n), int(total)
+
+
+def count_config(conn: sqlite3.Connection) -> dict[str, int]:
+    """設定總覽的計數(決策 10):`deployments`、`groups`、`routes` 為各表列數,
+    `ledger_ok` 為 `status = 'ok'` 的帳本列數。各一個 COUNT,不載入資料列。"""
+    return {
+        "deployments": int(conn.execute("SELECT COUNT(*) FROM deployments").fetchone()[0]),
+        "groups": int(conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0]),
+        "routes": int(conn.execute("SELECT COUNT(*) FROM routes").fetchone()[0]),
+        "ledger_ok": int(conn.execute(
+            "SELECT COUNT(*) FROM usage_ledger WHERE status = 'ok'").fetchone()[0]),
+    }
+
+
 def ledger_spend(
     conn: sqlite3.Connection,
     dep_id: str,
@@ -703,3 +761,59 @@ def get_context_settings(conn: sqlite3.Connection) -> ContextSettings:
         retention_days=int(get_setting(conn, "context_retention_days")),
         max_bytes=int(get_setting(conn, "context_max_bytes")),
     )
+
+
+# ---------------------------------------------------------------- config 匯出讀取(CHG-20261102-02 T3)
+# `spillway.configio.dump` 用:整份設定在同一個讀交易(快照)內讀出;本段只讀不寫。
+
+
+@contextmanager
+def read_snapshot(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """單一讀交易:已在交易內(含 `transaction(conn)` 的寫鎖)時沿用、不另開;否則 `BEGIN`(DEFERRED,
+    不取寫鎖)… 結束時 `COMMIT`(例外時 `ROLLBACK`)。WAL 模式下區塊內的多條 SELECT 看到同一份快照。"""
+    if conn.in_transaction:
+        yield conn
+        return
+    conn.execute("BEGIN")
+    try:
+        yield conn
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    if conn.in_transaction:
+        conn.execute("COMMIT")
+
+
+def list_all_route_targets(conn: sqlite3.Connection) -> dict[str, list[RouteTarget]]:
+    """全部 route 的 route_targets,單一查詢;`{route_name: [RouteTarget…]}`,各 route 內依
+    `(slot, position, deployment_id)` 排序(同 `list_route_targets`);沒有手動排序的 route 不出現。"""
+    out: dict[str, list[RouteTarget]] = {}
+    for r in conn.execute(
+        "SELECT * FROM route_targets ORDER BY route_name, slot, position, deployment_id"
+    ):
+        out.setdefault(r["route_name"], []).append(RouteTarget(
+            deployment_id=r["deployment_id"], slot=r["slot"], position=r["position"],
+            effort=r["effort"], weight=r["weight"],
+        ))
+    return out
+
+
+# ---------------------------------------------------------------- config 匯入寫入(CHG-20261102-02 T4)
+# `spillway.configio.apply` 用(呼叫端已在 `transaction(conn)` 內)。實體的刪除沿用 `delete_route`、
+# `delete_group`、`delete_deployment`(逐筆;不整表 DELETE)。
+
+
+def delete_settings(conn: sqlite3.Connection, keys: Iterable[str]) -> None:
+    """刪除指定的 settings 鍵(之後讀取回到 `SETTING_DEFAULTS`);不存在的鍵略過。禁止整表 DELETE
+    (存取 token 雜湊與其他設定同表)。"""
+    with transaction(conn):
+        conn.executemany("DELETE FROM settings WHERE key = ?", [(k,) for k in keys])
+
+
+def deployment_ids_by_provider(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """`{provider: [成員 id…]}`(各清單依 id 排序);匯入後的 cardinality 檢查用。"""
+    out: dict[str, list[str]] = {}
+    for provider, dep_id in conn.execute("SELECT provider, id FROM deployments ORDER BY provider, id"):
+        out.setdefault(provider, []).append(dep_id)
+    return out

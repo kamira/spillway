@@ -4,7 +4,7 @@
 
 回傳 `{group, connection, tools, notifications, errors}`:
 - `connection`:`transport`(`streamable-http`)、`url`(本群組端點)、`groups`(`all` 在前、其餘依 name;
-  每項 `{name, url}`)、`auth`(`Bearer`、header、環境變數 `SPILLWAY_TOKEN`)、`stdio`(`spillway mcp-stdio`
+  每項 `{name, url}`)、`auth`(`Bearer`、header、環境變數 `settings.TOKEN_ENV`)、`stdio`(`spillway mcp-stdio`
   的用法)。URL 主機固定 `127.0.0.1`、埠為 `app.state.port`;群組名以 `quote(g, safe="")` 編碼。
 - `tools`:與 `/mcp/<group>` 的 `tools/list` 同一份定義(`tools.tool_definitions`),以
   `Tool.model_dump(mode="json", by_alias=True, exclude_none=True)` 輸出;群組不存在時為空清單。
@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from spillway.settings import DEPTH_HEADER, TOKEN_ENV, mcp_url
 from spillway.settings import MCP_ALL_GROUP as ALL_GROUP
-from spillway.settings import mcp_url
 from spillway.store import repo
 
 from .tools import tool_definitions
@@ -30,7 +30,7 @@ HTTP_ERRORS: tuple[dict[str, Any], ...] = (
     {"code": "origin_not_allowed", "status": 403, "format": "spec-9.1.2",
      "description": "帶了 Origin 且不是本機的 spillway 位址(跨站請求)"},
     {"code": "recursion_blocked", "status": 403, "format": "spec-9.1.2",
-     "description": "X-Spillway-Depth 不是 0(遞迴防護,在驗證 token 之前判斷)"},
+     "description": f"{DEPTH_HEADER} 不是 0(遞迴防護,在驗證 token 之前判斷)"},
     {"code": "unauthorized", "status": 401, "format": "spec-9.1.2",
      "description": "缺少或錯誤的 Authorization: Bearer token,或尚未產生 token;帶 WWW-Authenticate: Bearer"},
     {"code": "shutting_down", "status": 503, "format": "spec-9.1.2",
@@ -83,10 +83,10 @@ def mcp_catalog(app: Any, group: str = ALL_GROUP) -> dict[str, Any]:
             "transport": "streamable-http",
             "url": mcp_url(port, group),
             "groups": [{"name": n, "url": mcp_url(port, n)} for n in [ALL_GROUP, *sorted(names)]],
-            "auth": {"type": "Bearer", "header": "Authorization", "value": "Bearer ${SPILLWAY_TOKEN}",
-                     "env": "SPILLWAY_TOKEN"},
+            "auth": {"type": "Bearer", "header": "Authorization", "value": f"Bearer ${{{TOKEN_ENV}}}",
+                     "env": TOKEN_ENV},
             "stdio": {"command": "spillway", "args": ["mcp-stdio", "--group", group, "--port", str(port)],
-                      "env": ["SPILLWAY_TOKEN"],
+                      "env": [TOKEN_ENV],
                       "description": "給不支援 HTTP 的工具:stdio 與本群組端點之間的轉送"},
         },
         "tools": tools,

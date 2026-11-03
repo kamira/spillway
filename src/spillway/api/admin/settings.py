@@ -1,14 +1,17 @@
-"""`/api/settings/context`(CHG-20261101-02 決策 9)與 `/api/settings/token/rotate`
-(CHG-20261101-03 T7 決策 14)。"""
+"""`/api/settings/context`(CHG-20261101-02 決策 9)、`/api/settings/token/rotate`
+(CHG-20261101-03 T7 決策 14)與 `/api/settings` 設定總覽(CHG-20261102-02 決策 10、19)。"""
 from __future__ import annotations
 
+import importlib.metadata
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
+import spillway
 from spillway import settings as spillway_settings
 from spillway.api.deps import request_conn
 from spillway.store import repo
@@ -19,6 +22,49 @@ from .common import router
 
 CONTEXT_MAX_BYTES_MIN = 1024     # context_max_bytes 下限:小於 1 KiB 的 payload 已無檢視價值
 CONTEXT_RETENTION_DAYS_MAX = 36500   # 約 100 年;再大會讓 ledger._cutoff 溢位(審議 M25)
+
+
+# ================================================================ /api/settings(設定總覽)
+
+
+def _version() -> str:
+    """已安裝套件的版本;取不到(未安裝的原始碼樹)時用 `spillway.__version__`(決策 19)。"""
+    try:
+        return importlib.metadata.version("spillway")
+    except importlib.metadata.PackageNotFoundError:
+        return spillway.__version__
+
+
+@router.get("/settings")
+async def get_settings_overview(request: Request) -> dict[str, Any]:
+    """設定總覽(spec 9.2.7;決策 10、19),供 UI-7 與首次設定精靈:
+
+    `{port, data_dir, version, token_issued, first_run,
+      counts: {deployments, groups, routes, ledger_ok},
+      context: {record_context_default, context_retention_days, context_max_bytes,
+                payload_count, payload_bytes}}`
+
+    - `port`:serve 綁定的埠(`app.state.port`;唯讀、顯示用;不含綁定位址)。
+    - `data_dir`:`Path(app.state.db_path).parent`(與備份目錄同源;不讀 `settings.data_dir()`)。
+    - `token_issued`:存取 token 雜湊是否已存在;不回 token 或雜湊。
+    - `first_run`:`counts.deployments == 0 and counts.routes == 0`(replace 匯入空檔案後會再次為 true)。
+    - `counts.ledger_ok`:`status = 'ok'` 的帳本列數;`payload_bytes` 為 `usage_payloads.bytes` 加總。
+    """
+    state = request.app.state
+    with request_conn(request) as conn:
+        counts = repo.count_config(conn)
+        payload_count, payload_bytes = repo.payload_stats(conn)
+        token_issued = spillway_settings.get_access_token_hash(conn) is not None
+        context = _context_out(conn)
+    return {
+        "port": state.port,
+        "data_dir": str(Path(state.db_path).parent),
+        "version": _version(),
+        "token_issued": token_issued,
+        "first_run": counts["deployments"] == 0 and counts["routes"] == 0,
+        "counts": counts,
+        "context": {**context, "payload_count": payload_count, "payload_bytes": payload_bytes},
+    }
 
 
 # ================================================================ /api/settings/context
