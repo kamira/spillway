@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from spillway.clock import to_iso
 from tests.helpers.ui import db_execute

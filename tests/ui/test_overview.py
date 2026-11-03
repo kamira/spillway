@@ -172,6 +172,14 @@ def test_first_run_redirects_to_wizard(new_page: NewPage, gw: LiveGateway) -> No
     expect(page).to_have_url(gw.url("/ui/wizard.html"))
     methods = {m for m, _ in guard_of(page).requests}
     assert methods == {"GET"}
+    # 導向以 replace 換掉總覽的歷史項:返回鍵回到前一頁,不是總覽(不會再被導向一次)
+    goto(page, gw, "/ui/members.html")
+    before = page.evaluate("() => history.length")
+    page.goto(gw.url("/ui/"))
+    expect(page).to_have_url(gw.url("/ui/wizard.html"))
+    assert page.evaluate("() => history.length") == before + 1
+    page.go_back()
+    expect(page).to_have_url(gw.url("/ui/members.html"))
 
 
 def test_skip_wizard_stays_on_overview(new_page: NewPage, gw: LiveGateway) -> None:

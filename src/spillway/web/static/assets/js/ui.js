@@ -2,8 +2,9 @@
 // - initShell():導覽底部填入 location.host(127.0.0.1:<port>),完成後 <html data-shell="ready">(測試等待點)。
 // - 頂端訊息列:showMessage(text, kind, {source})、showError(err, {source})、clearMessage(source);
 //   network_error 顯示「無法連線到 spillway」;畫面只顯示 error.message,不解析 9.1.2 的 path 格式。
-//   帶 source 的錯誤是「黏著」的:只有同一 source 的 clearMessage(source)(或使用者按 ×)才會清掉;
-//   不帶 source 的訊息照舊由任何 clearMessage() 清除。
+//   帶 source 的錯誤是「黏著」的:只有同一 source 的 clearMessage(source)(或使用者在它顯示時按 ×)才會清掉;
+//   不帶 source 的訊息照舊由任何 clearMessage() 清除。訊息列一次只顯示一則(最後寫入者):之後的訊息會暫時
+//   蓋住黏著錯誤,該訊息被清除或按 × 之後,仍未清除的黏著錯誤中最新的一則會重新出現。
 // - confirmDialog({title, body, confirmLabel, cancelLabel, danger}) → Promise<boolean>:<dialog> 實作,
 //   預設焦點在「取消」,Esc 等於取消。
 // - 載入中:setLoading(el, on);送出中停用按鈕:withBusy(button, fn)。
@@ -39,18 +40,45 @@ function messageBar() {
   return bar;
 }
 
-export function showMessage(text, kind = "info", { source = null } = {}) {
-  const bar = messageBar();
+// 尚未清除的黏著錯誤:source → 文字(插入順序 = 新舊順序)
+const sticky = new Map();
+
+function renderMessage(bar, text, kind, source) {
   bar.className = `msgbar msg-${kind}`;
-  if (kind === "error" && source) bar.setAttribute("data-source", source);
+  if (source) bar.setAttribute("data-source", source);
   else bar.removeAttribute("data-source");
   bar.setAttribute("role", kind === "error" ? "alert" : "status");
   clear(bar);
   bar.append(h("span", { class: "msg-text" }, String(text)),
     h("button", { type: "button", class: "msg-close", "aria-label": TEXT.close }, "×"));
-  bar.querySelector(".msg-close").addEventListener("click", () => hideMessage(bar));
+  bar.querySelector(".msg-close").addEventListener("click", () => {
+    const owner = bar.getAttribute("data-source");
+    if (owner) sticky.delete(owner);
+    showNewestSticky(bar);
+  });
   bar.hidden = false;
   return bar;
+}
+
+// 顯示最新的黏著錯誤;沒有時隱藏訊息列
+function showNewestSticky(bar) {
+  if (!sticky.size) {
+    clear(bar);
+    bar.removeAttribute("data-source");
+    bar.hidden = true;
+    return;
+  }
+  const [source, text] = [...sticky.entries()].at(-1);
+  renderMessage(bar, text, "error", source);
+}
+
+export function showMessage(text, kind = "info", { source = null } = {}) {
+  const owner = kind === "error" && source ? source : null;
+  if (owner) {
+    sticky.delete(owner);
+    sticky.set(owner, String(text));
+  }
+  return renderMessage(messageBar(), text, kind, owner);
 }
 
 export function errorText(err) {
@@ -63,19 +91,15 @@ export function showError(err, { source = null } = {}) {
   return showMessage(errorText(err), "error", { source });
 }
 
-function hideMessage(bar) {
-  clear(bar);
-  bar.removeAttribute("data-source");
-  bar.hidden = true;
-}
-
-// 帶 source 的錯誤只由同一 source 清除(某個載入器成功時不會蓋掉另一個載入器的錯誤)
+// 帶 source 的錯誤只由同一 source 清除(某個載入器成功時不會蓋掉另一個載入器的錯誤)。
+// 正在顯示另一個仍未清除的黏著錯誤時不動作;否則改顯示最新的黏著錯誤,沒有就隱藏。
 export function clearMessage(source = null) {
+  if (source) sticky.delete(source);
   const bar = byId("msgbar");
   if (!bar) return;
   const owner = bar.getAttribute("data-source");
-  if (owner && owner !== source) return;
-  hideMessage(bar);
+  if (owner && sticky.has(owner)) return;
+  showNewestSticky(bar);
 }
 
 // ---- 確認對話框 ------------------------------------------------------------------------------
@@ -164,7 +188,8 @@ export function timeEl(iso) {
 // 負值顯示為 -$0.50(不是 $-0.50)
 export function fmtUSD(n) {
   if (n === null || n === undefined || Number.isNaN(Number(n))) return "";
-  const fixed = Number(n).toFixed(2);
+  let fixed = Number(n).toFixed(2);
+  if (fixed === "-0.00") fixed = "0.00";      // 四捨五入後為 0 的負值不顯示負號
   return fixed.startsWith("-") ? `-$${fixed.slice(1)}` : `$${fixed}`;
 }
 
@@ -239,6 +264,7 @@ export function tagInput({ tags = [], onChange = null, chipClass = "chip",
     changed();
   }
   input.addEventListener("keydown", (ev) => {
+    if (ev.isComposing || ev.keyCode === 229) return;     // 輸入法選字中的 Enter 不加入 tag
     if (ev.key === "Enter") {
       ev.preventDefault();
       commit();
@@ -250,7 +276,7 @@ export function tagInput({ tags = [], onChange = null, chipClass = "chip",
 }
 
 // 群組選單:includeAll 時第一項為 all;current 不在清單時仍列出原值;沒有任何群組、不含 all 且沒有 current 時
-// 顯示 emptyLabel(值為空字串)。/api/groups 失敗時以 source "groups" 顯示錯誤。回傳群組名稱。
+// 顯示 emptyLabel(值為空字串)。/api/groups 失敗時以 source "groups" 顯示錯誤,成功時清除該錯誤。回傳群組名稱。
 export async function fillGroupSelect(select, { includeAll = false, current = null, emptyLabel = null } = {}) {
   clear(select);
   if (includeAll) select.append(h("option", { value: "all" }, TEXT.all_group));
@@ -258,6 +284,7 @@ export async function fillGroupSelect(select, { includeAll = false, current = nu
   try {
     const data = await getJSON("/api/groups");
     names = (data.groups || []).map((g) => g.name);
+    clearMessage("groups");
   } catch (err) {
     showError(err, { source: "groups" });
   }

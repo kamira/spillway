@@ -127,7 +127,14 @@ const dashGuard = latest();
 
 async function loadDashboard() {
   const isLatest = dashGuard();
-  const [dash, depsResp] = await Promise.all([getJSON("/api/dashboard"), getJSON("/api/deployments")]);
+  let dash;
+  let depsResp;
+  try {
+    [dash, depsResp] = await Promise.all([getJSON("/api/dashboard"), getJSON("/api/deployments")]);
+  } catch (err) {
+    if (!isLatest()) return;    // 過時的載入失敗不顯示錯誤
+    throw err;
+  }
   if (!isLatest()) return;      // 較新的一次載入已在進行,舊回應不渲染
   const rows = Array.isArray(dash.deployments) ? dash.deployments : [];
   const deps = new Map((depsResp.deployments || []).map((d) => [d.id, d]));

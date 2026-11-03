@@ -6,6 +6,7 @@
 - `insert_ledger(gw, ledger_id, ts, *, deployment, route="rt", status="ok", **cols)`:寫入一列帳本(指定 id)。
 - `insert_payload(gw, ledger_id, ts, request_json, response_text=None, *, truncated=False, redacted=False)`。
 - `bulk_ledger(gw, count, ts, *, deployment="bulk", route="rt", status="ok")`:以遞迴 CTE 一次寫入大量列。
+- 網址 query 的 `query_of` 已移到 `tests.helpers.ui`。
 """
 from __future__ import annotations
 

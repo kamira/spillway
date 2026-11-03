@@ -338,6 +338,138 @@ def test_message_bar_and_errors(page: Page) -> None:
     expect(bar).to_be_hidden()
 
 
+def _msg(page: Page) -> str | None:
+    bar = page.locator("#msgbar")
+    return None if bar.is_hidden() else bar.locator(".msg-text").text_content()
+
+
+def test_sticky_errors(page: Page) -> None:
+    import_module(page, "ui.js")
+    show = """([text, kind, source]) => window.__mods["ui.js"].showMessage(text, kind, source ? {source} : {})"""
+    clear_ = """(source) => window.__mods["ui.js"].clearMessage(source ?? undefined)"""
+    # 1. 非錯誤訊息暫時蓋住黏著錯誤;清除後錯誤重新出現
+    page.evaluate(show, ["群組錯誤", "error", "groups"])
+    page.evaluate(show, ["ok", "ok", None])
+    assert _msg(page) == "ok"
+    page.evaluate(clear_, None)
+    assert _msg(page) == "群組錯誤"
+    expect(page.locator("#msgbar")).to_have_attribute("data-source", "groups")
+    # 2. 不同 source 的錯誤互不清除
+    page.evaluate(show, ["設定錯誤", "error", "config"])
+    page.evaluate(clear_, "config")
+    assert _msg(page) == "群組錯誤"
+    page.evaluate(clear_, "groups")
+    assert _msg(page) is None
+    # 3. 按 × 關閉黏著錯誤後不再出現
+    page.evaluate(show, ["群組錯誤", "error", "groups"])
+    page.locator("#msgbar").get_by_role("button", name="關閉").click()
+    assert _msg(page) is None
+    page.evaluate(clear_, None)
+    assert _msg(page) is None
+    # 4. 不帶 source 的錯誤由 clearMessage() 清除
+    page.evaluate(show, ["一般錯誤", "error", None])
+    page.evaluate(clear_, None)
+    assert _msg(page) is None
+
+
+def test_latest_and_fmt_usd(page: Page) -> None:
+    import_module(page, "ui.js")
+    out = page.evaluate("""() => {
+        const ui = window.__mods["ui.js"];
+        const guard = ui.latest();
+        const a = guard(); const b = guard();
+        const before = [a(), b()];
+        guard.invalidate();
+        return {before, after: [a(), b()],
+                usd: [ui.fmtUSD(-0.5), ui.fmtUSD(-0.001), ui.fmtUSD(0), ui.fmtUSD(1.234), ui.fmtUSD(null)]};
+    }""")
+    assert out["before"] == [False, True]
+    assert out["after"] == [False, False]
+    assert out["usd"] == ["-$0.50", "$0.00", "$0.00", "$1.23", ""]
+
+
+def test_tag_input(page: Page) -> None:
+    import_module(page, "ui.js")
+    page.evaluate("""() => {
+        const ui = window.__mods["ui.js"];
+        window.__changes = [];
+        const box = ui.tagInput({ tags: ["a"], onChange: (t) => window.__changes.push(t),
+                                  chipsAttrs: { id: "ti-chips" }, inputAttrs: { id: "ti-input" } });
+        box.button.id = "ti-add";
+        window.__tagbox = box;
+        document.querySelector("main").append(box.chips, box.input, box.button);
+    }""")
+    chips = page.locator("#ti-chips [data-tag]")
+    expect(chips).to_have_count(1)
+    page.fill("#ti-input", "  b  ")
+    page.press("#ti-input", "Enter")
+    page.fill("#ti-input", "c")
+    page.click("#ti-add")
+    page.fill("#ti-input", "   ")
+    page.press("#ti-input", "Enter")                   # 空白:略過
+    page.fill("#ti-input", "a")
+    page.press("#ti-input", "Enter")                   # 重複:不加入
+    expect(chips).to_have_count(3)
+    assert page.evaluate("() => window.__tagbox.tags()") == ["a", "b", "c"]
+    assert page.input_value("#ti-input") == ""
+    # 輸入法選字中的 Enter 不加入
+    page.fill("#ti-input", "zh")
+    page.evaluate("""() => document.getElementById("ti-input").dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true }))""")
+    assert page.evaluate("() => window.__tagbox.tags()") == ["a", "b", "c"]
+    page.fill("#ti-input", "")
+    page.locator('#ti-chips [data-tag="b"] .chip-x').click()
+    assert page.evaluate("() => window.__tagbox.tags()") == ["a", "c"]
+    # tags() 回傳副本
+    assert page.evaluate("() => { const t = window.__tagbox.tags(); t.push('x'); return window.__tagbox.tags(); }") \
+        == ["a", "c"]
+    assert page.evaluate("() => window.__changes") == [["a", "b"], ["a", "b", "c"], ["a", "b", "c"], ["a", "c"]]
+
+
+def _group_select(page: Page, opts: str) -> dict:
+    return page.evaluate("""async (opts) => {
+        const ui = window.__mods["ui.js"];
+        const sel = document.createElement("select");
+        const names = await ui.fillGroupSelect(sel, opts);
+        return { names, values: [...sel.options].map((o) => o.value), texts: [...sel.options].map((o) => o.textContent),
+                 value: sel.value };
+    }""", opts)
+
+
+def test_fill_group_select(page: Page, gw: LiveGateway) -> None:
+    import_module(page, "ui.js")
+    empty = _group_select(page, {"emptyLabel": "(尚無群組)"})
+    assert (empty["values"], empty["texts"]) == ([""], ["(尚無群組)"])
+    api(gw, "POST", "/api/groups", {"name": "coding", "selector": {"any": ["coding"]}})
+    all_ = _group_select(page, {"includeAll": True, "current": "all"})
+    assert all_["values"] == ["all", "coding"] and all_["value"] == "all"
+    assert all_["texts"][0] == "all(全部 route)"
+    gone = _group_select(page, {"includeAll": True, "current": "gone"})
+    assert gone["values"] == ["all", "coding", "gone"] and gone["value"] == "gone"
+    plain = _group_select(page, {"emptyLabel": "(尚無群組)"})
+    assert plain["values"] == ["coding"] and plain["names"] == ["coding"]
+
+
+@pytest.mark.expect_http_errors(500)
+def test_fill_group_select_clears_its_error(page: Page) -> None:
+    import_module(page, "ui.js")
+    calls = {"n": 0}
+
+    def handler(route) -> None:  # noqa: ANN001
+        calls["n"] += 1
+        if calls["n"] == 1:
+            route.fulfill(status=500, content_type="application/json",
+                          body='{"error": {"code": "internal_error", "message": "群組載入失敗"}}')
+        else:
+            route.continue_()
+
+    page.route("**/api/groups", handler)
+    _group_select(page, {"includeAll": True})
+    assert _msg(page) == "群組載入失敗"
+    _group_select(page, {"includeAll": True})
+    assert _msg(page) is None
+
+
 def test_formatters_and_labels(page: Page) -> None:
     import_module(page, "ui.js")
     import_module(page, "strings.js")

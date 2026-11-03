@@ -253,6 +253,7 @@ def wait_loaded(page: Page, selector: str) -> None:
 
 
 def query_of(url: str) -> dict[str, str]:
+    """網址的 query → dict;每個鍵必須只有一個值(否則 assert 失敗)。"""
     q = parse_qs(urlsplit(url).query, keep_blank_values=True)
     assert all(len(v) == 1 for v in q.values()), q
     return {k: v[0] for k, v in q.items()}
@@ -290,6 +291,7 @@ def db_execute(gw: Any, sql: str, params: Iterable[Any] = ()) -> None:
 
 def member_body(dep_id: str, *, kind: str = "api", tags: list[str] | None = None,
                 budget: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
+    """`POST /api/deployments` 的 body:api(openai)或 local(hosted_vllm)預設值,`kw` 覆寫任何欄位。"""
     body: dict[str, Any] = {"id": dep_id, "model_name": dep_id, "kind": kind, "tags": tags or ["r"]}
     if kind == "api":
         body.update(provider="openai", model="gpt-4o-mini", credential_ref=f"env:{TEST_KEY_ENV}",
@@ -305,15 +307,18 @@ def member_body(dep_id: str, *, kind: str = "api", tags: list[str] | None = None
 
 
 def add_member(gw: Any, dep_id: str, **kw: Any) -> dict[str, Any]:
+    """以 `member_body(dep_id, **kw)` 建立成員(期望 201),回傳伺服器回應。"""
     return api(gw, "POST", "/api/deployments", member_body(dep_id, **kw), expect=(201,)).json()
 
 
 def add_route(gw: Any, name: str, tag: str = "r", *, target: dict[str, Any] | None = None,
               **kw: Any) -> dict[str, Any]:
+    """建立 route(期望 201);target 省略時為 `{"tags": {"any": [tag]}}`,`kw` 為其他欄位(mode 等)。"""
     body = {"name": name, "target": target if target is not None else {"tags": {"any": [tag]}}, **kw}
     return api(gw, "POST", "/api/routes", body, expect=(201,)).json()
 
 
 def seed_group(gw: Any, name: str, selector: dict[str, list[str]] | None = None) -> dict[str, Any]:
+    """建立群組(期望 201);selector 省略時為 `{"any": [name]}`。"""
     body = {"name": name, "selector": selector if selector is not None else {"any": [name]}}
     return api(gw, "POST", "/api/groups", body, expect=(201,)).json()
