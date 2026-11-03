@@ -17,7 +17,7 @@ from spillway.routing import members_of
 from spillway.store import repo
 from spillway.store.db import transaction
 
-from .common import _invalid, _not_found, router, tools_changed
+from .common import _not_found, invalid, router, tools_changed
 from .models import OrderIn, RouteIn
 
 
@@ -46,7 +46,7 @@ def _load_route(conn: sqlite3.Connection, name: str) -> repo.Route:
 
 def _check_group_exists(conn: sqlite3.Connection, target: Mapping[str, Any]) -> None:
     if "group" in target and repo.get_group(conn, target["group"]) is None:
-        raise _invalid("body.target.group", redact_echo(f"群組 {target['group']} 不存在"))
+        raise invalid("body.target.group", redact_echo(f"群組 {target['group']} 不存在"))
 
 
 @router.get("/routes")
@@ -60,7 +60,7 @@ async def list_routes(request: Request) -> dict[str, Any]:
 async def create_route(request: Request, body: RouteIn) -> dict[str, Any]:
     """建立 route;`{group}` 目標的群組必須存在(否則 422);重複 name → 409 `conflict`。"""
     if body.name is None:
-        raise _invalid("body.name", "Field required")
+        raise invalid("body.name", "Field required")
     with request_conn(request) as conn:
         with transaction(conn):
             if repo.get_route(conn, body.name) is not None:
@@ -82,7 +82,7 @@ async def update_route(request: Request, name: str, body: RouteIn) -> dict[str, 
     """整筆取代 route 設定(未給的欄位回到預設);既有手動排序保留(目標變更後不再屬於目標的成員,
     由 Router 依目標過濾,不在此刪除)。"""
     if body.name is not None and body.name != name:
-        raise _invalid("body.name", "不可變更 route 名稱(必須與路徑相同)")
+        raise invalid("body.name", "不可變更 route 名稱(必須與路徑相同)")
     with request_conn(request) as conn:
         with transaction(conn):
             _load_route(conn, name)

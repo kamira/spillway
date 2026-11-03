@@ -36,8 +36,10 @@ def tools_changed(request: Request) -> None:
 # ================================================================ 錯誤處理(共用 spillway.api 的工具)
 
 
-def _invalid(path: str, message: str) -> ApiError:
-    return ApiError(422, "validation_error", f"{path}: {message}")
+def invalid(path: str | None, reason: str) -> ApiError:
+    """422 `validation_error` 的單一建構函式(CHG-20261103-01 決策 21 ①):`path` 為 None 時訊息就是
+    `reason`,否則為 `"<path>: <reason>"`。呼叫端負責 `reason` 的遮罩(`redact_echo`)。"""
+    return ApiError(422, "validation_error", reason if path is None else f"{path}: {reason}")
 
 
 def _not_found(what: str) -> ApiError:

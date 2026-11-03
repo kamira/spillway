@@ -30,7 +30,7 @@ from spillway.api.deps import request_conn
 from spillway.settings import MCP_ALL_GROUP, TOKEN_ENV, mcp_url
 from spillway.store import repo
 
-from .common import _invalid, _not_found, router
+from .common import _not_found, invalid, router
 
 DEFAULT_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates" / "mcp"
 ENV_VARS = [TOKEN_ENV]   # CHG-20261102-02 決策 15:單一定義在 settings
@@ -176,7 +176,7 @@ def _notes(tool: str, ctx: dict[str, Any]) -> list[dict[str, str]]:
 async def mcp_config(request: Request, group: str, tool: str) -> dict[str, Any]:
     """見模組 docstring。"""
     if tool not in TOOL_FORMATS:
-        raise _invalid("query.tool", "不支援的工具(可用:" + "、".join(TOOL_FORMATS) + ")")
+        raise invalid("query.tool", "不支援的工具(可用:" + "、".join(TOOL_FORMATS) + ")")
     if group != MCP_ALL_GROUP:
         with request_conn(request) as conn:
             if repo.get_group(conn, group) is None:

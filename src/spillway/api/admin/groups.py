@@ -17,7 +17,7 @@ from spillway.routing.target import normalize_selector
 from spillway.store import repo
 from spillway.store.db import transaction
 
-from .common import _invalid, _not_found, router, tools_changed
+from .common import _not_found, invalid, router, tools_changed
 from .models import GroupIn, GroupUpdate, group_name_problem
 
 def _member_brief(d: Deployment) -> dict[str, Any]:
@@ -52,7 +52,7 @@ async def create_group(request: Request, body: GroupIn) -> dict[str, Any]:
     (CHG-20261102-01 決策 22:`/mcp/all` 暴露全部 route)。群組沒有改名端點(`PUT` 只取代選擇器)。"""
     problem = group_name_problem(body.name)
     if problem is not None:
-        raise _invalid("body.name", problem)
+        raise invalid("body.name", problem)
     with request_conn(request) as conn:
         with transaction(conn):
             if repo.get_group(conn, body.name) is not None:

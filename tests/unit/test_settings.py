@@ -95,3 +95,26 @@ def test_serve_ignores_bind_host_and_port_rows(monkeypatch):
     monkeypatch.setattr(cli, "_run_server", lambda host, port: seen.append((host, port)) or 0)
     assert cli.main(["serve"]) == 0
     assert seen == [("127.0.0.1", 8787)]
+
+
+# ---- CHG-20261103-01 T1(決策 21 ③):package_version ------------------------------------------
+
+def test_package_version_equals_metadata_when_installed():
+    import importlib.metadata
+    import spillway
+    try:
+        expected = importlib.metadata.version("spillway")
+    except importlib.metadata.PackageNotFoundError:
+        expected = spillway.__version__
+    assert settings.package_version() == expected
+
+
+def test_package_version_falls_back_to_dunder(monkeypatch):
+    import importlib.metadata
+    import spillway
+
+    def missing(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    assert settings.package_version() == spillway.__version__

@@ -531,7 +531,9 @@ def iter_ledger(
 
     帳本 CSV 匯出用(CHG-20261102-02 決策 9):以 `fetchmany` 分批讀,不一次載入整個結果;
     整段在一個讀交易內(`BEGIN` … `COMMIT`),各批看到同一份快照。呼叫端在中途停止迭代
-    (`close()`、例外)時回滾讀交易。呼叫端已在交易中時沿用,不另開也不提交。"""
+    (`close()`、例外)時回滾讀交易。呼叫端已在交易中時沿用,不另開也不提交。
+    交易跨越多次 yield,所以不用 `read_tx`(context manager),在此自行 `BEGIN`(D27 串流例外;
+    「已在交易內就沿用」的規則與 `read_tx` 相同)。"""
     where, args = _ledger_where(route_name, deployment_id, status, since, until)
     sql = "SELECT * FROM usage_ledger" + where + " ORDER BY ts DESC, id DESC LIMIT ?"
     args.append(limit)
@@ -768,21 +770,28 @@ def get_context_settings(conn: sqlite3.Connection) -> ContextSettings:
 
 
 @contextmanager
-def read_snapshot(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-    """單一讀交易:已在交易內(含 `transaction(conn)` 的寫鎖)時沿用、不另開;否則 `BEGIN`(DEFERRED,
-    不取寫鎖)… 結束時 `COMMIT`(例外時 `ROLLBACK`)。WAL 模式下區塊內的多條 SELECT 看到同一份快照。"""
+def read_tx(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """讀交易(CHG-20261103-01 決策 21 ④):已在交易內(`conn.in_transaction`,含 `transaction(conn)` 的
+    寫鎖或外層 `read_tx`)時直接 yield,不 BEGIN、不 ROLLBACK,外層交易照常由外層結束;否則 `BEGIN`
+    (DEFERRED,不取寫鎖;SQLite 不會強制唯讀,呼叫端只做讀取)… 結束時一律 `ROLLBACK`(只讀,結果與
+    COMMIT 相同)。WAL 模式下區塊內的多條 SELECT 看到同一份快照。
+    `iter_ledger` 是 generator,交易跨越多次 yield,仍在函式內自行 `BEGIN`(D27 串流例外)。"""
     if conn.in_transaction:
         yield conn
         return
     conn.execute("BEGIN")
     try:
         yield conn
-    except BaseException:
+    finally:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
-        raise
-    if conn.in_transaction:
-        conn.execute("COMMIT")
+
+
+@contextmanager
+def read_snapshot(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """單一讀交易(`read_tx`):整份設定在同一份快照內讀出。"""
+    with read_tx(conn):
+        yield conn
 
 
 def list_all_route_targets(conn: sqlite3.Connection) -> dict[str, list[RouteTarget]]:

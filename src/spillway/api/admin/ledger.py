@@ -17,13 +17,12 @@ from starlette.types import Receive, Scope, Send
 
 from spillway.api import ApiError
 from spillway.api.deps import request_conn
-from spillway.clock import to_iso
-from spillway.configio import utc_stamp_filename
+from spillway.clock import to_iso, utc_stamp
 from spillway.domain import LEDGER_STATUSES
 from spillway.ledger import LedgerNotFound, payload_status
 from spillway.store import repo
 
-from .common import _clock, _invalid, _not_found, router
+from .common import _clock, _not_found, invalid, router
 
 
 LEDGER_PAGE_SIZE = 50
@@ -42,7 +41,7 @@ def _parse_time(value: str | None, path: str) -> datetime | None:
     try:
         dt = datetime.fromisoformat(value)
     except ValueError:
-        raise _invalid(path, "必須是 ISO 8601 時間(例:2026-10-30T12:00:00Z)") from None
+        raise invalid(path, "必須是 ISO 8601 時間(例:2026-10-30T12:00:00Z)") from None
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
@@ -96,7 +95,6 @@ async def list_ledger(
 
 LEDGER_CSV_MAX_ROWS = 100_000
 LEDGER_CSV_BATCH = 1000
-LEDGER_CSV_FILENAME_FORMAT = "spillway-ledger-%Y%m%dT%H%M%SZ.csv"
 # 欄位與順序同 `_ledger_out`(`id` 在前,其餘為 `repo.LedgerRow` 欄位順序)
 LEDGER_CSV_COLUMNS = (
     "id", "ts", "route_name", "deployment_id", "effort", "tokens_in", "tokens_out", "cost_usd",
@@ -170,9 +168,9 @@ async def export_ledger_csv(
     with request_conn(request) as conn:
         total = repo.count_ledger(conn, **filters)
     if total > LEDGER_CSV_MAX_ROWS:
-        raise _invalid("query", f"符合條件的帳本列有 {total} 列,超過上限 {LEDGER_CSV_MAX_ROWS} 列,"
-                                "請縮小範圍")
-    filename = utc_stamp_filename(_clock(request).now(), LEDGER_CSV_FILENAME_FORMAT)
+        raise invalid("query", f"符合條件的帳本列有 {total} 列,超過上限 {LEDGER_CSV_MAX_ROWS} 列,"
+                               "請縮小範圍")
+    filename = f"spillway-ledger-{utc_stamp(_clock(request).now())}.csv"
     factory = request.app.state.conn_factory
 
     async def body() -> AsyncIterator[str]:

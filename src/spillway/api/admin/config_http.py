@@ -42,7 +42,7 @@ from spillway.domain import Deployment
 from spillway.store import repo
 
 from . import config_file
-from .common import router, tools_changed
+from .common import invalid, router, tools_changed
 from .secrets import _secret_paths
 
 EXPORT_MEDIA_TYPE = "application/yaml; charset=utf-8"
@@ -109,20 +109,16 @@ def _restorable_problem(deployments: Sequence[Deployment], text: str) -> str | N
     return None
 
 
-def _bad_request(message: str) -> ApiError:
-    return ApiError(422, "validation_error", message)
-
-
 def _check_content_type(value: str | None) -> None:
     if not value:
-        raise _bad_request(_CONTENT_TYPE_REASON)
+        raise invalid(None, _CONTENT_TYPE_REASON)
     media, *params = (p.strip().lower() for p in value.split(";"))
     if media not in IMPORT_MEDIA_TYPES:
-        raise _bad_request(_CONTENT_TYPE_REASON)
+        raise invalid(None, _CONTENT_TYPE_REASON)
     for param in params:
         # "" 允許結尾多一個分號(`application/yaml;`):split 後的空參數不是 charset 宣告
         if param.replace(" ", "") not in ("charset=utf-8", "charset=\"utf-8\"", ""):
-            raise _bad_request("Content-Type 的 charset 必須為 utf-8")
+            raise invalid(None, "Content-Type 的 charset 必須為 utf-8")
 
 
 async def _read_body(request: Request) -> str:
@@ -131,20 +127,20 @@ async def _read_body(request: Request) -> str:
         try:
             declared = int(length)
         except ValueError:
-            raise _bad_request("Content-Length 無效") from None
+            raise invalid(None, "Content-Length 無效") from None
         if declared > MAX_IMPORT_BYTES:
-            raise _bad_request(f"設定檔超過上限 {MAX_IMPORT_BYTES} bytes")
+            raise invalid(None, f"設定檔超過上限 {MAX_IMPORT_BYTES} bytes")
     chunks: list[bytes] = []
     total = 0
     async for chunk in request.stream():
         total += len(chunk)
         if total > MAX_IMPORT_BYTES:
-            raise _bad_request(f"設定檔超過上限 {MAX_IMPORT_BYTES} bytes")
+            raise invalid(None, f"設定檔超過上限 {MAX_IMPORT_BYTES} bytes")
         chunks.append(chunk)
     try:
         return b"".join(chunks).decode("utf-8-sig")
     except UnicodeDecodeError:
-        raise _bad_request("設定檔必須是 UTF-8 文字") from None
+        raise invalid(None, "設定檔必須是 UTF-8 文字") from None
 
 
 @router.post(

@@ -12,7 +12,7 @@ from spillway.domain import ChatRequest
 from spillway.effort import InvalidEffort, normalize_effort
 from spillway.routing import Plan, RouteNotFound
 
-from .common import _estimate_out, _invalid, _not_found, router
+from .common import _estimate_out, _not_found, invalid, router
 from .routes import _load_route
 
 
@@ -85,7 +85,7 @@ async def _dry_run(request: Request, model: str, req: ChatRequest) -> Plan:
     except RouteNotFound:
         raise _not_found(f"route 或成員:{model}") from None
     except InvalidEffort:
-        raise _invalid("body.reasoning_effort", "必須為 none、low、medium、high、max") from None
+        raise invalid("body.reasoning_effort", "必須為 none、low、medium、high、max") from None
 
 
 @router.post("/routes/{name}/dry-run")

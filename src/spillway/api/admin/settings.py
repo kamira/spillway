@@ -2,7 +2,6 @@
 (CHG-20261101-03 T7 決策 14)與 `/api/settings` 設定總覽(CHG-20261102-02 決策 10、19)。"""
 from __future__ import annotations
 
-import importlib.metadata
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -11,7 +10,6 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
-import spillway
 from spillway import settings as spillway_settings
 from spillway.api.deps import request_conn
 from spillway.store import repo
@@ -27,12 +25,9 @@ CONTEXT_RETENTION_DAYS_MAX = 36500   # 約 100 年;再大會讓 ledger._cutoff �
 # ================================================================ /api/settings(設定總覽)
 
 
-def _version() -> str:
-    """已安裝套件的版本;取不到(未安裝的原始碼樹)時用 `spillway.__version__`(決策 19)。"""
-    try:
-        return importlib.metadata.version("spillway")
-    except importlib.metadata.PackageNotFoundError:
-        return spillway.__version__
+# 版本來源單一定義在 `spillway.settings.package_version`(CHG-20261103-01 決策 21 ③);
+# 保留模組內名稱 `_version` 供既有測試引用
+_version = spillway_settings.package_version
 
 
 @router.get("/settings")
@@ -59,7 +54,7 @@ async def get_settings_overview(request: Request) -> dict[str, Any]:
     return {
         "port": state.port,
         "data_dir": str(Path(state.db_path).parent),
-        "version": _version(),
+        "version": spillway_settings.package_version(),
         "token_issued": token_issued,
         "first_run": counts["deployments"] == 0 and counts["routes"] == 0,
         "counts": counts,

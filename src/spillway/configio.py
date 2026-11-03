@@ -2,7 +2,7 @@
 
 依賴只有 `spillway.store`、`spillway.domain`、`spillway.clock`、`yaml` 與標準庫;**不可** import
 `spillway.api*`(L1 測試:`import spillway.configio` 之後 `"spillway.api" not in sys.modules`)。
-SQL 一律經 `store.repo`。HTTP 轉換、請求與檔案模型驗證屬介面層(`api/admin/config_io.py`、
+SQL 一律經 `store.repo`。HTTP 轉換、請求與檔案模型驗證屬介面層(`api/admin/config_http.py`、
 `api/admin/config_file.py`)。
 
 匯出(T3):`dump(conn) -> str`、格式常數與 `_Dumper`。匯入(T4):`load_yaml`(嚴格 loader)、
@@ -40,12 +40,13 @@ import stat
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 
+from spillway.clock import utc_strftime
 from spillway.domain import Budget, Deployment
 from spillway.store import repo
 from spillway.store.db import transaction
@@ -112,10 +113,9 @@ def _represent_str(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
 _Dumper.add_representer(str, _represent_str)
 
 
-def utc_stamp_filename(now: datetime, fmt: str) -> str:
-    """`now` 轉 UTC 後套 `fmt`(`strftime`,例 `spillway-config-%Y%m%dT%H%M%SZ.yaml`);
-    匯出檔名(介面層)與匯入備份檔名(T4)共用。"""
-    return now.astimezone(timezone.utc).strftime(fmt)
+# `now` 轉 UTC 後套 `fmt`;匯出檔名(介面層)與匯入備份檔名(T4)共用。定義在 `spillway.clock`,
+# 此處為別名(CHG-20261103-01 決策 21 ⑤;`__all__` 不變)
+utc_stamp_filename = utc_strftime
 
 
 # ---------------------------------------------------------------- 各實體 → 文件片段(純函式)

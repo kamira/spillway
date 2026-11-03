@@ -46,3 +46,32 @@ def test_naive_time_is_rejected_everywhere():
         c.set(datetime(2026, 1, 1, 12))
     with pytest.raises(ValueError):
         to_iso(datetime(2026, 1, 1, 12))
+
+
+# ---- CHG-20261103-01 T1(決策 21 ⑤):utc_strftime、utc_stamp ----------------------------------
+
+def test_utc_stamp_formats_utc_seconds():
+    from spillway.clock import utc_stamp
+    assert utc_stamp(datetime(2026, 11, 3, 1, 13, 20, tzinfo=timezone.utc)) == "20261103T011320Z"
+
+
+def test_utc_stamp_converts_non_utc_input_first():
+    from datetime import timedelta
+    from spillway.clock import utc_stamp
+    taipei = timezone(timedelta(hours=8))
+    assert utc_stamp(datetime(2026, 11, 3, 9, 13, 20, tzinfo=taipei)) == "20261103T011320Z"
+
+
+def test_utc_strftime_applies_any_format_in_utc():
+    from datetime import timedelta
+    from spillway.clock import utc_strftime
+    minus5 = timezone(timedelta(hours=-5))
+    now = datetime(2026, 11, 2, 22, 30, 5, tzinfo=minus5)
+    assert utc_strftime(now, "x-%Y-%m-%d %H:%M:%S.csv") == "x-2026-11-03 03:30:05.csv"
+    assert utc_strftime(now, "spillway-config-%Y%m%dT%H%M%SZ.yaml") == "spillway-config-20261103T033005Z.yaml"
+
+
+def test_configio_utc_stamp_filename_is_clock_alias():
+    from spillway import clock, configio
+    assert configio.utc_stamp_filename is clock.utc_strftime
+    assert "utc_stamp_filename" in configio.__all__
