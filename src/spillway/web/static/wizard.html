@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>首次設定 · Spillway</title>
 <link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/member-form.css">
+<link rel="stylesheet" href="assets/wizard.css">
 <script type="module" src="assets/js/wizard.js"></script>
 </head>
 <body>
@@ -25,8 +27,59 @@
 <div class="head">
 <div>
 <h1>首次設定</h1>
+<p class="sub">照下列四步加入第一個成員並完成第一次呼叫;每步完成即寫入,中途離開不回滾。</p>
 </div>
+<a class="btn ghost" id="wizard-skip" href="/ui/?skip_wizard=1">略過</a>
 </div>
+<ol class="steps" id="wizard-steps" aria-label="步驟">
+<li data-step="1"><span class="step-num">1</span><strong>加入成員</strong><span class="muted small">API、Local 或訂閱 CLI</span></li>
+<li data-step="2"><span class="step-num">2</span><strong>測試呼叫</strong><span class="muted small">實際呼叫上游一次</span></li>
+<li data-step="3"><span class="step-num">3</span><strong>建立 route</strong><span class="muted small">以 tag 指定成員</span></li>
+<li data-step="4"><span class="step-num">4</span><strong>完成</strong><span class="muted small">複製呼叫範例</span></li>
+</ol>
+<div id="wizard-loading" class="loading">載入中…</div>
+<section class="card" id="step-1" aria-labelledby="step-1-h" hidden>
+<h2 id="step-1-h">① 加入成員</h2>
+<p class="note warn">憑證參照的環境變數必須在啟動 serve 前設定;值不要貼在這裡。</p>
+<div id="member-form-host"></div>
+</section>
+<section class="card" id="step-2" aria-labelledby="step-2-h" hidden>
+<h2 id="step-2-h">② 測試呼叫</h2>
+<p id="test-member" class="mono"></p>
+<div class="row">
+<button class="btn primary" type="button" id="test-run">測試呼叫</button>
+<span class="muted small" id="test-note">會實際呼叫上游一次,並記一列帳本</span>
+</div>
+<div class="callout" id="test-result" role="status" hidden></div>
+<div class="row between">
+<button class="btn" type="button" id="test-back">← 上一步</button>
+<button class="btn primary" type="button" id="test-next">下一步 →</button>
+</div>
+</section>
+<section class="card" id="step-3" aria-labelledby="step-3-h" hidden>
+<h2 id="step-3-h">③ 建立 route</h2>
+<form class="stack" id="route-form" novalidate>
+<div class="grid2">
+<label class="f" for="route-name"><span class="field-label">route 名稱</span><input type="text" id="route-name" name="route_name" class="mono" autocomplete="off" value="chat"><span class="hint">呼叫端在 model 欄位使用的名稱</span></label>
+<label class="f" for="route-mode"><span class="field-label">mode</span><select id="route-mode" name="route_mode"><option value="chat">chat</option><option value="task">task</option></select><span class="hint warn-text" id="route-cli-note" hidden>chat route 不使用 CLI 成員</span></label>
+<label class="f" for="route-tag"><span class="field-label">tag</span><select id="route-tag" name="route_tag"></select><span class="hint">target 為 tags any: [所選的 tag]</span></label>
+<div class="f"><span class="field-label">符合的成員</span><span id="route-preview" aria-live="polite">—</span></div>
+</div>
+<p class="error" id="route-error" role="alert" hidden></p>
+<div class="row end"><button class="btn primary" type="submit" id="route-create">建立 route</button></div>
+</form>
+</section>
+<section class="card" id="step-4" aria-labelledby="step-4-h" hidden>
+<h2 id="step-4-h">④ 完成</h2>
+<p id="done-lead"></p>
+<pre class="wrap" id="curl-example" tabindex="0"></pre>
+<p class="note warn" id="curl-copy-hint" role="status" hidden></p>
+<div class="row">
+<button class="btn primary" type="button" id="curl-copy">複製</button>
+<a class="btn" id="done-overview" href="/ui/">前往總覽</a>
+</div>
+<p class="small">MCP 用戶端需要存取 token:<a id="done-token" href="/ui/settings.html#token">前往設定產生</a></p>
+</section>
 </main>
 </div>
 </body>
