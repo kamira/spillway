@@ -13,7 +13,7 @@ from fastapi import Request, Response
 
 from spillway.api import ApiError, redact_echo
 from spillway.api.deps import request_conn
-from spillway.routing import members_of
+from spillway.routing import members_of, static_plan
 from spillway.store import repo
 from spillway.store.db import transaction
 
@@ -75,6 +75,26 @@ async def create_route(request: Request, body: RouteIn) -> dict[str, Any]:
 async def get_route(request: Request, name: str) -> dict[str, Any]:
     with request_conn(request) as conn:
         return _route_out(conn, _load_route(conn, name))
+
+
+@router.get("/routes/{name}/effective-order")
+async def get_effective_order(request: Request, name: str) -> dict[str, Any]:
+    """目前生效的靜態順序(CHG-20261103-01 決策 10 ②;AM-1)。
+
+    `{"route", "mode", "ordered": "manual"|"default", "slots": [{"slot", "entries": [{"deployment",
+    "effort", "weight", "unsorted"}]}]}`;由 `routing.static_plan` 產生,與 MCP `list_routes` 同一算法:
+    候選為目標的全部成員(含停用、冷卻、健康不佳者),只有 chat route 排除 cli 成員;`slot` 保留
+    planner 的編號(可能不連號);stale target 不輸出;群組不存在或沒有成員 → `slots: []`。
+    route 不存在 → 404 `not_found`。不寫入。"""
+    with request_conn(request) as conn:
+        route = _load_route(conn, name)
+        targets = repo.list_route_targets(conn, name)
+        plan = static_plan(route, targets, repo.list_deployments(conn), repo.list_groups(conn))
+    return {"route": route.name, "mode": route.mode, "ordered": "manual" if targets else "default",
+            "slots": [{"slot": s.number,
+                       "entries": [{"deployment": e.deployment.id, "effort": e.effort,
+                                    "weight": e.weight, "unsorted": e.unsorted} for e in s.entries]}
+                      for s in plan]}
 
 
 @router.put("/routes/{name}")

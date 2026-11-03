@@ -137,3 +137,40 @@ async def test_dashboard_query_count_is_constant(client, db, clock, make_app, ma
     # CHG-20261101-03 決策 6:冷卻併入成員查詢(LEFT JOIN cooldowns),不多一個查詢
     cooldown_queries = [q for q in seen if "cooldowns" in q]
     assert len(cooldown_queries) == 1 and "FROM deployments d" in cooldown_queries[0]
+
+
+# ---------------------------------------------------------------- daily_spend_7d
+# CHG-20261103-01 T2(決策 10 ③;AM-13)
+
+
+async def test_daily_spend_7d(client, db, clock):
+    await client.post("/api/deployments", json=api_member("fresh"))                 # 新成員:沒有帳本列
+    await client.post("/api/deployments", json=api_member(
+        "idle", budget={"type": "usd", "limit_amount": 10, "window": "none"}))
+    await client.post("/api/deployments", json=api_member(
+        "pool", budget={"type": "credit_pool", "limit_amount": 50, "window": "none"}))
+    await client.post("/api/deployments", json=api_member("unl"))                   # 無上限也輸出
+    spend(db, clock, "idle", 3.0, days_ago=8)                                       # 7 天前:不計
+    spend(db, clock, "pool", 1.25, days_ago=1)
+    spend(db, clock, "pool", 2.0, days_ago=6)
+    spend(db, clock, "pool", None, hours_ago=1, status="error")
+    spend(db, clock, "unl", 0.7, hours_ago=2)
+    rows = {d["id"]: d for d in (await client.get("/api/dashboard")).json()["deployments"]}
+    assert rows["fresh"]["daily_spend_7d"] == 0.0 and isinstance(rows["fresh"]["daily_spend_7d"], float)
+    assert rows["idle"]["daily_spend_7d"] == 0.0 and rows["idle"]["est_days_left"] is None
+    pool = rows["pool"]
+    assert pool["daily_spend_7d"] == (1.25 + 2.0) / 7                               # 不四捨五入
+    assert pool["est_days_left"] == pytest.approx(max(pool["remaining"], 0.0) / pool["daily_spend_7d"])
+    assert rows["unl"]["daily_spend_7d"] == 0.7 / 7 and rows["unl"]["est_days_left"] is None
+
+
+async def test_mcp_quota_status_fields_unchanged(make_app, make_client, db, clock):
+    from spillway.api.mcp import tools
+    assert tools._QUOTA_FIELDS == ("id", "kind", "provider", "budget_type", "remaining", "window",
+                                   "cooling_until", "cooling_reason")
+    app = make_app()
+    async with make_client(app) as c:
+        await c.post("/api/deployments", json=api_member("a"))
+        spend(db, clock, "a", 1.0, hours_ago=1)
+        (m,) = tools._quota_status(app, "all").structuredContent["members"]
+    assert set(m) == set(tools._QUOTA_FIELDS) and "daily_spend_7d" not in m

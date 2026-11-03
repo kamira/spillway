@@ -62,6 +62,18 @@ async def create_group(request: Request, body: GroupIn) -> dict[str, Any]:
         return _group_out(_load_group(conn, body.name), repo.list_deployments(conn))
 
 
+# 註記:宣告在 `/groups/{name}` 之前,防範日後新增 `POST /groups/{name}` 時吃掉 `preview`(AM-13)
+@router.post("/groups/preview")
+async def preview_group(request: Request, body: GroupUpdate) -> dict[str, Any]:
+    """選擇器預覽(CHG-20261103-01 決策 10 ①):body `{selector: {all, any, none}}`(同 `PUT` 的
+    `GroupUpdate`,未知鍵 → 422);回 `{members: [...]}`,形狀與 `GET /api/groups/{name}` 的
+    `members` 相同(含停用者,依 id 排序);空選擇器符合全部成員。不寫入。"""
+    sel = normalize_selector(body.selector.model_dump())
+    with request_conn(request) as conn:
+        deps = repo.list_deployments(conn)
+    return {"members": [_member_brief(d) for d in members_of({"tags": sel}, deps)]}
+
+
 @router.get("/groups/{name}")
 async def get_group(request: Request, name: str) -> dict[str, Any]:
     """`{name, selector: {all, any, none}, members: [{id, model_name, kind, provider, enabled}]}`;

@@ -118,3 +118,62 @@ async def test_existing_hostile_group_names_still_usable(client, db):
 async def test_member_id_rule_unchanged(client):
     r = await client.post("/api/deployments", json=api_member("a.b", tags=[]))
     assert r.status_code in (200, 201), r.text
+
+
+# ================================================================ POST /api/groups/preview
+# CHG-20261103-01 T2(決策 10 ①;AM-13)
+
+
+async def test_preview_matches_saved_group_members(client):
+    await seed(client)
+    await client.post("/api/deployments", json=api_member("c-off", tags=["coding"], enabled=False))
+    await client.post("/api/deployments", json=api_member("b2", tags=["coding", "cloud"]))
+    sel = {"any": ["coding"]}
+    r = await client.post("/api/groups/preview", json={"selector": sel})
+    assert r.status_code == 200, r.text
+    preview = r.json()
+    assert set(preview) == {"members"}
+    assert [m["id"] for m in preview["members"]] == ["b2", "c-off"]       # 含停用、依 id 排序
+    assert preview["members"][1]["enabled"] is False
+    assert (await client.post("/api/groups", json={"name": "coding", "selector": sel})).status_code == 201
+    assert (await client.get("/api/groups/coding")).json()["members"] == preview["members"]
+
+
+async def test_preview_empty_selector_matches_all(client):
+    await seed(client)
+    await client.post("/api/deployments", json=api_member("z-off", tags=[], enabled=False))
+    for body in ({"selector": {}}, {"selector": {"all": [], "any": [], "none": []}}):
+        r = await client.post("/api/groups/preview", json=body)
+        assert r.status_code == 200, r.text
+        assert [m["id"] for m in r.json()["members"]] == ["a", "b", "q", "z-off"]
+
+
+@pytest.mark.parametrize("body", [
+    {"selector": {"some": ["x"]}},          # 未知選擇器鍵
+    {"selector": {"any": [1]}},             # 非字串 tag
+    {"selector": {"any": "coding"}},
+    {"selector": {}, "name": "x"},          # body 未知鍵
+    {},
+])
+async def test_preview_validation(client, body):
+    assert_error(await client.post("/api/groups/preview", json=body), 422, "validation_error")
+
+
+async def test_preview_does_not_write(client, db):
+    await seed(client)
+    before = list(db.iterdump())
+    r = await client.post("/api/groups/preview", json={"selector": {"all": ["cloud"]}})
+    assert r.status_code == 200
+    assert list(db.iterdump()) == before
+    assert repo.list_groups(db) == []
+
+
+async def test_preview_has_no_token_or_hash(client, db):
+    from spillway import settings
+    await seed(client)
+    token = settings.rotate_access_token(db)
+    digest = repo.get_setting(db, settings.ACCESS_TOKEN_KEY)
+    assert token and digest
+    r = await client.post("/api/groups/preview", json={"selector": {}})
+    assert r.status_code == 200
+    assert token not in r.text and digest not in r.text

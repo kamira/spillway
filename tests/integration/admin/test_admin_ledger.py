@@ -117,3 +117,54 @@ async def test_payload_never_recorded_and_missing_404(client, db, clock):
     assert_error(await client.get("/api/ledger/99999/payload"), 404, "not_found")
     assert "path.ledger_id" in assert_error(await client.get("/api/ledger/abc/payload"), 422,
                                             "validation_error")
+
+
+# ---------------------------------------------------------------- min_depth
+# CHG-20261103-01 T2(決策 10 ④;AM-13)
+
+
+def _depth_rows(db, clock) -> dict[int, int]:
+    """id → fallback_depth;depth 0–3 各數列,另混入不同 deployment。"""
+    out = {}
+    for i, (depth, dep) in enumerate([(0, "a"), (1, "a"), (2, "b"), (0, "a"), (1, "b"),
+                                      (3, "a"), (0, "b")]):
+        out[add(db, clock, minutes_ago=i, dep=dep, fallback_depth=depth)] = depth
+    return out
+
+
+async def test_ledger_min_depth(client, db, clock):
+    rows = _depth_rows(db, clock)
+    for md in (0, 1, 2, 4):
+        r = await client.get("/api/ledger", params={"min_depth": md})
+        assert r.status_code == 200, r.text
+        out = r.json()
+        want = [i for i in sorted(rows) if rows[i] >= md]          # minutes_ago=i:id 小者較新
+        assert [x["id"] for x in out["items"]] == want
+        assert all(x["fallback_depth"] >= md for x in out["items"])
+        assert out["total"] == len(want)
+    one = (await client.get("/api/ledger", params={"min_depth": 1, "deployment": "a"})).json()
+    assert [x["fallback_depth"] for x in one["items"]] == [1, 3]
+
+
+@pytest.mark.parametrize("filters", [
+    {}, {"min_depth": 1}, {"min_depth": 1, "deployment_id": "a"}, {"min_depth": 0, "status": "ok"},
+    {"min_depth": 2, "route_name": "rt"},
+])
+def test_repo_min_depth_count_list_iter_agree(db, clock, filters):
+    _depth_rows(db, clock)
+    listed = repo.list_ledger(db, **filters)
+    batches = list(repo.iter_ledger(db, **filters, limit=1000, batch=2))
+    assert repo.count_ledger(db, **filters) == len(listed) == sum(len(b) for b in batches)
+    assert [r.id for b in batches for r in b] == [r.id for r in listed]
+
+
+@pytest.mark.parametrize("value", ["-1", "101", "x", "1.5"])
+async def test_ledger_min_depth_invalid(client, value):
+    msg = assert_error(await client.get("/api/ledger", params={"min_depth": value}), 422,
+                       "validation_error")
+    assert "query.min_depth" in msg
+
+
+async def test_ledger_min_depth_bounds_ok(client):
+    for value in ("0", "100"):
+        assert (await client.get("/api/ledger", params={"min_depth": value})).status_code == 200

@@ -57,7 +57,7 @@ __all__ = [
     "DUMP_KWARGS", "dump", "render", "build_document", "utc_stamp_filename",
 ]
 # 匯入(T4)的名稱(`load_yaml`、`ConfigSyntaxError`、`ConfigPlan`、`apply`、`ImportResult`、`ImportConflict`、
-# `format_path`、`privileged_view`、`MAX_DEPTH`、`BACKUP_FILENAME_FORMAT`)以 `configio.<名稱>` 取用;
+# `format_path`、`privileged_view`、`is_privileged_change`、`MAX_DEPTH`、`BACKUP_FILENAME_FORMAT`)以 `configio.<名稱>` 取用;
 # `__all__` 維持匯出部分(`tests/unit/test_configio_dump.py::test_public_surface` 釘住)。
 
 FORMAT_VERSION = 1
@@ -457,7 +457,7 @@ def _counts(deployments: int = 0, groups: int = 0, routes: int = 0) -> dict[str,
 class ImportResult:
     """`created`/`updated`/`deleted` 各為 `{deployments, groups, routes}` 計數;`backup` 為備份檔名
     (merge 與 dry_run 為 None);`affected_ids` = 交易前 ∪ 交易後的成員 id(呼叫端據此逐一讓健康快取
-    失效);`privileged` 見 `privileged_view`(依 id 排序,只含 id)。"""
+    失效);`privileged` 見 `is_privileged_change`(依 id 排序,只含 id)。"""
 
     mode: str
     created: dict[str, int]
@@ -511,6 +511,14 @@ def privileged_view(dep: Deployment | None) -> tuple[Any, ...]:
     urls = {k: params[k] for k in params if _is_url_key(str(k))}
     cli = {k: params[k] for k in _CLI_PRIVILEGED_PARAMS if k in params} if dep.kind == "cli" else {}
     return (dep.credential_ref, urls, cli)
+
+
+def is_privileged_change(before: Deployment | None, after: Deployment) -> bool:
+    """匯入前後的成員是否變更了 privileged 欄位:`privileged_view` 不同,或**既有**成員的 `provider`
+    改變(改變憑證送往何處;CHG-20261103-01 決策 10 ⑥,M4a 帶入)。新成員只看 `privileged_view`。"""
+    if privileged_view(after) != privileged_view(before):
+        return True
+    return before is not None and before.provider != after.provider
 
 
 # ---------------------------------------------------------------- 備份(決策 7)
@@ -711,8 +719,7 @@ def _apply_tx(
 
     before_ids = set(before_deps)
     privileged = tuple(sorted(
-        d.id for d in plan.deployments
-        if privileged_view(d) != privileged_view(before_deps.get(d.id))))
+        d.id for d in plan.deployments if is_privileged_change(before_deps.get(d.id), d)))
     return ImportResult(
         mode="replace" if replace else "merge",
         created=_counts(len(file_deps - before_ids), len(file_groups - before_groups),

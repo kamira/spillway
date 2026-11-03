@@ -220,3 +220,126 @@ async def test_estimate_local_direct_and_errors(client, fake_api):
                  404, "not_found")
     assert "body.model" in assert_error(await client.post("/api/estimate", json=REQ),
                                         422, "validation_error")
+
+
+# ================================================================ GET /api/routes/{name}/effective-order
+# CHG-20261103-01 T2(決策 10 ②;AM-1):靜態算法,與 MCP `list_routes` 共用 `routing.static_plan`
+
+CLI_MEMBER = {
+    "id": "c", "model_name": "c", "kind": "cli", "provider": "claude-cli", "model": "claude-sonnet-5-5",
+    "params": {"max_concurrency": 1, "timeout": 60},
+    "capabilities": {"ctx": 1000000, "tools": False, "vision": False, "efforts": ["low", "high"]},
+    "tags": ["r"]}
+
+
+def eo_ids(out: dict) -> list[tuple[int, list[str]]]:
+    return [(s["slot"], [e["deployment"] for e in s["entries"]]) for s in out["slots"]]
+
+
+async def effective(client, name: str) -> dict:
+    r = await client.get(f"/api/routes/{name}/effective-order")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def test_effective_order_default_numbering(client, fake_api):
+    await seed(client, fake_api)
+    assert (await client.post("/api/deployments", json=CLI_MEMBER)).status_code == 201
+    assert (await client.post("/api/routes", json={"name": "rt-task", "target": {"tags": {"all": ["r"]}},
+                                                   "mode": "task"})).status_code == 201
+    task = await effective(client, "rt-task")
+    assert task["route"] == "rt-task" and task["mode"] == "task" and task["ordered"] == "default"
+    assert eo_ids(task) == [(1, ["c"]), (2, ["a", "b"]), (3, ["q"])]          # 4.3.2:cli=1、api=2、local 3 起
+    assert task["slots"][1]["entries"][0] == {"deployment": "a", "effort": None, "weight": "medium",
+                                              "unsorted": False}
+    chat = await effective(client, "rt")                                      # (d) chat 不含 cli,編號不重排
+    assert chat["mode"] == "chat" and eo_ids(chat) == [(2, ["a", "b"]), (3, ["q"])]
+
+
+async def test_effective_order_manual_keeps_numbers_and_unsorted(client, db, fake_api):
+    await seed(client, fake_api)
+    repo.replace_route_targets(db, "rt", [
+        repo.RouteTarget("q", slot=2, position=0, effort=None, weight="high"),
+        repo.RouteTarget("b", slot=5, position=0, effort="low", weight="low"),
+        repo.RouteTarget("x", slot=5, position=1),                               # (e) stale:x 不屬目標
+    ])
+    out = await effective(client, "rt")
+    assert out["ordered"] == "manual"
+    assert eo_ids(out) == [(2, ["q"]), (5, ["b"]), (7, ["a"])]                 # a:api 層 = 6 + 1
+    assert out["slots"][0]["entries"][0] == {"deployment": "q", "effort": None, "weight": "high",
+                                             "unsorted": False}
+    assert out["slots"][1]["entries"][0] == {"deployment": "b", "effort": "low", "weight": "low",
+                                             "unsorted": False}
+    assert out["slots"][2]["entries"][0]["unsorted"] is True
+    assert "x" not in str(eo_ids(out))
+    # GET /api/routes/{name} 不變(仍只有 order,不含 effective order)
+    got = (await client.get("/api/routes/rt")).json()
+    assert set(got) == {"name", "target", "mode", "tags", "record_context", "budget_precheck", "order"}
+
+
+async def test_effective_order_includes_disabled_and_cooling(client, db, clock, fake_api):
+    from datetime import timedelta
+    await seed(client, fake_api)
+    assert (await client.post("/api/deployments", json=api_member("d-off", enabled=False,
+                                                                  fake_api=fake_api))).status_code == 201
+    repo.mark_cooldown(db, "b", clock.now() + timedelta(hours=1), "rate_limited")
+    out = await effective(client, "rt")
+    assert eo_ids(out) == [(2, ["a", "b", "d-off"]), (3, ["q"])]
+
+
+async def test_effective_order_missing_group_route_and_empty(client, db, fake_api):
+    await seed(client, fake_api)
+    repo.save_route(db, repo.Route("ghost", {"group": "ghost"}))               # 群組不存在
+    assert (await effective(client, "ghost"))["slots"] == []
+    await client.post("/api/groups", json={"name": "empty", "selector": {"all": ["nomatch"]}})
+    await client.post("/api/routes", json={"name": "re", "target": {"group": "empty"}})
+    out = await effective(client, "re")
+    assert out == {"route": "re", "mode": "chat", "ordered": "default", "slots": []}
+    assert_error(await client.get("/api/routes/nope/effective-order"), 404, "not_found")
+
+
+async def test_effective_order_equals_mcp_list_routes(make_app, make_client, db, fake_api):
+    """契約測試:每條 route 的 `[(slot, [ids])]`、effort、weight 等於 MCP `list_routes`。"""
+    from spillway.api.mcp.tools import _list_routes
+    app = make_app()
+    async with make_client(app) as c:
+        await seed(c, fake_api)
+        assert (await c.post("/api/deployments", json=CLI_MEMBER)).status_code == 201
+        await c.post("/api/groups", json={"name": "g", "selector": {"any": ["r"]}})
+        for body in ({"name": "rt-task", "target": {"tags": {"all": ["r"]}}, "mode": "task"},
+                     {"name": "rg", "target": {"group": "g"}, "mode": "task"},
+                     {"name": "r-none", "target": {"tags": {"all": ["nomatch"]}}}):
+            assert (await c.post("/api/routes", json=body)).status_code == 201
+        repo.replace_route_targets(db, "rg", [repo.RouteTarget("q", 3, 0, "high", "low"),
+                                              repo.RouteTarget("c", 3, 1, "low", "high"),
+                                              repo.RouteTarget("x", 4, 0)])
+        mcp = _list_routes(app, "all").structuredContent["routes"]
+        assert [r["name"] for r in mcp] == ["r-none", "rg", "rt", "rt-task"]
+        for r in mcp:
+            eo = await effective(c, r["name"])
+            assert (eo["mode"], eo["ordered"]) == (r["mode"], r["ordered"])
+            assert eo_ids(eo) == [(s["slot"], [m["id"] for m in s["members"]]) for s in r["slots"]]
+            assert [[(e["deployment"], e["effort"], e["weight"]) for e in s["entries"]] for s in eo["slots"]] \
+                == [[(m["id"], m["effort"], m["weight"]) for m in s["members"]] for s in r["slots"]]
+        assert any(e["unsorted"] for s in (await effective(c, "rg"))["slots"] for e in s["entries"])
+
+
+async def test_effective_order_sets_match_dry_run(client, fake_api):
+    """(h) 沒有成員被篩掉時,dry-run 每個 slot 的成員集合等於 effective-order(不比對 slot 內順序)。"""
+    await seed(client, fake_api)
+    plan = (await client.post("/api/routes/rt/dry-run", json=REQ)).json()
+    assert plan["excluded"] == []
+    eo = await effective(client, "rt")
+    assert [(n, set(ids)) for n, ids in slot_ids(plan)] == [(n, set(ids)) for n, ids in eo_ids(eo)]
+
+
+async def test_effective_order_read_only_and_no_secrets(client, db, fake_api):
+    from spillway import settings
+    await seed(client, fake_api)
+    token = settings.rotate_access_token(db)
+    digest = repo.get_setting(db, settings.ACCESS_TOKEN_KEY)
+    before = list(db.iterdump())
+    r = await client.get("/api/routes/rt/effective-order")
+    assert r.status_code == 200
+    assert list(db.iterdump()) == before
+    assert token not in r.text and digest not in r.text
