@@ -56,8 +56,8 @@
 <label class="f" for="ctx-days"><span class="field-label">保存天數</span><input type="number" id="ctx-days" name="context_retention_days" min="0" max="36500" step="1"><span class="hint" id="ctx-days-zero" hidden>0 表示不保存內容:新的呼叫不寫入內容,既有內容於下次清理時刪除。</span></label>
 <label class="f" for="ctx-kb"><span class="field-label">單筆上限(KB)</span><input type="number" id="ctx-kb" name="context_max_kb" min="1" step="any"><span class="hint">1 KB = 1024 bytes;最小 1 KB</span></label>
 </div>
-<p class="hint">寫入前會遮罩疑似金鑰的字串;route 可個別覆寫是否記錄。</p>
-<p class="error" id="ctx-error" role="alert" hidden></p>
+<p class="muted small">寫入前會遮罩疑似金鑰的字串;route 可個別覆寫是否記錄。</p>
+<p class="callout err" id="ctx-error" role="alert" hidden></p>
 <div class="row between">
 <span class="muted small" id="ctx-stats"></span>
 <button class="btn primary" type="submit" id="ctx-save">儲存</button>
@@ -76,7 +76,7 @@
 <label class="radio"><input type="radio" name="import_mode" value="merge" checked>merge:以 id 或名稱合併更新</label>
 <label class="radio"><input type="radio" name="import_mode" value="replace">replace:清空設定後寫入(帳本保留;會先備份到 backups/)</label>
 </fieldset>
-<p class="hint">檔案或 mode 改變後,先前的預覽作廢。</p>
+<p class="muted small">檔案或 mode 改變後,先前的預覽作廢。</p>
 <div class="row"><button class="btn primary" type="button" id="import-preview" disabled>預覽匯入</button></div>
 <div class="callout err" id="import-errors" role="alert" hidden></div>
 <div class="callout ok" id="import-result" role="status" hidden></div>

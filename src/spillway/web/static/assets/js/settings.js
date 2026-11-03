@@ -6,10 +6,10 @@
 // ⑤ token(#token):確認後 POST /api/settings/token/rotate,新 token 只在對話框顯示一次(見 openTokenDialog)。
 // 頁面載入時只發 GET;網址的 hash(#token)只用於捲動定位(決策 8)。
 
-import { getJSON, sendJSON } from "./api.js";
+import { getJSON, request, sendJSON } from "./api.js";
 import { byId, h, setText } from "./dom.js";
 import { TEXT } from "./strings.js";
-import { clearMessage, confirmDialog, initShell, showError, showMessage, withBusy } from "./ui.js";
+import { clearMessage, confirmDialog, fmtInt, initShell, showError, showMessage, withBusy } from "./ui.js";
 import { mountImport } from "./import-dialog.js";
 
 export const KB = 1024;
@@ -29,7 +29,7 @@ const T = Object.freeze({
   copy: "複製",
   copied: "已複製到剪貼簿",
   copy_failed: "無法寫入剪貼簿(權限被拒或不支援)。已選取文字,請按 ⌘C(macOS)或 Ctrl+C 複製。",
-  stats: (n, size) => `目前 ${n.toLocaleString("en-US")} 筆 · ${size}`,
+  stats: (n, size) => `目前 ${fmtInt(n)} 筆 · ${size}`,
   ctx_saved: "已儲存 context 設定",
   err_days: "保存天數必須是 0 以上的整數",
   err_kb: "單筆上限必須是數字(KB)",
@@ -131,7 +131,8 @@ async function loadOverview() {
 // ---- ② context ------------------------------------------------------------------------------
 
 function syncDaysNote() {
-  byId("ctx-days-zero").hidden = byId("ctx-days").value.trim() !== "0";
+  const v = byId("ctx-days").value.trim();
+  byId("ctx-days-zero").hidden = !(v !== "" && Number(v) === 0);
 }
 
 function fillContext(c) {
@@ -201,6 +202,39 @@ async function saveContext(ev) {
   });
 }
 
+// ---- ③ 匯出 --------------------------------------------------------------------------------
+
+// Content-Disposition 的 filename;去除 / 與 \(決策 15)
+function dispositionName(resp) {
+  const m = /filename="?([^";]+)"?/i.exec(resp.headers.get("content-disposition") || "");
+  const name = (m ? m[1] : "").replace(/[/\\]/g, "");
+  return name || "spillway-config.yaml";
+}
+
+// fetch → 非 2xx 顯示 error.message;2xx 以 Blob(application/octet-stream)經 <a download> 下載後 revoke
+async function exportConfig(ev) {
+  ev.preventDefault();
+  const link = byId("export-link");
+  if (link.getAttribute("aria-disabled") === "true") return;
+  link.setAttribute("aria-disabled", "true");
+  try {
+    const resp = await request("GET", "/api/config/export", { headers: { Accept: "application/yaml" } });
+    const blob = new Blob([await resp.arrayBuffer()], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = h("a", { href: url, download: dispositionName(resp) });
+    try {
+      a.click();
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+    clearMessage("export");
+  } catch (err) {
+    showError(err, { source: "export" });
+  } finally {
+    link.removeAttribute("aria-disabled");
+  }
+}
+
 // ---- ⑤ token --------------------------------------------------------------------------------
 
 // 新 token 的一次性對話框(AM-12):
@@ -216,7 +250,7 @@ function openTokenDialog(initialToken, { rotated }) {
     const input = h("input", { type: "text", id: "token-value", class: "settings-token-input", readonly: true,
       autocomplete: "off", spellcheck: "false", "aria-label": T.token_label });
     input.value = token;
-    const exportLine = h("pre", { class: "wrap settings-token-export", id: "token-export", tabindex: "0" },
+    const exportLine = h("pre", { class: "wrap", id: "token-export", tabindex: "0" },
       `export SPILLWAY_TOKEN=${token}`);
     const hint = h("p", { class: "note warn", role: "status", "data-role": "copy-hint", hidden: true });
     const copyBtn = h("button", { type: "button", class: "btn primary", "data-role": "copy" }, T.token_copy);
@@ -284,7 +318,8 @@ function openTokenDialog(initialToken, { rotated }) {
 }
 
 async function rotateToken() {
-  const issued = !!(state.overview && state.overview.token_issued);
+  // 狀態未知(總覽載入失敗)時當作已產生:用重新產生的文字與 danger 樣式
+  const issued = state.overview ? state.overview.token_issued !== false : true;
   const ok = await confirmDialog(issued
     ? { title: T.rotate_title, body: T.rotate_body, confirmLabel: T.rotate_confirm, danger: true }
     : { title: T.first_title, body: T.first_body, confirmLabel: T.first_confirm });
@@ -315,6 +350,7 @@ function init() {
     if (await copyText(el.textContent, el, byId("serve-copy-hint"))) showMessage(T.copied, "ok");
   });
   byId("ctx-days").addEventListener("input", syncDaysNote);
+  byId("export-link").addEventListener("click", exportConfig);
   byId("context-form").addEventListener("submit", saveContext);
   byId("token-rotate").addEventListener("click", rotateToken);
   mountImport({ onImported: loadOverview });

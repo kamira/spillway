@@ -28,6 +28,8 @@ const T = Object.freeze({
   reused: (name) => `route「${name}」已存在,沿用既有 route`,
   created: (name) => `已建立 route「${name}」`,
   done_lead: (name) => `route「${name}」已就緒。以下列指令送出第一次呼叫:`,
+  not_member: (name, id) => `route「${name}」不包含剛加入的成員 ${id}(target 或 mode 不符),範例呼叫不會用到它;請到 Route 頁調整,或回上一步改用其他名稱`,
+  check_failed: "無法確認 route 是否包含此成員",
   copied: "已複製到剪貼簿",
   copy_failed: "無法寫入剪貼簿(權限被拒或不支援)。已選取文字,請按 ⌘C(macOS)或 Ctrl+C 複製。",
 });
@@ -79,20 +81,31 @@ async function onMemberSaved(member) {
   enterTest();
 }
 
+function dropForm(host) {
+  if (state.form) state.form.destroy();
+  state.form = null;
+  clear(host);
+}
+
 async function enterMember() {
   const host = byId("member-form-host");
-  if (state.form) state.form.destroy();
-  clear(host);
+  dropForm(host);
   let initial = null;
   if (state.member) {
-    // 從 ② 回上一步:成員已寫入,改為編輯(PUT 全量)
+    // 從 ② 回上一步:成員已寫入,改為編輯(PUT 全量);tags 換成 ① 的輸入順序(同一組 tag)
+    let fetched;
     try {
-      initial = await getJSON(`/api/deployments/${encodeURIComponent(state.member.id)}`);
+      fetched = await getJSON(`/api/deployments/${encodeURIComponent(state.member.id)}`);
     } catch (err) {
       showError(err);
-      initial = state.member;
+      fetched = state.member;
     }
+    const saved = Array.isArray(fetched.tags) ? fetched.tags : [];
+    const ordered = state.tags.filter((t) => saved.includes(t)).concat(saved.filter((t) => !state.tags.includes(t)));
+    initial = { ...fetched, tags: ordered };
   }
+  // await 期間可能有另一次呼叫已掛上表單:一律只留這一份
+  dropForm(host);
   state.form = mountMemberForm(host, {
     initial,
     defaults: { kind: "api", tags: ["default"] },
@@ -209,11 +222,13 @@ async function createRoute(ev) {
   }
   const body = { name, mode: byId("route-mode").value, target: { tags: { any: [tag] } } };
   await withBusy(byId("route-create"), async () => {
+    let reused = false;
     try {
       await sendJSON("POST", "/api/routes", body);
       showMessage(T.created(name), "ok");
     } catch (err) {
       if (err && err.status === 409) {
+        reused = true;
         showMessage(T.reused(name), "info");
       } else {
         routeError(errorText(err));
@@ -222,6 +237,7 @@ async function createRoute(ev) {
     }
     state.route = name;
     enterDone();
+    if (reused) await checkReused(name);
   });
 }
 
@@ -236,7 +252,24 @@ export function curlExample(port, route) {
   return `curl http://127.0.0.1:${port}/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d ${shellQuote(body)}`;
 }
 
+// 409 沿用既有 route 時:以靜態生效順序確認它包含 ① 的成員,不含時於 ④ 警示並提供回 ③
+async function checkReused(name) {
+  const warn = byId("done-warn");
+  const text = byId("done-warn-text");
+  if (!state.member) return;
+  try {
+    const eo = await getJSON(`/api/routes/${encodeURIComponent(name)}/effective-order`);
+    const ids = (eo.slots || []).flatMap((s) => (s.entries || []).map((e) => e.deployment));
+    if (ids.includes(state.member.id)) return;
+    setText(text, T.not_member(name, state.member.id));
+  } catch {
+    setText(text, T.check_failed);
+  }
+  warn.hidden = false;
+}
+
 function enterDone() {
+  byId("done-warn").hidden = true;
   setText(byId("done-lead"), T.done_lead(state.route));
   const pre = byId("curl-example");
   setText(pre, curlExample(state.port, state.route));
@@ -302,7 +335,12 @@ async function start() {
 
 function init() {
   byId("test-run").addEventListener("click", runTest);
-  byId("test-back").addEventListener("click", () => enterMember());
+  const back = byId("test-back");
+  back.addEventListener("click", () => withBusy(back, enterMember));
+  byId("done-rename").addEventListener("click", () => {
+    byId("done-warn").hidden = true;
+    enterRoute();
+  });
   byId("test-next").addEventListener("click", enterRoute);
   byId("route-tag").addEventListener("change", updatePreview);
   byId("route-form").addEventListener("submit", createRoute);

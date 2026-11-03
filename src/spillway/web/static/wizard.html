@@ -6,7 +6,6 @@
 <title>首次設定 · Spillway</title>
 <link rel="stylesheet" href="assets/app.css">
 <link rel="stylesheet" href="assets/member-form.css">
-<link rel="stylesheet" href="assets/wizard.css">
 <script type="module" src="assets/js/wizard.js"></script>
 </head>
 <body>
@@ -65,13 +64,14 @@
 <label class="f" for="route-tag"><span class="field-label">tag</span><select id="route-tag" name="route_tag"></select><span class="hint">target 為 tags any: [所選的 tag]</span></label>
 <div class="f"><span class="field-label">符合的成員</span><span id="route-preview" aria-live="polite">—</span></div>
 </div>
-<p class="error" id="route-error" role="alert" hidden></p>
+<p class="callout err" id="route-error" role="alert" hidden></p>
 <div class="row end"><button class="btn primary" type="submit" id="route-create">建立 route</button></div>
 </form>
 </section>
 <section class="card" id="step-4" aria-labelledby="step-4-h" hidden>
 <h2 id="step-4-h">④ 完成</h2>
 <p id="done-lead"></p>
+<div class="note warn stack tight" id="done-warn" role="status" hidden><p id="done-warn-text"></p><div class="row"><button class="btn sm" type="button" id="done-rename">← 改用其他名稱</button></div></div>
 <pre class="wrap" id="curl-example" tabindex="0"></pre>
 <p class="note warn" id="curl-copy-hint" role="status" hidden></p>
 <div class="row">

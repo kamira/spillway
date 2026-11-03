@@ -13,10 +13,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import yaml
-from playwright.sync_api import Page, Request, Route, expect
+from playwright.sync_api import Locator, Page, Request, Route, expect
 
 from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import MakeGw, NewPage, api, db_snapshot, guard_of, import_module
+from tests.helpers.ui import MakeGw, NewPage, api, db_execute, db_snapshot, goto, guard_of, import_module
 from tests.helpers.ui_members import seed_member
 from tests.helpers.ui_settings import (
     choose_import,
@@ -101,6 +101,8 @@ def test_context_form_roundtrip_kb(new_page: NewPage, gw: LiveGateway) -> None:
 
     expect(page.locator("#ctx-days-zero")).to_be_hidden()
     page.locator("#ctx-record").set_checked(not cur["record_context_default"])
+    page.locator("#ctx-days").fill("00")
+    expect(page.locator("#ctx-days-zero")).to_be_visible()
     page.locator("#ctx-days").fill("0")
     expect(page.locator("#ctx-days-zero")).to_be_visible()
     expect(page.locator("#ctx-days-zero")).to_contain_text("0 表示不保存內容")
@@ -130,6 +132,7 @@ def test_context_below_1kb_shows_422(new_page: NewPage, gw: LiveGateway) -> None
     assert rr.value.status == 422
     message = rr.value.json()["error"]["message"]
     expect(page.locator("#ctx-error")).to_have_text(message)
+    expect(page.locator("#ctx-error")).to_have_class("callout err")
     expect(page.locator("#msgbar")).to_contain_text(message)
     assert "context_max_bytes" in message
     assert api(gw, "GET", "/api/settings/context").json() == before
@@ -162,6 +165,24 @@ def test_export_download_matches_api(new_page: NewPage, gw: LiveGateway) -> None
     with open(download.path(), "rb") as fh:
         data = fh.read()
     assert data == export_yaml(gw).encode("utf-8")
+
+
+@pytest.mark.expect_http_errors(422)
+def test_export_422_shows_message_without_download(new_page: NewPage, gw: LiveGateway) -> None:
+    seed_member(gw, "api-a")
+    db_execute(gw, "UPDATE deployments SET params = ? WHERE id = ?", ('{"api_key": "x"}', "api-a"))
+    page = new_page()
+    open_settings(page, gw)
+    downloads: list = []
+    page.on("download", lambda d: downloads.append(d))
+    with page.expect_response(lambda r: r.url.endswith("/api/config/export")) as rr:
+        page.locator("#export-link").click()
+    assert rr.value.status == 422
+    message = rr.value.json()["error"]["message"]
+    expect(page.locator("#msgbar")).to_contain_text(message)
+    assert "deployments[api-a].params" in message
+    page.wait_for_function("() => true")
+    assert downloads == []
 
 
 # ---- ④ 匯入 ------------------------------------------------------------------------------------------
@@ -380,11 +401,11 @@ def test_import_too_large_not_sent(new_page: NewPage, gw: LiveGateway) -> None:
 
 # ---- ⑤ token -----------------------------------------------------------------------------------------
 
-def token_dialog(page: Page):  # noqa: ANN201
+def token_dialog(page: Page) -> Locator:
     return page.locator("#token-dialog")
 
 
-def confirm_dialog(page: Page):  # noqa: ANN201
+def confirm_dialog(page: Page) -> Locator:
     return page.locator("dialog").filter(has=page.locator("#confirm-dialog-title"))
 
 
@@ -482,6 +503,24 @@ def test_token_rotate_reprompt_when_not_copied(new_page: NewPage, gw: LiveGatewa
     expect(dlg).to_have_count(0)
     assert page_leaks(page, token) == []
     assert page.evaluate("() => String(window.getSelection())") == ""
+
+
+@pytest.mark.expect_http_errors(500)
+def test_token_unknown_state_uses_rotate_wording(new_page: NewPage, gw: LiveGateway) -> None:
+    page = new_page()
+    page.route("**/api/settings", lambda route: route.fulfill(
+        status=500, content_type="application/json",
+        body='{"error": {"code": "internal_error", "message": "boom"}}'))
+    goto(page, gw, "/ui/settings.html")
+    page.wait_for_selector('#overview[data-loaded="true"]', state="attached")
+    expect(page.locator("#msgbar")).to_contain_text("boom")
+    page.locator("#token-rotate").click()
+    confirm = confirm_dialog(page)
+    expect(confirm.locator(".dialog-title")).to_have_text("重新產生 token")
+    expect(confirm.locator(".dialog-body")).to_contain_text("舊 token 立即失效")
+    expect(confirm.locator('[data-role="confirm"]')).to_have_class("btn danger")
+    confirm.locator('[data-role="cancel"]').click()
+    expect(confirm).to_have_count(0)
 
 
 def test_token_wiped_on_pagehide_and_back(new_page: NewPage, gw: LiveGateway) -> None:

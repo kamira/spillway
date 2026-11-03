@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from tests.helpers import TEST_KEY, TEST_KEY_ENV, dead_base
 from tests.helpers.live_gateway import LiveGateway
@@ -25,7 +25,7 @@ def gw(make_ui_gateway: MakeGw) -> LiveGateway:
     return make_ui_gateway()
 
 
-def step_card(page: Page, n: int):  # noqa: ANN201
+def step_card(page: Page, n: int) -> Locator:
     return page.locator(f"#step-{n}")
 
 
@@ -137,6 +137,7 @@ def test_tags_required_and_order_and_preview(new_page: NewPage, gw: LiveGateway)
     page.locator("#route-name").fill("my route")
     page.locator("#route-create").click()
     expect(page.locator("#route-error")).to_contain_text("請填寫 route 名稱")
+    expect(page.locator("#route-error")).to_have_class("callout err")
     page.locator("#route-name").fill("tagged")
     page.locator("#route-create").click()
     wait_step(page, 4)
@@ -144,23 +145,72 @@ def test_tags_required_and_order_and_preview(new_page: NewPage, gw: LiveGateway)
     assert rt["target"]["tags"]["any"] == ["alpha"] and not rt["target"]["tags"].get("all")
 
 
-@pytest.mark.expect_http_errors(409)
-def test_existing_chat_route_is_reused(new_page: NewPage, gw: LiveGateway) -> None:
-    add_route(gw, "chat", "x")
-    page = new_page()
+def reach_step4_with_existing_chat(page: Page, gw: LiveGateway, dep_id: str) -> None:
     open_wizard(page, gw)
     wait_step(page, 1)                                           # 沒有成員 → ①
-    fill_api_member(page, "w2", "http://127.0.0.1:9/v1").submit.click()
+    fill_api_member(page, dep_id, "http://127.0.0.1:9/v1").submit.click()
     wait_step(page, 2)
     page.locator("#test-next").click()
     wait_step(page, 3)
-    with page.expect_response(lambda r: r.url.endswith("/api/routes") and r.request.method == "POST") as rr:
+    with page.expect_response(lambda r: r.url.endswith("/effective-order")), \
+            page.expect_response(lambda r: r.url.endswith("/api/routes") and r.request.method == "POST") as rr:
         page.locator("#route-create").click()
     assert rr.value.status == 409
     wait_step(page, 4)
     expect(page.locator("#msgbar")).to_contain_text("route「chat」已存在,沿用既有 route")
     expect(page.locator("#curl-example")).to_have_attribute("data-route", "chat")
+
+
+@pytest.mark.expect_http_errors(409)
+def test_existing_chat_route_without_member_warns(new_page: NewPage, gw: LiveGateway) -> None:
+    add_route(gw, "chat", "x")
+    page = new_page()
+    reach_step4_with_existing_chat(page, gw, "w2")
+    warn = page.locator("#done-warn")
+    expect(warn).to_be_visible()
+    expect(warn).to_contain_text("route「chat」不包含剛加入的成員 w2")
     assert api(gw, "GET", "/api/routes/chat").json()["target"]["tags"]["any"] == ["x"]   # 既有 route 不變
+    page.locator("#done-rename").click()                          # 回 ③ 改用其他名稱
+    wait_step(page, 3)
+    page.locator("#route-name").fill("chat2")
+    page.locator("#route-create").click()
+    wait_step(page, 4)
+    expect(page.locator("#done-warn")).to_be_hidden()
+    expect(page.locator("#curl-example")).to_have_attribute("data-route", "chat2")
+    assert api(gw, "GET", "/api/routes/chat2").json()["target"]["tags"]["any"] == ["default"]
+
+
+@pytest.mark.expect_http_errors(409)
+def test_existing_chat_route_with_member_reused_quietly(new_page: NewPage, gw: LiveGateway) -> None:
+    add_route(gw, "chat", "default")
+    page = new_page()
+    reach_step4_with_existing_chat(page, gw, "w5")
+    expect(page.locator("#done-lead")).to_contain_text("route「chat」已就緒")
+    page.wait_for_function("() => true")
+    expect(page.locator("#done-warn")).to_be_hidden()
+
+
+def test_back_double_click_one_form_and_tag_order_kept(new_page: NewPage, gw: LiveGateway) -> None:
+    page = new_page()
+    open_wizard(page, gw)
+    form = fill_api_member(page, "w6", "http://127.0.0.1:9/v1")
+    form.form.locator('button[aria-label="移除 default"]').click()
+    form.add_tag("zeta")
+    form.add_tag("alpha")
+    form.submit.click()
+    wait_step(page, 2)
+    page.locator("#test-back").dblclick()
+    wait_step(page, 1)
+    form = MemberForm(page, page.locator("#member-form-host"))
+    form.wait_ready()
+    expect(page.locator("#member-form-host form")).to_have_count(1)
+    expect(form.form.locator('[data-role="tags"] .chip')).to_have_text(["zeta×", "alpha×"])
+    form.submit.click()
+    wait_step(page, 2)
+    page.locator("#test-next").click()
+    wait_step(page, 3)
+    expect(page.locator("#route-tag option")).to_have_text(["zeta", "alpha"])
+    expect(page.locator("#route-tag")).to_have_value("zeta")
 
 
 def test_cli_member_defaults_task_mode(new_page: NewPage, gw: LiveGateway) -> None:

@@ -1,4 +1,0 @@
-/* 首次設定精靈的頁面樣式(CHG-20261103-01 T8)。步驟列(.steps)與表單元件在 app.css、member-form.css。 */
-#wizard-steps li[aria-current="step"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-#wizard-steps li[aria-current="step"] .step-num { background: var(--accent); color: #FFFFFF; }
-#curl-example { white-space: pre-wrap; overflow-wrap: anywhere; }
