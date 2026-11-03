@@ -56,8 +56,9 @@ __all__ = [
     "SELECTOR_KEYS", "ROUTE_KEYS", "TARGET_ENTRY_KEYS", "DEFAULT_MODE", "DEFAULT_WEIGHT",
     "DUMP_KWARGS", "dump", "render", "build_document", "utc_stamp_filename",
 ]
-# 匯入(T4)的名稱(`load_yaml`、`ConfigSyntaxError`、`ConfigPlan`、`apply`、`ImportResult`、`ImportConflict`、
-# `format_path`、`privileged_view`、`is_privileged_change`、`MAX_DEPTH`、`BACKUP_FILENAME_FORMAT`)以 `configio.<名稱>` 取用;
+# 匯入(T4)的名稱(`load_yaml`、`ConfigSyntaxError`、`ConfigPlan`、`apply`、`ImportResult`、
+# `ImportConflict`、`format_path`、`privileged_view`、`is_privileged_change`、`MAX_DEPTH`、
+# `BACKUP_FILENAME_FORMAT`)以 `configio.<名稱>` 取用;
 # `__all__` 維持匯出部分(`tests/unit/test_configio_dump.py::test_public_surface` 釘住)。
 
 FORMAT_VERSION = 1

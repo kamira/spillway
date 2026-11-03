@@ -72,8 +72,8 @@ async def list_ledger(
     """帳本查詢(spec 9.2)。
 
     參數:`from`(含)、`to`(不含)為 ISO 8601 時間或日期(無時區視為 UTC);`deployment`、`route`、
-    `status` 為等值篩選;`min_depth`(0–100)只列 `fallback_depth >= min_depth` 的列(CHG-20261103-01
-    決策 10 ④);`page` 自 1 起、上限 1,000,000(超過回 422);`page_size` 預設 50、上限 500(本筆另加的可選參數)。
+    `status` 為等值篩選;`min_depth`(0–100)只列 `fallback_depth >= min_depth` 的列
+    (CHG-20261103-01 決策 10 ④);`page` 自 1 起、上限 1,000,000(超過回 422);`page_size` 預設 50、上限 500(本筆另加的可選參數)。
 
     分頁格式:`{items: [帳本列…], page, page_size, total, pages}`;`items` 依 `ts DESC, id DESC`
     (新到舊);`total` 為符合條件的總列數,`pages = ceil(total / page_size)`(total 為 0 時 0);

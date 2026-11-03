@@ -364,9 +364,7 @@ def _list_routes(app: Any, group: str) -> types.CallToolResult:
         groups = repo.list_groups(conn) if routes else []
         out = []
         for r in routes:
-            # 與 Router 同一條路徑(決策 12 終審修訂):手動 slot 在前、未列入的成員接成後續層級、
-            # 已不是成員的 target 略過;chat route 不列 cli 成員(CandidateFilter)
-            # (`routing.static_plan`;CHG-20261103-01 決策 10 ② 與 `/api` 共用)
+            # 靜態順序見 `routing.static_plan`(與 `/api/routes/{name}/effective-order` 共用)
             targets = repo.list_route_targets(conn, r.name)   # 已依 (slot, position, id) 排序
             plan = static_plan(r, targets, deps, groups)
             out.append({"name": r.name, "mode": r.mode,

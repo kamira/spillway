@@ -11,7 +11,8 @@
 - 群組不存在或沒有成員 → `[]`。
 
 `targets` 為該 route 的 `repo.list_route_targets()`(已依 `(slot, position, id)` 排序);
-`groups` 同 `members_of` 的 `groups` 參數(`repo.list_groups()` 或 `{name: selector}`)。
+`groups` 必填(同 `members_of` 的 `groups`:`repo.list_groups()` 或 `{name: selector}`);
+省略會讓 `{group}` 目標一律視為群組不存在,故不給預設值。
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ def static_plan(
     route: Route,
     targets: Sequence[RouteTarget],
     deployments: Sequence[Deployment],
-    groups: GroupsArg = (),
+    groups: GroupsArg,
 ) -> list[Slot]:
     members = members_of(route.target, deployments, groups)
     pool = [d for d in members if not (route.mode == "chat" and d.kind == "cli")]

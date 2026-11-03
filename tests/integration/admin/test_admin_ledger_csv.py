@@ -359,3 +359,16 @@ async def test_csv_min_depth_invalid(client, value):
     msg = assert_error(await client.get("/api/ledger/export.csv", params={"min_depth": value}), 422,
                        "validation_error")
     assert "query.min_depth" in msg
+
+
+async def test_csv_row_cap_applies_after_min_depth(client, db, clock, monkeypatch):
+    """上限檢查以套用 `min_depth` 後的列數計算。"""
+    monkeypatch.setattr(ledger_api, "LEDGER_CSV_MAX_ROWS", 3)
+    for i, depth in enumerate([0, 1, 0, 2, 0, 1]):
+        add(db, clock, minutes_ago=i, fallback_depth=depth)
+    assert_error(await client.get("/api/ledger/export.csv"), 422, "validation_error")
+    r = await client.get("/api/ledger/export.csv", params={"min_depth": 1})
+    assert r.status_code == 200, r.text
+    assert len(parse(r.text)) == 1 + 3
+    assert_error(await client.get("/api/ledger/export.csv", params={"min_depth": 0}), 422,
+                 "validation_error")
