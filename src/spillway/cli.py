@@ -383,22 +383,42 @@ def _default_data_dirs() -> list[Path]:
     return dirs
 
 
+def _existing_ancestor(p: Path) -> tuple[Path, tuple[str, ...]]:
+    """`p` 最近一個存在的上層目錄(含 `p` 本身),與其下尚不存在的各段。"""
+    tail: list[str] = []
+    while not p.exists() and p.parent != p:
+        tail.append(p.name)
+        p = p.parent
+    return p, tuple(reversed(tail))
+
+
 def _same_dir(a: Path, b: Path) -> bool:
-    """同一目錄:兩者都存在且 `samefile`,或 `resolve()` 後字串相等(macOS、Windows 先 casefold)。"""
+    """同一目錄:兩者都存在且 `samefile`,或 `resolve()` 後字串相等(macOS、Windows 先 casefold);
+    都不成立時,改比最近存在的上層目錄(`samefile`)加其下各段(終審 F2:目錄尚不存在時,同一位置的
+    其他寫法——例如 macOS 的 `/System/Volumes/Data` firmlink 前綴——也判為同一目錄)。"""
     try:
         if a.exists() and b.exists() and os.path.samefile(a, b):
             return True
     except OSError:
         pass
-    sa, sb = str(a.resolve()), str(b.resolve())
+    ra, rb = a.resolve(), b.resolve()
+    sa, sb = str(ra), str(rb)
     if _CASE_INSENSITIVE_FS:
         sa, sb = sa.casefold(), sb.casefold()
-    return sa == sb
+    if sa == sb:
+        return True
+    try:
+        (pa, ta), (pb, tb) = _existing_ancestor(ra), _existing_ancestor(rb)
+        if _CASE_INSENSITIVE_FS:
+            ta, tb = tuple(s.casefold() for s in ta), tuple(s.casefold() for s in tb)
+        return ta == tb and os.path.samefile(pa, pb)
+    except OSError:
+        return False
 
 
 def _test_home_problem(env: Mapping[str, str]) -> str | None:
     """決策 5 ②:測試模式的資料目錄必須明確設定,且不與預設(擁有者)資料目錄是同一個目錄(含大小寫
-    變體、符號連結與以帳號家目錄推得的位置,F1);符合時回 None。不讀寫 `os.environ`。"""
+    變體、符號連結與以帳號家目錄推得的位置,F1;目錄尚不存在時的其他寫法,終審 F2);符合時回 None。不讀寫 `os.environ`。"""
     raw = env.get(settings.ENV_HOME, "")
     if not raw:
         return f"{TEST_CONTROL_ENV}=1 時必須明確設定 {settings.ENV_HOME}(測試模式不使用預設資料目錄)"

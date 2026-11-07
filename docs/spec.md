@@ -975,7 +975,7 @@ Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>
 
 13.1.1 只有 `spillway serve` 在環境變數 `SPILLWAY_TEST_CONTROL` 的值為字面 `1` 時開啟控制介面；其他值（含空字串、`true`、`0`）視為未開啟。設定檔、管理 API、`init`、`mcp-stdio` 都無法開啟。實作中只有 serve 的啟動程序讀取本節的環境變數，再以明確參數交給 app。
 
-13.1.2 開啟時 `SPILLWAY_HOME` 必須明確設定（非空），且不得與預設資料目錄 `platformdirs.user_data_dir("spillway")` 是同一個目錄（包括大小寫不同、符號連結，以及以帳號的家目錄推得的預設位置——`$HOME` 被覆寫時仍以帳號家目錄比對；Linux 另含 `~/.local/share/spillway`）；不符時在 stderr 印錯誤、以結束碼 2 結束，不建立資料目錄、不開啟資料庫。
+13.1.2 開啟時 `SPILLWAY_HOME` 必須明確設定（非空），且不得與預設資料目錄 `platformdirs.user_data_dir("spillway")` 是同一個目錄（包括大小寫不同、符號連結、同一位置的其他寫法（例如 macOS 的 `/System/Volumes/Data` 前綴；目錄尚不存在時以最近存在的上層目錄比對），以及以帳號的家目錄推得的預設位置——`$HOME` 被覆寫時仍以帳號家目錄比對；Linux 另含 `~/.local/share/spillway`）；不符時在 stderr 印錯誤、以結束碼 2 結束，不建立資料目錄、不開啟資料庫。
 
 13.1.3 開啟時 serve 在 stderr 印一行警告（14.3.2），控制介面掛在 `/__test__/` 之下，不列入 OpenAPI（serve 有提供 `/openapi.json` 時其中不得含 `/__test__`）。控制介面照舊經 9.1.4 的 Host／Origin 檢查、只綁 127.0.0.1，回應帶 `Cache-Control: no-store` 與 `X-Content-Type-Options: nosniff`。
 

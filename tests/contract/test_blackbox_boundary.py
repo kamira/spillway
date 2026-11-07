@@ -15,7 +15,9 @@ import——函式內的延遲 import 與 `TYPE_CHECKING` 區塊不算,決策 9 
    等一律違規(假 CLI 只能以子行程執行)。根 conftest 只檢查規則 1。
 3. 字面路徑(範圍內的檔案):字串常數含 `src/spillway`,或以 `/ "src"`、`os.path.join(…, "src", …)` 組出路徑;
    以 `spillway`、`litellm` 為參數呼叫 `import_module`、`__import__`、`find_spec`、`files`。
-   例外列在 `tests/blackbox/boundary_allowlist.toml`(檔案、字面值或 regex、理由)。
+   例外列在 `tests/blackbox/boundary_allowlist.toml`(檔案、字面值或 regex、理由)。組出的路徑以整個運算式
+   (`ast.unparse`)作為字面值:`/` 鏈取最外層那一條(鏈中含 `"src"` 常數即判),`os.path.join(…)`、
+   `Path("src", "spillway", …)` 取整個呼叫——允許一條路徑不會放行同檔的其他 `/ "src"` 路徑(終審 F1)。
 4. 字樣(AM-14,範圍內的檔案):字串常數(docstring 除外)不得含 `uvicorn` 或 `INFO:`;不得 import `uvicorn`。
 5.(施工審議 T2 F3)範圍內的檔案:同一呼叫的字串參數依序含 `"src"`、`"spillway"`(`joinpath`、`Path`…)判
    `src-path`;改動 `sys.path`(`insert`/`append`/`extend`/賦值/`+=`)判 `sys-path`;字串常數含
@@ -186,9 +188,21 @@ def _is_sys_path(node: ast.expr) -> bool:
         and node.value.id == "sys"
 
 
+def _is_div(node: ast.AST | None) -> bool:
+    return isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
+
+
+def _div_constants(node: ast.expr) -> list[object]:
+    """`/` 鏈(左右兩側遞迴)中的常數值。"""
+    if _is_div(node):
+        return [*_div_constants(node.left), *_div_constants(node.right)]
+    return [node.value] if isinstance(node, ast.Constant) else []
+
+
 def _literal_violations(rel: str, tree: ast.AST, allow: set[tuple[str, str]]) -> list[Violation]:
     out: list[Violation] = []
     docs = _docstring_nodes(tree)
+    parents = {id(c): n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
 
     def flag(rule: str, literal: str) -> None:
         if not _allowed(allow, rel, literal):
@@ -212,16 +226,17 @@ def _literal_violations(rel: str, tree: ast.AST, allow: set[tuple[str, str]]) ->
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if any(_is_sys_path(t) for t in targets):
                 flag("sys-path", "sys.path")
-        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div) \
-                and isinstance(node.right, ast.Constant) and node.right.value == "src":
-            flag("src-path", "src")
+        elif _is_div(node):
+            # 只判最外層的 `/` 鏈,字面值是整條運算式(終審 F1:允許清單分得出組出來的是哪一條路徑)
+            if not _is_div(parents.get(id(node))) and "src" in _div_constants(node):
+                flag("src-path", ast.unparse(node))
         elif isinstance(node, ast.Call):
             name = _call_name(node.func)
             args = [a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
             if name == "join" and "src" in args:
-                flag("src-path", "src")
+                flag("src-path", ast.unparse(node))
             elif "src" in args and "spillway" in args[args.index("src") + 1:]:   # joinpath、Path("src", "spillway")
-                flag("src-path", "src")
+                flag("src-path", ast.unparse(node))
             if isinstance(node.func, ast.Attribute) and node.func.attr in SYS_PATH_METHODS \
                     and _is_sys_path(node.func.value):
                 flag("sys-path", "sys.path")
@@ -462,6 +477,41 @@ def test_allowlist_suppresses_only_listed_literal(tmp_path):
     assert check_boundary(repo, ["tests/sample"], allow=allow) == []
     allow = {("tests/other.py", "litellm")}   # 只豁免列出的檔案
     assert _rules(check_boundary(repo, ["tests/sample"], allow=allow)) == ["locate", "src-path"]
+
+
+def _src_paths(vs: list[Violation]) -> list[str]:
+    return sorted(v.detail for v in vs if v.rule == "src-path")
+
+
+@pytest.mark.parametrize("code,allowed,remaining", [
+    # 允許完整的 models.yaml 路徑,不放行同檔的另一條 `/ "src"` 路徑
+    ("from pathlib import Path\nR = Path('.')\nM = R / 'src' / 'spillway' / 'adapters' / 'claude_cli' / 'models.yaml'\n"
+     "X = R / 'src' / 'spillway' / 'router.py'\n",
+     "R / 'src' / 'spillway' / 'adapters' / 'claude_cli' / 'models.yaml'", ["R / 'src' / 'spillway' / 'router.py'"]),
+    # 允許 `R / 'src'`,不放行以它為前綴的更長路徑
+    ("from pathlib import Path\nR = Path('.')\nP = str(R / 'src')\nX = R / 'src' / 'spillway' / 'x.py'\n",
+     "R / 'src'", ["R / 'src' / 'spillway' / 'x.py'"]),
+    # 允許一條 os.path.join,不放行另一條
+    ("import os\nA = os.path.join('r', 'src', 'spillway', 'adapters')\nB = os.path.join('r', 'src', 'spillway', 'app.py')\n",
+     "os.path.join('r', 'src', 'spillway', 'adapters')", ["os.path.join('r', 'src', 'spillway', 'app.py')"]),
+])
+def test_allowlist_src_path_matches_whole_expression(tmp_path, code, allowed, remaining):
+    """終審 F1:`src-path` 的字面值是整個路徑運算式(最外層 `/` 鏈或整個呼叫),允許一條不放行其他條。"""
+    repo = _repo(tmp_path, {"tests/sample/test_a.py": code})
+    everything = check_boundary(repo, ["tests/sample"], allow=set())
+    assert allowed in _src_paths(everything) and set(remaining) <= set(_src_paths(everything))
+    got = check_boundary(repo, ["tests/sample"], allow={("tests/sample/test_a.py", allowed)})
+    assert _src_paths(got) == sorted(remaining), [str(v) for v in got]
+    # 單一 `"src"` 片段不再是可用的字面值
+    assert _src_paths(check_boundary(repo, ["tests/sample"], allow={("tests/sample/test_a.py", "src")})) \
+        == _src_paths(everything)
+
+
+def test_src_path_flags_outermost_chain_once(tmp_path):
+    """`/` 鏈只判最外層一次;`"src"` 在鏈的中段(右側不是 `"src"`)也要判。"""
+    repo = _repo(tmp_path, {"tests/sample/test_a.py":
+                            "from pathlib import Path\nR = Path('.')\nX = R / 'src' / 'spillway' / 'app.py'\n"})
+    assert _src_paths(check_boundary(repo, ["tests/sample"], allow=set())) == ["R / 'src' / 'spillway' / 'app.py'"]
 
 
 def test_allowlist_entries_have_reasons(tmp_path):
