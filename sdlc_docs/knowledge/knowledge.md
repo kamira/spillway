@@ -11,7 +11,7 @@
 | DIR-2 | 使用者確認 | 全分支 · security | 威脅模型不含外部有權限者;安全審議只做有限檢查 | 生效 |
 | DIR-3 | 使用者確認 | 全分支 · adapter · ui | 每種 AI 是一個自含的 adapter 模組,自帶可用模型清單;後台以選單選取 | 生效 |
 | DIR-4 | 使用者確認 | 全分支 · autonomy · merge · test · push | 測試、合回 main 與推送 origin 自動執行;只在分歧決策、需要密鑰或手動測試、永遠停點時停下 | 生效 |
-| DIR-5 | 使用者確認 | 全分支 · language | 實作語言不限定 Python,之後可能改用 Rust;順序為完成現有需求 → 評估 → 決定,評估前不做任何遷移 | 生效 |
+| DIR-5 | 使用者確認 | 全分支 · language | 評估已完成(2026-11-07),擁有者決定規劃改寫;順序為鎖定相依 → 測試黑箱化 → 逐模組移植 → Python 退役;改寫 CHG 開立前不新增 Rust 程式碼 | 生效 |
 
 ## DIR-1 — 審議採最簡化機制:審議席只給位置與意見,獨立審議席統整裁決
 - 日期 / 分支:2026-10-29(UTC+0)/ all
@@ -50,6 +50,7 @@
   6. 每個模組在 manifest 宣告 `cardinality`:`single`(該 provider 只能有 1 個成員)或 `multiple`;訂閱 CLI 預設 single。
 - 詳細契約:sdlc_docs/structure/design.md「Adapter 模組契約」、D11–D15。
 - 原因:使用者要求不同的 AI 能以模組化方式加入專案,並在模組中配置可用模型、後台以選單選取;訂閱制 CLI 與 API 視為不同模組,模組可限定唯一或允許多個。
+- 註記(2026-11-07,CHG-20261107-01,非規則):規則 1 將於 Rust 改寫 CHG 依 DIR-5 規則 4 ① 改寫,改寫前維持有效;同時要處理 AC-19、design D11。
 - 信度:使用者確認
 - 狀態:生效
 
@@ -66,15 +67,17 @@
 - 信度:使用者確認
 - 狀態:生效
 
-## DIR-5 — 實作語言不限定 Python;先完成現有需求,再評估 Rust,最後才決定是否處理
+## DIR-5 — 實作語言不限定 Python;Rust 評估已完成,擁有者決定規劃改寫
 - 日期 / 分支:2026-11-03(UTC+0)/ all
 - 情境:選擇實作方式、新增模組或介面、撰寫測試時;任何可能把系統綁死在 Python 的設計決策。
 - 使用者原話:「不限定 python,之後可以改用 rust;先把現在的需求處理完以後再評估 rust,最後才決定是否處理」(2026-11-03,開立 CHG-20261103-01 時)
+- 使用者原話(2026-11-07):評估後選「Plan a Rust rewrite」;四項選擇為「Config-driven + built-ins」「Own clients + litellm price JSON」「Black-box tests first, then port」「Yes, pin first」;開發環境的 Python 版本選「Two locks」
 - 規則:
   1. 實作語言不限定 Python;之後可能改用 Rust。
-  2. 三段順序:① 完成現有需求 → ② 評估改用 Rust → ③ 由使用者決定是否處理。順序不可跳過或對調。
-  3. 評估前不做任何遷移:不改寫既有模組、不新增 Rust 程式碼或建置流程、不為遷移預先加相依。
-- 應用紀錄(非規則,供評估參考):CHG-20261103-01 依本條讓 Web UI 成為靜態 HTML、CSS、JS,只經 HTTP 呼叫 `/api/*`,換後端時可原樣沿用(CHG-20261103-01 決策 5,design D41);測試綁 Python 的三處(行程內種資料、資料庫斷言、fixture)記入 design D41。
+  2. 三段順序:① 完成現有需求 → ② 評估改用 Rust → ③ 由使用者決定是否處理。順序不可跳過或對調。(② 已完成,2026-11-07,評估報告 `rust-evaluation.md`;③ 擁有者決定規劃改寫)
+  3. 改寫 CHG 開立前,不新增 Rust 程式碼或建置流程。鎖定相依(CHG-20261107-01)與測試黑箱化不算遷移。
+  4. 改寫的四項選擇(使用者 2026-11-07):① adapter 擴充採設定檔驅動加內建 adapter;② 自寫 HTTP client,價格與 context 表沿用 litellm 的 JSON;③ 先把測試改為黑箱再移植;④ 先鎖定相依。
+- 應用紀錄(非規則,供評估參考):CHG-20261103-01 依本條讓 Web UI 成為靜態 HTML、CSS、JS,只經 HTTP 呼叫 `/api/*`,換後端時可原樣沿用(CHG-20261103-01 決策 5,design D41);測試綁 Python 的三處(行程內種資料、資料庫斷言、fixture)記入 design D41。CHG-20261107-01 依規則 4 ④ 鎖定相依。
 - 適用範圍:全分支;語言與架構選擇。不改變 Guideline 第 6 節的現行技術選型(Python + FastAPI + LiteLLM SDK + SQLite),只表示該選型不是永久限制。
 - 原因:使用者指示「不限定 python,之後可以改用 rust」,並明定先處理完現在的需求再評估。
 - 信度:使用者確認
