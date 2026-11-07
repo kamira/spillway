@@ -199,7 +199,7 @@ curl -fsS -X POST --data-binary @"$SPILLWAY_HOME/backups/<backup>" -H 'Content-T
 相依以雜湊鎖定（CHG-20261107-01）：`requirements.lock` 為執行期（Python ≥3.11），`requirements-dev.lock` 為開發與測試（Python ≥3.12，`playwright==1.64.1` 需要），`build-constraints.lock` 為建置 `-e .` 用的 setuptools。安裝一律加 `--require-hashes --no-build`，雜湊不符或沒有 wheel 時拒裝，不會退回建置原始碼套件。兩行要一起執行：`sync` 會移除 lock 以外的套件，包括已裝的 editable spillway。
 
 ```bash
-uv venv --python 3.13 .venv                            # 不加 --seed（pip、setuptools 不在 lock 內）；3.12 的 CLI 子行程問題見下
+uv venv --python 3.13 .venv                            # 3.12 亦可；不加 --seed（pip、setuptools 不在 lock 內）
 uv pip sync --python .venv/bin/python --require-hashes --no-build --build-constraint build-constraints.lock requirements-dev.lock
 uv pip install --python .venv/bin/python --no-deps --build-constraint build-constraints.lock -e .
 python3 -I -S scripts/check_venv_integrity.py .venv    # 入侵檢查：.pth、sitecustomize、RECORD 雜湊（未加 -S 時拒絕執行）
@@ -212,8 +212,6 @@ export PYTHONPATH=src LITELLM_LOCAL_MODEL_COST_MAP=True
 畫面測試使用 Playwright 1.64.1 對應的 Chromium 1248（headless），可先以 `.venv/bin/python -m playwright install --dry-run chromium` 確認安裝位置；瀏覽器不存在時畫面測試會失敗（不會略過），需要時以 `.venv/bin/python -m playwright install chromium` 安裝（會下載瀏覽器）。畫面測試以暫存資料目錄執行，不讀寫實際的資料目錄，也不連外。
 
 只需要執行期時，以同樣的兩行改用 `requirements.lock`（Python ≥3.11）。`spillway init` 與 `serve` 不讀 lock；`pip install .` 或 `uv tool install .` 不經 lock，沒有雜湊保護，只靠 `pyproject.toml` 排除已知被植入的 litellm 版本（1.82.7、1.82.8、1.107.0）。`tests/unit/test_venv_matches_lock.py` 會在 venv 與 `requirements-dev.lock` 不一致時讓閘門失敗（漂移偵測，不是完整性保證）。
-
-開發環境的 venv 用 Python 3.13：在 Python 3.11、3.12 上，CLI 成員的子行程若留下仍持有 stdout 的孫行程，呼叫會等到逾時才結束（asyncio 的 `Process.wait()` 在這兩版會等管線關閉），修正另開 CHG。
 
 ### 升級相依
 
