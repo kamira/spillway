@@ -1,15 +1,18 @@
 """M4b 操作驗收的自動部分(CHG-20261103-01「### Acceptance operation」①–⑩;T9 L4;macOS)。
 
 驅動方式
-- 子行程:假 API 上游(`python -m tests.fakes.api_upstream`)與 `python -m spillway serve`(`ServeProc`;環境帶
-  `SPILLWAY_TEST_KEY=<假值>`,PATH 只含假 claude/codex)。每個資料目錄先以子行程 `python -m spillway init` 產生
-  token(serve 看到已有雜湊就不印;明文只存在測試行程記憶體 `TOKENS`)。成員的上游網址一律填假上游。
-- ⑨(AC-21)以行程內 `start_live_gateway(db, extra_adapter_paths=[tmp])` 啟動(決策審議修訂 AM-6);模組以
-  `tests/helpers/ui_members.broken_adapter_dir`(`fakemods.write_module(…, pre_import="import not_a_real_pkg_xyz\\n")`)
-  建立。AC-21 第三句(`adapter_unavailable`)由 `m2_adapters.feature` 與 `tests/contract/test_exclude_reasons.py` 涵蓋。
+- 子行程:假 API 上游(`python -m tests.fakes.api_upstream`)與 `SPILLWAY_CMD serve`(`tests.blackbox.harness.Serve`,
+  開啟測試控制介面以種入帳本與冷卻;環境帶 `SPILLWAY_TEST_KEY=<假值>`,PATH 只含假 claude/codex)。每個資料目錄先以
+  子行程 `SPILLWAY_CMD init`(`run_cli`)產生 token(serve 看到已有雜湊就不印;明文只存在測試行程記憶體 `TOKENS`)。
+  成員的上游網址一律填假上游。本檔不 import spillway(CHG-20261107-03 T3;邊界守門)。
+- ⑨(AC-21)以子行程 serve + `SPILLWAY_TEST_ADAPTER_PATHS`(`Serve(adapter_paths=[tmp])`;CHG-20261107-03 附錄,
+  取代轉換前的行程內 `start_live_gateway(extra_adapter_paths=…)`;實作相依,見 `tests/blackbox/impl_dependent.toml`)
+  啟動;模組以 `tests.blackbox.ui.members.broken_adapter_dir`
+  (`fakemods.write_module(…, pre_import="import not_a_real_pkg_xyz\\n")`)建立。AC-21 第三句(`adapter_unavailable`)
+  由 `m2_adapters.feature` 與 `tests/contract/test_exclude_reasons.py` 涵蓋。
 - 瀏覽器:Playwright sync API、headless Chromium,module 範圍;主 thread 不用 asyncio(決策 22)。一個 context
-  (1280×800、Asia/Taipei、剪貼簿權限),`tests/helpers/ui.open_context` 攔截非本機請求並收集 console error 與
-  pageerror;結束時必須為 0。頁面操作一律用 `tests/helpers/ui*.py`。
+  (1280×800、Asia/Taipei、剪貼簿權限),`tests.blackbox.ui.open_context` 攔截非本機請求並收集 console error 與
+  pageerror;結束時必須為 0。頁面操作一律用 `tests/blackbox/ui/`(由 `tests/helpers/ui*.py` 複製的黑箱版)。
 - 匯出 A 在 ③ 完成之後(⑦);第二個資料目錄的 serve 以畫面 replace「預覽匯入」→ 確認 → 匯出 B(AC-10)。
 
 產物(`artifacts/m4b/`,不進版控)
@@ -17,7 +20,8 @@
 - `operation-results.json`:各步驟的觀察值(不含任何秘密)。
 - `ac8-timing.json`:① 從開啟 `/` 到範例呼叫 200 的耗時(自動化只是回歸護欄,AC-8 以擁有者步驟 ④ 計時)。
 NFR-4:以假金鑰與全部 token 明文搜尋資料庫(含 -wal/-shm)、設定 YAML A 與 B、帳本 CSV、第二資料目錄的
-`backups/`、serve 日誌、全部畫面的 HTML 與畫面期間的 `/api/` 回應,以及 `artifacts/m4b/` 的文字檔,命中須為 0。
+`backups/`、serve 日誌(遮罩副本與原始 stderr)、全部畫面的 HTML 與畫面期間的 `/api/` 回應,以及 `artifacts/m4b/`
+的文字檔,命中須為 0。
 """
 from __future__ import annotations
 
@@ -28,8 +32,6 @@ import io
 import json
 import re
 import sqlite3
-import subprocess
-import sys
 import time
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
@@ -44,18 +46,18 @@ import yaml
 from playwright.sync_api import Browser, Error, Page, Playwright, Response, expect, sync_playwright
 
 from tests.acceptance import procs
+from tests.blackbox.control import Control
+from tests.blackbox.harness import Serve, child_env, run_cli
+from tests.blackbox.mask import redact_tokens
+from tests.blackbox.ui import (CLIP, NAV, close_and_collect, confirm_dialog, db_snapshot, goto, open_context,
+                               wait_loaded)
+from tests.blackbox.ui.ledger import insert_ledger
+from tests.blackbox.ui.mcp import TOOLS, mcp_config, mcp_variants, open_mcp, open_reference
+from tests.blackbox.ui.members import BROKEN_MODULE, BROKEN_PROVIDER, MemberForm, broken_adapter_dir, open_members
+from tests.blackbox.ui.overview import set_cooldown
+from tests.blackbox.ui.routes import drag_slot, editor_slots, open_editor, route_order
+from tests.blackbox.ui.settings import choose_import, import_dialog, import_requests, open_settings, page_leaks
 from tests.fakes.cli_upstream import assert_only_fakes, install
-from tests.features.support.mcp_proc import ServeProc, child_env
-from tests.helpers import redact_tokens
-from tests.helpers.live_gateway import start_live_gateway
-from tests.helpers.ui import (CLIP, NAV, close_and_collect, confirm_dialog, db_snapshot, goto, open_context,
-                              wait_loaded)
-from tests.helpers.ui_ledger import insert_ledger
-from tests.helpers.ui_mcp import TOOLS, mcp_config, mcp_variants, open_mcp, open_reference
-from tests.helpers.ui_members import BROKEN_PROVIDER, MemberForm, broken_adapter_dir, open_members
-from tests.helpers.ui_overview import set_cooldown
-from tests.helpers.ui_routes import drag_slot, editor_slots, open_editor, route_order
-from tests.helpers.ui_settings import choose_import, import_dialog, import_requests, open_settings, page_leaks
 
 pytestmark = pytest.mark.skipif(not procs.HAS_LSOF, reason="需要 lsof(macOS 驗收平台)")
 
@@ -133,26 +135,35 @@ def _fresh_artifacts() -> Iterator[None]:
 # ---------------------------------------------------------------- 子行程 serve 與 helper 轉接
 
 class ServeGw:
-    """子行程 serve 的轉接:提供 `tests/helpers/ui*.py` 需要的 `url`、`http`、`db`、`port`、`db_path`。"""
+    """子行程 serve(`tests.blackbox.harness.Serve`)的轉接:提供 `tests/blackbox/ui/` 需要的 `url`、`http`、`db`
+    (唯讀)、`control`(`/__test__/*`)、`port`、`db_path`。`adapter_paths` 給了就以 `SPILLWAY_TEST_ADAPTER_PATHS`
+    載入(`allowed_unavailable` 為允許載入失敗的模組名)。"""
 
-    def __init__(self, tmp: Path, name: str, fake_bin: Path, serves: list[ServeProc]) -> None:
+    def __init__(self, tmp: Path, name: str, fake_bin: Path, serves: list[Serve], *,
+                 adapter_paths: list[Path] | None = None, allowed_unavailable: tuple[str, ...] = ()) -> None:
         self.name = name
         self.home = tmp / name
         self.home.mkdir()
-        self.db_path = self.home / "spillway.db"
         self.extra_env = {"SPILLWAY_TEST_KEY": FAKE_KEY}
         self.token = self._init_token(fake_bin)
-        self.serve = ServeProc(self.home, fake_bin=fake_bin, graceful=GRACE, log_path=tmp / f"serve-{name}.log",
-                               extra_env=self.extra_env, secrets=TOKENS)
+        self.serve = Serve(self.home, fake_bin=fake_bin, graceful_timeout=GRACE, log_path=tmp / f"serve-{name}.log",
+                           extra_env=self.extra_env, adapter_paths=adapter_paths or (),
+                           allowed_unavailable_adapters=allowed_unavailable)
         serves.append(self.serve)
-        self.serve.wait_ready()
+        self.serve.start()
         self.port = self.serve.port
-        self.base_url = self.serve.url
+        self.base_url = self.serve.base_url
+        self.db_path = self.serve.db_path
+
+    @property
+    def control(self) -> Control:
+        return self.serve.control
+
+    def stop(self) -> None:
+        self.serve.stop()
 
     def _init_token(self, fake_bin: Path) -> str:
-        envv = child_env(self.home, fake_bin=fake_bin, extra=self.extra_env)
-        r = subprocess.run([sys.executable, "-m", "spillway", "init"], env=envv, cwd=str(REPO_ROOT),
-                           capture_output=True, text=True, timeout=120)
+        r = run_cli("init", home=self.home, fake_bin=fake_bin, extra_env=self.extra_env, timeout=120)
         token = r.stdout.strip()
         if token:
             TOKENS.append(token)
@@ -167,12 +178,9 @@ class ServeGw:
 
     @contextlib.contextmanager
     def db(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(str(self.db_path), timeout=30, isolation_level=None)
-        conn.execute("PRAGMA busy_timeout = 30000")
-        try:
+        with self.serve.db() as conn:          # 唯讀(mode=ro)
+            conn.execute("PRAGMA busy_timeout = 30000")
             yield conn
-        finally:
-            conn.close()
 
     def get(self, path: str, **kw: Any) -> Any:
         with self.http() as c:
@@ -287,14 +295,21 @@ def env(tmp_path: Path) -> Iterator[dict[str, Any]]:
     envv = child_env(tmp_path, fake_bin=fake_bin)
     assert set(assert_only_fakes(envv["PATH"])) == {"claude", "codex"}
     fake_proc, fake_base = procs.start_fake_upstream(tmp_path)
-    serves: list[ServeProc] = []
+    serves: list[Serve] = []
+    errors: list[BaseException] = []
     try:
         yield {"tmp": tmp_path, "fake_bin": fake_bin, "fake_base": fake_base, "serves": serves}
     finally:
-        for s in serves:
-            s.stop()
+        for s in serves:                   # stop():結束碼、stderr 沒有 Traceback/ERROR、停機沒有逾時(冪等)
+            try:
+                s.stop()
+            except BaseException as exc:  # noqa: BLE001 — 全部停完再回報
+                s.kill()
+                errors.append(exc)
         procs.stop(fake_proc)
-    assert all(s.proc.poll() is not None for s in serves) and fake_proc.poll() is not None
+    if errors:
+        raise errors[0]
+    assert all(s.returncode is not None for s in serves) and fake_proc.poll() is not None
 
 
 def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: PLR0915 — 一次走完 ①–⑩
@@ -307,7 +322,7 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
     screens = Screens(page)
     try:
         a = ServeGw(tmp, "a", env["fake_bin"], env["serves"])
-        obs["listen_a"] = procs.listening(a.serve.proc.pid)
+        obs["listen_a"] = procs.listening(a.port)
         assert obs["listen_a"] and all(x.startswith("127.0.0.1:") for x in obs["listen_a"])
 
         # ① 空資料庫 → 精靈:加入 api 成員(env:SPILLWAY_TEST_KEY)、測試呼叫、建立 route、範例呼叫(AC-8)
@@ -503,7 +518,7 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
         with a.http() as c:
             assert file_a == c.get("/api/config/export").content
         b = ServeGw(tmp, "b", env["fake_bin"], env["serves"])
-        assert all(x.startswith("127.0.0.1:") for x in procs.listening(b.serve.proc.pid))
+        assert all(x.startswith("127.0.0.1:") for x in procs.listening(b.port))
         open_settings(page, b)
         snap_b = db_snapshot(b)
         choose_import(page, file_a, mode="replace")
@@ -555,12 +570,11 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
         obs["8_api_reference"] = {"categories": ["連線", "工具", "通知", "錯誤碼"], "items": len(items),
                                   "tools": len(cat["tools"])}
 
-        # ⑨ 行程內 start_live_gateway(extra_adapter_paths):不可用模組停用並顯示原因(AC-21)
+        # ⑨ 子行程 serve + SPILLWAY_TEST_ADAPTER_PATHS:不可用模組停用並顯示原因(AC-21)
         mods = broken_adapter_dir(tmp / "mods")
-        live = start_live_gateway(tmp / "c" / "spillway.db", extra_adapter_paths=[mods])
+        live = ServeGw(tmp, "c", env["fake_bin"], env["serves"], adapter_paths=[mods],
+                       allowed_unavailable=(BROKEN_MODULE,))
         try:
-            if live.token:
-                TOKENS.append(live.token)
             with live.http() as c:
                 broken = next(m for m in c.get("/api/adapters").json()["modules"] if m["module"] == "broken")
             assert broken["available"] is False and broken["unavailable_reason"]
@@ -612,6 +626,8 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
     # NFR-4:資料庫、匯出檔、CSV、第二資料目錄 backups/、serve 日誌、畫面 HTML 與 API 回應
     secrets = [FAKE_KEY, *TOKENS]
     files = [tmp / "A.yaml", tmp / "B.yaml", tmp / "ledger.csv", *(s.log_path for s in env["serves"])]
+    stderr_hits = [str(s.log_path.name) for s in env["serves"] for sec in secrets if sec.encode() in s.stderr_bytes()]
+    assert stderr_hits == [], stderr_hits             # 原始 stderr(日誌檔是遮罩副本)
     for home in (tmp / "a", tmp / "b", tmp / "c"):
         files += [p for p in home.glob("spillway.db*") if p.is_file()]
     backups = sorted((tmp / "b" / "backups").glob("*"))

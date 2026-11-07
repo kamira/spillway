@@ -2,19 +2,23 @@
 
 拆成 4 個測試函式(認證/工具、list_changed、stdio、停機),各自:
 - 暫存 `SPILLWAY_HOME`;PATH 只含假 CLI(`safe_subprocess_env`,斷言找不到真實 claude/codex);
-- 子行程 `python -m spillway init` 取得 token(stdout 只印 token;明文只存在測試行程記憶體);
-- 子行程 `python -m spillway serve --port <隨機>`(`SPILLWAY_TEST_GRACEFUL_TIMEOUT=2`)與子行程假 API 上游;
+- 子行程 `SPILLWAY_CMD init` 取得 token(`tests.blackbox.harness.run_cli`;stdout 只印 token;明文只存在測試
+  行程記憶體);
+- 子行程 `SPILLWAY_CMD serve --port <隨機>`(`tests.blackbox.harness.Serve`,未開啟測試控制介面;
+  `SPILLWAY_TEST_GRACEFUL_TIMEOUT=2`)與子行程假 API 上游;
 - 以管理 API 建立 claude-sub(claude-cli)、deepseek-api(api)、群組 `coding`、task route `review`
   (target 群組 coding,slot 1 claude-sub、slot 2 deepseek-api)與 chat route `chat-x`(不屬 coding)。
-MCP 一律以官方 SDK 用戶端實際連線(Streamable HTTP 對子行程 serve;stdio 對子行程 `mcp-stdio`)。
+MCP 一律以官方 SDK 用戶端實際連線(Streamable HTTP 對子行程 serve;stdio 對子行程 `SPILLWAY_CMD mcp-stdio`;
+驅動為 `tests.blackbox.mcp`)。本檔不 import spillway(CHG-20261107-03 T3;邊界守門)。
 
 產物(`artifacts/m3b/`,不進版控):
 - `http-log.jsonl`:測試行程對閘道的每一筆 HTTP 請求(管理 API、MCP 的 POST/GET/DELETE)一行,只有
   `method`、`path`(不含 query)、`status`、`elapsed_ms` 四鍵——MCP 用戶端的 `http_client` 掛 httpx event hook
   寫入;不記 header 與 body。
 - `operation-results.json`:各函式的觀察值(不含任何秘密)與 M3 閘門對照表(`m3_gates`)。
-GET 通知串流「已在伺服器端就緒」:子行程無法讀 SDK 狀態(`sdk_compat.get_stream_open` 只在行程內可用),
-以「改一次 route → 收到 `tools/list_changed`」證明(同 tests/integration/mcp/test_mcp_shutdown.py)。
+GET 通知串流「已在伺服器端就緒」:以「改一次 route → 收到 `tools/list_changed`」證明(同
+tests/integration/mcp/test_mcp_shutdown.py;本檔的 serve 未開啟測試控制介面,不用 `/__test__/mcp/sessions`)。
+資料庫一律唯讀開啟(`tests.blackbox.db.read_db`);serve 的 stderr 以原始位元組(`Serve.stderr_bytes()`)檢查 token。
 """
 from __future__ import annotations
 
@@ -26,9 +30,6 @@ import os
 import shlex
 import shutil
 import signal
-import sqlite3
-import subprocess
-import sys
 import threading
 import time
 import tomllib
@@ -39,14 +40,13 @@ import httpx
 import pytest
 
 from tests.acceptance import procs
-from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install
-from tests.helpers import redact_tokens
-from tests.features.support.mcp_proc import (
+from tests.blackbox.db import ACCESS_TOKEN_KEY, read_db, setting
+from tests.blackbox.harness import EXIT_SIGINT, EXIT_SIGTERM, Serve, child_env, run_cli
+from tests.blackbox.mask import redact_tokens
+from tests.blackbox.mcp import (
     INIT_BODY,
     MCP_ACCEPT,
-    ServeProc,
     ask_route_enum,
-    child_env,
     group_alive,
     is_list_changed,
     mcp_http_session,
@@ -54,6 +54,7 @@ from tests.features.support.mcp_proc import (
     raw_get_stream,
     stdio_session,
 )
+from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install
 
 pytestmark = [
     pytest.mark.anyio,
@@ -180,8 +181,7 @@ class Op:
         env = child_env(self.home, fake_bin=self.fake.bin_dir, extra=self.extra_env)
         assert assert_only_fakes(env["PATH"]) == {"claude": str(self.fake.path("claude")),
                                                   "codex": str(self.fake.path("codex"))}
-        r = subprocess.run([sys.executable, "-m", "spillway", "init"], env=env, cwd=str(REPO_ROOT),
-                           capture_output=True, text=True, timeout=120)
+        r = run_cli("init", home=self.home, fake_bin=self.fake.bin_dir, extra_env=self.extra_env, timeout=120)
         self.tokens: list[str] = []
         self.token = r.stdout.strip()
         if self.token:
@@ -191,7 +191,7 @@ class Op:
         assert one_line, "init 的 stdout 應只有一行 token"
         in_stderr = self.token in r.stderr
         assert not in_stderr, "init 的 stderr 含 token 明文"
-        self.serves: list[ServeProc] = []
+        self.serves: list[Serve] = []
         self.http: httpx.Client = None  # type: ignore[assignment] — serve 就緒後才建立
         self.fake_proc, self.fake_base = procs.start_fake_upstream(tmp_path)
         try:
@@ -199,33 +199,38 @@ class Op:
         except BaseException:
             self.close()
             raise
-        self.http = httpx.Client(base_url=self.serve.url, trust_env=False, timeout=60,
-                                 event_hooks=HttpLog.sync_hooks())
+        self.http = self.serve.http(timeout=60, event_hooks=HttpLog.sync_hooks())
 
     def register(self, token: str) -> None:
         self.tokens.append(token)
         TOKENS.append(token)
 
     # -- 行程
-    def start_serve(self) -> ServeProc:
-        s = ServeProc(self.home, fake_bin=self.fake.bin_dir, graceful=GRACE,
-                      log_path=self.tmp / f"serve-{len(self.serves)}.log", extra_env=self.extra_env,
-                      secrets=TOKENS)
+    def start_serve(self) -> Serve:
+        s = Serve(self.home, control=False, fake_bin=self.fake.bin_dir, graceful_timeout=GRACE,
+                  log_path=self.tmp / f"serve-{len(self.serves)}.log", extra_env=self.extra_env)
         self.serves.append(s)
-        s.wait_ready()
+        s.start()
         return s
 
     def close(self) -> None:
         if self.http is not None:
             self.http.close()
-        for s in self.serves:
-            s.stop()
+        errors: list[BaseException] = []
+        for s in self.serves:              # stop():結束碼、stderr 沒有 Traceback/ERROR、停機沒有逾時(冪等)
+            try:
+                s.stop()
+            except BaseException as exc:  # noqa: BLE001 — 全部停完再回報
+                s.kill()
+                errors.append(exc)
         procs.stop(self.fake_proc)
         for rec in self.fake.records():
             if not rec.get("finished") and rec.get("started_at", 0) >= self.started and group_alive(rec["pid"]):
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(rec["pid"], signal.SIGKILL)
         shutil.rmtree(self.fake.control_dir, ignore_errors=True)
+        if errors:
+            raise errors[0]
 
     # -- HTTP
     def ok(self, r: httpx.Response, status: int = 200) -> Any:
@@ -253,29 +258,26 @@ class Op:
             "name": "chat-x", "mode": "chat", "target": {"tags": {"all": [], "any": [API], "none": []}}}), 201)
 
     def mcp(self, group: str = GROUP, *, token: str | None = None, **kw: Any):
-        return mcp_http_session(f"{self.serve.url}/mcp/{group}", token or self.token,
+        return mcp_http_session(self.serve.mcp_url(group), token or self.token,
                                 event_hooks=HttpLog.async_hooks(), **kw)
 
     def raw_mcp(self, headers: dict[str, str], group: str = GROUP) -> httpx.Response:
         return self.http.post(f"/mcp/{group}", json=INIT_BODY, headers={"Accept": MCP_ACCEPT, **headers})
 
     def token_hash(self) -> str:
-        c = sqlite3.connect(str(self.home / "spillway.db"))
-        try:
-            return c.execute("SELECT value FROM settings WHERE key = 'access_token_sha256'").fetchone()[0]
-        finally:
-            c.close()
+        with read_db(self.home) as c:
+            return setting(c, ACCESS_TOKEN_KEY)
 
     def ledger(self) -> list[dict[str, Any]]:
         return self.ok(self.http.get("/api/ledger", params={"page_size": 500}))["items"]
 
     def assert_no_token_leak(self) -> dict[str, list[str]]:
         leaks: dict[str, list[str]] = {}
-        logs = "".join(s.log_text() for s in self.serves)
+        logs = b"".join(s.stderr_bytes() for s in self.serves)      # 原始 stderr(未遮罩)
         for i, tok in enumerate(self.tokens):
             found = _files_containing(self.home, tok) + _files_containing(ARTIFACTS, tok)
-            if tok in logs:
-                found.append("serve log")
+            if tok.encode() in logs:
+                found.append("serve stderr")
             leaks[f"token{i}"] = found
         assert all(not v for v in leaks.values()), leaks
         return leaks
@@ -289,7 +291,7 @@ def op(tmp_path):
         yield o
     finally:
         o.close()
-    assert all(s.proc.poll() is not None for s in o.serves) and o.fake_proc.poll() is not None
+    assert all(s.returncode is not None for s in o.serves) and o.fake_proc.poll() is not None
 
 
 def _error(r: httpx.Response) -> tuple[int, str]:
@@ -378,13 +380,13 @@ async def test_m3b_operation_auth_and_tools(op: Op):
             _parse(v)                                                   # 每個 variant 依其 format 可解析
         cfgs[tool] = {"variants": [f"{v['scope']}:{v['format']}" for v in cfg["variants"]],
                       "env": cfg["env"], "token_free": all(t not in text for t in op.tokens),
-                      "url_port_ok": tool == "stdio" or f"{op.serve.url}/mcp/{GROUP}" in cfg["variants"][0]["content"]}
+                      "url_port_ok": tool == "stdio" or op.serve.mcp_url(GROUP) in cfg["variants"][0]["content"]}
         assert cfg["env"] == ["SPILLWAY_TOKEN"] and "SPILLWAY_TOKEN" in cfg["variants"][0]["content"], cfg
         assert cfgs[tool]["token_free"] and cfgs[tool]["url_port_ok"], (tool, cfgs[tool])
     obs["mcp_config"] = cfgs
 
     # ---- 只聽 127.0.0.1;token 明文不外洩
-    obs["listening"] = procs.listening(op.serve.proc.pid)
+    obs["listening"] = procs.listening(op.serve.port)
     assert obs["listening"] == [f"127.0.0.1:{op.serve.port}"]
     obs["token_leaks"] = op.assert_no_token_leak()
     record("auth_tools", obs)
@@ -491,7 +493,7 @@ async def test_m3b_operation_shutdown(op: Op):
     serve = op.serve
     op.fake.set("claude", "hold_until_release")
     get_open = asyncio.Event()
-    get_task = asyncio.ensure_future(raw_get_stream(f"{serve.url}/mcp/{GROUP}", op.token,
+    get_task = asyncio.ensure_future(raw_get_stream(serve.mcp_url(GROUP), op.token,
                                                     on_open=get_open.set, event_hooks=HttpLog.async_hooks()))
     await asyncio.wait_for(get_open.wait(), 15)
     async with op.mcp() as (s, _init, _sid):
@@ -499,15 +501,15 @@ async def test_m3b_operation_shutdown(op: Op):
         (rec,) = await asyncio.to_thread(op.fake.wait_for_records, "claude", 1, timeout=30)
         assert pid_alive(rec["pid"])
         t0 = time.monotonic()
-        serve.proc.send_signal(signal.SIGTERM)
+        serve.signal(signal.SIGTERM)
         get_closed = await asyncio.wait_for(get_task, GRACE + 10)
         result = await asyncio.wait_for(call, GRACE + 10)
         answered = time.monotonic() - t0
-        await asyncio.to_thread(serve.proc.wait, GRACE + 15)
+        await asyncio.to_thread(serve.wait_exit, GRACE + 15)
         exited = time.monotonic() - t0
     obs["sigterm"] = {
         "get_stream_closed_s": round(get_closed - t0, 3), "ask_answered_s": round(answered, 3),
-        "serve_exit_s": round(exited, 3), "grace_s": GRACE, "returncode": serve.proc.returncode,
+        "serve_exit_s": round(exited, 3), "grace_s": GRACE, "returncode": serve.returncode,
         "ask_is_error": result.isError,
         "ask_error_code": (result.structuredContent or {}).get("error", {}).get("code"),
         "leftover_fake_claude": pid_alive(rec["pid"]) or group_alive(rec["pid"]),
@@ -515,15 +517,13 @@ async def test_m3b_operation_shutdown(op: Op):
     assert obs["sigterm"]["get_stream_closed_s"] < GET_CLOSE_LIMIT, obs           # GET 串流立即結束
     assert result.isError is True and obs["sigterm"]["ask_error_code"] == "shutting_down", result.content
     assert answered < GRACE and exited <= GRACE, obs                               # 寬限內回應並結束
-    assert serve.proc.returncode == -signal.SIGTERM, serve.safe_log()
+    assert serve.returncode == EXIT_SIGTERM, redact_tokens(serve.stderr_text()[-4000:], TOKENS)
+    serve.stop()                                        # 已結束:斷言結束碼、stderr、行程群組已清空
     assert obs["sigterm"]["leftover_fake_claude"] is False
     assert len(op.fake.records("claude")) == 1
-    c = sqlite3.connect(str(op.home / "spillway.db"))
-    try:
+    with read_db(op.home) as c:
         last = c.execute("SELECT status, error FROM usage_ledger WHERE deployment_id = ? ORDER BY id DESC LIMIT 1",
                          (CLAUDE,)).fetchone()
-    finally:
-        c.close()
     obs["sigterm"]["ledger"] = list(last)
     assert tuple(last) == ("error", "shutdown")
 
@@ -531,12 +531,14 @@ async def test_m3b_operation_shutdown(op: Op):
     op.fake.set("claude", "ok")
     second = op.start_serve()
     t1 = time.monotonic()
-    os.killpg(second.proc.pid, signal.SIGINT)
-    await asyncio.to_thread(second.proc.wait, GRACE + 15)
-    log = second.log_text()
-    obs["sigint"] = {"returncode": second.proc.returncode, "elapsed_s": round(time.monotonic() - t1, 3),
+    second.signal(signal.SIGINT)                        # 對 process group 送 SIGINT
+    await asyncio.to_thread(second.wait_exit, GRACE + 15)
+    log = second.stderr_text()
+    obs["sigint"] = {"returncode": second.returncode, "elapsed_s": round(time.monotonic() - t1, 3),
                      "traceback_in_stderr": "Traceback" in log}
-    assert second.proc.returncode == 130 and not obs["sigint"]["traceback_in_stderr"], second.safe_log()
-    assert "Traceback" not in serve.log_text()
+    assert second.returncode == EXIT_SIGINT and not obs["sigint"]["traceback_in_stderr"], \
+        redact_tokens(log[-4000:], TOKENS)
+    second.stop(signal.SIGINT)                          # 已結束:斷言結束碼 130、stderr、行程群組已清空
+    assert "Traceback" not in serve.stderr_text()
     obs["token_leaks"] = op.assert_no_token_leak()
     record("shutdown", obs)
