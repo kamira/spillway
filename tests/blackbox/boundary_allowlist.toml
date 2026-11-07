@@ -36,3 +36,8 @@ reason = "寫到暫存目錄的假 adapter 模組原始碼(文字),由 serve 子
 file = "tests/blackbox/test_harness.py"
 literal = "-m spillway"
 reason = "斷言 SPILLWAY_CMD 未設定時 spillway_cmd() 的預設值(決策 8 ①);不用來啟動行程"
+
+[[allow]]
+file = "tests/ui/test_members.py"
+literal = "src"
+reason = "讀 src/spillway/adapters/claude_cli/models.yaml 當模型下拉選單的獨立 oracle(檔案讀取,決策 9 ②;T5 回報,主 session 代 T2 擁有者補上)"
