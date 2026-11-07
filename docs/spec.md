@@ -917,7 +917,7 @@ Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>
 | NFR-4 | 憑證 | 資料庫、匯出檔、日誌不含任何金鑰或 token 明文 | 以已知金鑰字串搜尋三者的內容，命中數必須為 0 |
 | NFR-5 | 帳本內容 | `usage_ledger` 不存 prompt 與回應；內容只存於 `usage_payloads`，過期後 1 小時內刪除 | 檢查 `usage_ledger` 欄位；保存天數設為 1 並推進系統時間 2 天，確認過期列已刪除 |
 | NFR-6 | 並行 | CLI 成員同時執行數上限預設 1，可由 `params.max_concurrency` 調整；超過時視為不可用、不排隊 | 同時送出 2 個 task 請求，第 2 個必須由下一個成員處理 |
-| NFR-7 | 執行環境 | Python 3.11 以上；macOS、Linux、Windows | 三平台各執行驗收測試一次 |
+| NFR-7 | 執行環境 | Python 3.11 以上；macOS、Linux、Windows | 三平台各執行驗收測試一次（雜湊 lock 只在 macOS 驗證，CHG-20261107-01） |
 
 ## 12 驗收標準
 

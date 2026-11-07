@@ -10,7 +10,8 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.110",
   "uvicorn>=0.29",
-  "litellm>=1.50,<2",
+  # CHG-20261107-01 決策 5:排除 2026 年 PyPI 被植入的版本(1.82.7、1.82.8 於 3 月;1.107.0 於 10 月 21 日)
+  "litellm>=1.50,<2,!=1.82.7,!=1.82.8,!=1.107.0",
   "pyyaml>=6",
   "pydantic>=2.6",
   "platformdirs>=4",
