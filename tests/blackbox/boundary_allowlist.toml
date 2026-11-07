@@ -1,0 +1,12 @@
+# 黑箱邊界守門的允許清單(CHG-20261107-03 決策 9 ②③;tests/contract/test_blackbox_boundary.py 讀取)。
+#
+# 守門把下列字面值算違規:指向 `src/spillway/` 的路徑(含 `/ "src"` 的路徑組合)、以 `spillway` 或 `litellm`
+# 為參數的 import_module / __import__ / find_spec / files 呼叫。列在這裡的(檔案, 字面值)例外,必須寫明理由。
+# 本檔由 T2 擁有;wave 3 需要新例外時回報主 session,由 T2 擁有者補上。
+#
+# 欄位:file = 相對於 repo 根目錄的檔案;literal = 被判違規的字面值(完全相同);reason = 理由。
+
+[[allow]]
+file = "tests/blackbox/prices.py"
+literal = "litellm"
+reason = "以 importlib.util.find_spec 找 litellm 套件目錄,讀其中的價格 JSON 當資料(檔案讀取,不 import litellm;決策 9 ③、AM-9)"
