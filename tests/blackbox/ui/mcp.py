@@ -1,6 +1,6 @@
 """UI-5 MCP 設定與 UI-8 API 參考的頁面操作 helper(CHG-20261103-01 T7;決策 15、19、22)。
 
-(CHG-20261107-03 T2 由 `tests/helpers/ui_mcp.py` 複製改寫成黑箱版;原檔不動,T5 改用本模組後刪除)
+(CHG-20261107-03 T2 由 `tests/helpers/ui_mcp.py` 複製改寫成黑箱版;原檔已於 T5 改用本模組後刪除,4e2ce46)
 只用 Playwright **sync** API 與同步 httpx(`gw.http()`);behave 步驟可直接匯入。
 
 - 群組以 `tests.blackbox.ui.seed_group` 建立。

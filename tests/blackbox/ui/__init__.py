@@ -1,6 +1,6 @@
 """畫面測試共用的頁面操作與種資料層(CHG-20261103-01 T3;決策 22,決策審議修訂 AM-5)。
 
-(CHG-20261107-03 T2 由 `tests/helpers/ui.py` 複製改寫成黑箱版;原檔不動,T5 改用本模組後刪除)
+(CHG-20261107-03 T2 由 `tests/helpers/ui.py` 複製改寫成黑箱版;原檔保留,只留給 integration `test_admin_mcp_catalog` 的 `db_snapshot`,T5 審議)
 黑箱版:`gw` 為 `tests.blackbox.harness.Serve`(子行程 serve);資料庫只唯讀(`gw.db()`),非經 `/api` 不可的
 寫入一律經測試控制介面(`gw.control`,spec 13);不 import spillway。
 

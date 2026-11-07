@@ -1,6 +1,6 @@
 """UI-2 成員與 UI-3 群組的頁面操作與種資料(CHG-20261103-01 T5;behave 步驟可直接匯入)。
 
-(CHG-20261107-03 T2 由 `tests/helpers/ui_members.py` 複製改寫成黑箱版;原檔不動,T5 改用本模組後刪除)
+(CHG-20261107-03 T2 由 `tests/helpers/ui_members.py` 複製改寫成黑箱版;原檔已於 T5 改用本模組後刪除,4e2ce46)
 只用 Playwright **sync** API 與同步 `gw.http()`(經 `tests.blackbox.ui.api`),不在主 thread 使用 asyncio。
 
 - `member_body(dep_id, **kw)`:本畫面的預設成員(openai `gpt-5.5`、上游 `127.0.0.1:9`、tag `chat`、`budget: null`),

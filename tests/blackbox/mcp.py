@@ -1,6 +1,6 @@
 """MCP 用戶端與 `mcp-stdio` 子行程的共用驅動(CHG-20261107-03 T2;決策 8 ⑦;AM-15)。
 
-由 `tests/features/support/mcp_proc.py` 複製改寫成黑箱版(原檔不動,由 T4 改用本模組):
+由 `tests/features/support/mcp_proc.py` 複製改寫成黑箱版(T4 改用本模組後刪除原檔,3dae22c):
 子行程 serve 一律用 `tests.blackbox.harness.Serve`;`mcp-stdio` 經 `SPILLWAY_CMD` 執行;
 GET 通知串流是否就緒經 `GET /__test__/mcp/sessions/{id}`(`Serve.wait_stream_open`)。不 import spillway。
 

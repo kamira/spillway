@@ -1,6 +1,6 @@
 """UI-6 帳本與 UI-1 總覽共用的種資料 helper(CHG-20261103-01 T4;決策 22)。
 
-(CHG-20261107-03 T2 由 `tests/helpers/ui_ledger.py` 複製改寫成黑箱版;原檔不動,T5 改用本模組後刪除)
+(CHG-20261107-03 T2 由 `tests/helpers/ui_ledger.py` 複製改寫成黑箱版;原檔已於 T5 改用本模組後刪除,4e2ce46)
 帳本列與 payload 沒有 `/api` 寫入端點,一律經測試控制介面 `POST /__test__/ledger`、`/__test__/payloads`
 (spec 13.4.3;upsert,`id` 已存在時整列取代)寫入。時間以 `YYYY-MM-DDTHH:MM:SSZ` 送出(spec 2.1.2)。
 種入不經遮罩;驗證遮罩的情境不得使用本檔。

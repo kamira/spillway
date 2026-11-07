@@ -1,6 +1,6 @@
 """UI-7 設定與首次設定精靈的頁面操作(CHG-20261103-01 T8;behave 步驟可直接匯入)。
 
-(CHG-20261107-03 T2 由 `tests/helpers/ui_settings.py` 複製改寫成黑箱版;原檔不動,T5 改用本模組後刪除)
+(CHG-20261107-03 T2 由 `tests/helpers/ui_settings.py` 複製改寫成黑箱版;原檔已於 T5 改用本模組後刪除,4e2ce46)
 只用 Playwright **sync** API 與同步 `gw.http()`(經 `tests.blackbox.ui.api`),不在主 thread 使用 asyncio。
 
 - `open_settings(page, gw, hash_="")`:開啟 `settings.html`,等總覽與 context 表單載入完成。

@@ -1,6 +1,6 @@
 """UI-4 Route 畫面的種資料與頁面操作(CHG-20261103-01 T6;決策 14、22)。
 
-(CHG-20261107-03 T2 由 `tests/helpers/ui_routes.py` 複製改寫成黑箱版;原檔不動,T5 改用本模組後刪除)
+(CHG-20261107-03 T2 由 `tests/helpers/ui_routes.py` 複製改寫成黑箱版;原檔已於 T5 改用本模組後刪除,4e2ce46)
 `tests/ui/test_routes.py` 與 behave 步驟(情境 6)共用;只用 Playwright **sync** API 與同步 httpx
 (`tests.blackbox.ui.api`);冷卻經測試控制介面 `POST /__test__/cooldowns`(覆寫)。
 

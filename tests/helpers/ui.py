@@ -1,6 +1,9 @@
 """畫面測試共用的頁面操作與種資料層(CHG-20261103-01 T3;決策 22,決策審議修訂 AM-5)。
 
-`tests/ui/conftest.py` 與 T9 的 behave 步驟都只經本檔(與各 task 的 `tests/helpers/ui_<area>.py`)操作畫面;
+(CHG-20261107-03 起)`tests/ui` 與 behave 步驟改用黑箱版 `tests/blackbox/ui/`(由本檔與已刪除的
+`tests/helpers/ui_<area>.py` 複製改寫,後者已於 T5 刪除);本檔只留給 integration(`test_admin_mcp_catalog`
+的 `db_snapshot`),仍是行程內版本:`gw` 為 `tests.helpers.live_gateway.LiveGateway`(型別別名 `MakeGw`)、
+`db_execute` 直接寫資料庫。黑箱化(二)時一併處置。
 本檔只用 Playwright **sync** API 與同步 httpx,不在主 thread 使用 asyncio(Global Constraints)。
 
 常數

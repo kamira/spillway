@@ -77,7 +77,7 @@
   2. 三段順序:① 完成現有需求 → ② 評估改用 Rust → ③ 由使用者決定是否處理。順序不可跳過或對調。(② 已完成,2026-11-07,評估報告 `rust-evaluation.md`;③ 擁有者決定規劃改寫)
   3. 改寫 CHG 開立前,不新增 Rust 程式碼或建置流程。鎖定相依(CHG-20261107-01)與測試黑箱化不算遷移。
   4. 改寫的四項選擇(使用者 2026-11-07):① adapter 擴充採設定檔驅動加內建 adapter;② 自寫 HTTP client,價格與 context 表沿用 litellm 的 JSON;③ 先把測試改為黑箱再移植;④ 先鎖定相依。
-- 應用紀錄(非規則,供評估參考):CHG-20261103-01 依本條讓 Web UI 成為靜態 HTML、CSS、JS,只經 HTTP 呼叫 `/api/*`,換後端時可原樣沿用(CHG-20261103-01 決策 5,design D41);測試綁 Python 的三處(行程內種資料、資料庫斷言、fixture)記入 design D41。CHG-20261107-01 依規則 4 ④ 鎖定相依。
+- 應用紀錄(非規則,供評估參考):CHG-20261103-01 依本條讓 Web UI 成為靜態 HTML、CSS、JS,只經 HTTP 呼叫 `/api/*`,換後端時可原樣沿用(CHG-20261103-01 決策 5,design D41);測試綁 Python 的三處(行程內種資料、資料庫斷言、fixture)記入 design D41。CHG-20261107-01 依規則 4 ④ 鎖定相依。2026-11-07(UTC+0)CHG-20261107-03 依規則 4 ③ 開始測試黑箱化(分兩筆,本筆為一):behave、acceptance 與畫面測試只經 HTTP、`SPILLWAY_CMD` 子行程與唯讀資料庫操作 spillway(換實作只要設定 `SPILLWAY_CMD`);時間、亂數與資料種入經只在測試模式開啟的 `/__test__/*`(spec 13);行程行為(spec 14)與資料庫 schema、資料目錄配置(data.md)宣告為跨語言契約;依規則 4 ② 的方向,預期花費改讀 litellm 價格 JSON 檔、不 import litellm;換實作時要改夾具的測試列在 `tests/blackbox/impl_dependent.toml`(design D41、D44)。
 - 適用範圍:全分支;語言與架構選擇。不改變 Guideline 第 6 節的現行技術選型(Python + FastAPI + LiteLLM SDK + SQLite),只表示該選型不是永久限制。
 - 原因:使用者指示「不限定 python,之後可以改用 rust」,並明定先處理完現在的需求再評估。
 - 信度:使用者確認
