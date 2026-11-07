@@ -1,0 +1,1052 @@
+[
+  {
+    "feature": "tests/features/m2_adapters.feature",
+    "location": "tests/features/m2_adapters.feature:4",
+    "name": "新增模組資料夾後被列出並可被路由 (AC-19)",
+    "step_count": 8,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 另外放入一個宣告 provider \"acme\" 的測試模組資料夾,未修改任何既有檔案",
+      "When 啟動閘道",
+      "Then GET /api/adapters 列出 provider \"acme\"",
+      "And 合約測試對該模組通過",
+      "When 以 provider \"acme\" 建立成員 \"acme-1\" 並建立 target 只含它的 route \"acme-route\"",
+      "And 客戶端以 model \"acme-route\" 送出 1 次請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"acme-1\""
+    ]
+  },
+  {
+    "feature": "tests/features/m2_adapters.feature",
+    "location": "tests/features/m2_adapters.feature:14",
+    "name": "single 模組只允許 1 個成員 (7.6.5、9.2.3;AC-12 的 M2 邏輯部分,不計入 M2 閘門)",
+    "step_count": 7,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 另外放入一個宣告 provider \"solo\" 且 cardinality 為 single 的測試模組資料夾",
+      "When 啟動閘道",
+      "And 以 provider \"solo\" 建立成員 \"solo-1\"",
+      "And 以 provider \"solo\" 建立成員 \"solo-2\"",
+      "Then 第二次建立回應狀態為 409 且錯誤碼為 \"provider_single\"",
+      "And 資料庫中 provider \"solo\" 只有 1 個成員"
+    ]
+  },
+  {
+    "feature": "tests/features/m2_adapters.feature",
+    "location": "tests/features/m2_adapters.feature:23",
+    "name": "無法載入的模組不影響其他模組 (7.6.7;AC-21 的 M2 邏輯部分,不計入 M2 閘門)",
+    "step_count": 6,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 另外放入一個 __init__.py 無法 import 的測試模組資料夾,宣告 provider \"broken\"",
+      "When 啟動閘道",
+      "Then 閘道正常啟動",
+      "And GET /api/adapters 顯示 provider \"broken\" 不可用並附原因",
+      "And 使用 provider \"broken\" 的成員於候選篩選的原因為 \"adapter_unavailable\""
+    ]
+  },
+  {
+    "feature": "tests/features/m2_context.feature",
+    "location": "tests/features/m2_context.feature:9",
+    "name": "預設開啟時保存請求與回應 (AC-13、NFR-5)",
+    "step_count": 7,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a\"",
+      "When 客戶端以 model \"review\" 送出 1 次請求",
+      "Then usage_payloads 有 1 列",
+      "And 該列含請求內容與回應內容",
+      "And usage_ledger 沒有任何 prompt 或回應內容欄位"
+    ]
+  },
+  {
+    "feature": "tests/features/m2_context.feature",
+    "location": "tests/features/m2_context.feature:15",
+    "name": "過期內容被清除並回 410 (AC-14)",
+    "step_count": 8,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a\"",
+      "Given context 保存天數為 7",
+      "And 客戶端以 model \"review\" 送出 1 次請求",
+      "When 系統時間推進 8 天並執行清理",
+      "Then 該次的 usage_payloads 列已刪除",
+      "And 查詢該次 payload 回應狀態為 410 且錯誤碼為 \"payload_expired\""
+    ]
+  },
+  {
+    "feature": "tests/features/m2_context.feature",
+    "location": "tests/features/m2_context.feature:22",
+    "name": "金鑰被遮罩 (AC-15)",
+    "step_count": 6,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a\"",
+      "When 客戶端以 model \"review\" 送出 prompt \"請用 sk-test-0000 呼叫\"",
+      "Then 儲存的請求內容不含 \"sk-test-0000\"",
+      "And 該列 redacted 為 1"
+    ]
+  },
+  {
+    "feature": "tests/features/m2_context.feature",
+    "location": "tests/features/m2_context.feature:27",
+    "name": "route 關閉 context 記錄時不保存內容 (2.4.2)",
+    "step_count": 7,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a\"",
+      "Given route \"review\" 的 record_context 為 0",
+      "When 客戶端以 model \"review\" 送出 1 次請求",
+      "Then usage_payloads 有 0 列",
+      "And usage_ledger 有 1 列"
+    ]
+  },
+  {
+    "feature": "tests/features/m2_estimate.feature",
+    "location": "tests/features/m2_estimate.feature:9",
+    "name": "dry-run 顯示的 P50、P90 與帳本一致 (AC-18)",
+    "step_count": 7,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a\"",
+      "Given route \"review\" 與成員 \"api-a\" 已有 50 筆 ok 帳本紀錄",
+      "When 對 route \"review\" 執行 1 次 dry-run",
+      "Then 成員 \"api-a\" 的預估 P50 與 P90 等於由帳本最近 50 筆 ok 的 tokens_out 計算的值",
+      "And 帳本列數與 dry-run 之前相同"
+    ]
+  },
+  {
+    "feature": "tests/features/m2_estimate.feature",
+    "location": "tests/features/m2_estimate.feature:15",
+    "name": "帳本不足 5 筆時使用預設值 (5.4.3)",
+    "step_count": 5,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a\"",
+      "When 對 route \"review\" 執行 1 次 dry-run",
+      "Then 成員 \"api-a\" 的預估 P50 為 500 且 P90 為 2000"
+    ]
+  },
+  {
+    "feature": "tests/features/m2_estimate.feature",
+    "location": "tests/features/m2_estimate.feature:19",
+    "name": "請求帶 max_tokens 時以它為預估 (5.4.3)",
+    "step_count": 5,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a\"",
+      "When 對 route \"review\" 以 max_tokens 300 執行 1 次 dry-run",
+      "Then 成員 \"api-a\" 的預估 P50 為 300 且 P90 為 300"
+    ]
+  },
+  {
+    "feature": "tests/features/m2_quota.feature",
+    "location": "tests/features/m2_quota.feature:9",
+    "name": "預估超過剩餘時跳過並由下一位處理 (AC-16 api 版,4.2.5)",
+    "step_count": 10,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And 成員 \"api-c\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "Given target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a\"、slot 2 \"api-c\"",
+      "And route \"review\" 勾選預估額度檢查",
+      "And 成員 \"api-a\" 剩餘額度為 0.01 美元且本次請求預估 P90 花費為 0.05 美元",
+      "When 客戶端以 model \"review\" 送出 1 次請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"api-c\"",
+      "And 成員 \"api-a\" 的帳本列狀態為 \"skipped_precheck\"",
+      "And 成員 \"api-a\" 不在冷卻中"
+    ]
+  },
+  {
+    "feature": "tests/features/m2_quota.feature",
+    "location": "tests/features/m2_quota.feature:18",
+    "name": "上游回報額度用完後冷卻到重置點並自動恢復 (AC-17 api 版,4.2.6)",
+    "step_count": 13,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And 成員 \"api-c\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "Given target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a\"、slot 2 \"api-c\"",
+      "And 成員 \"api-a\" 的額度為每月重置、重置日為 1 日",
+      "And 系統時間為 \"2026-10-30T12:00:00Z\"",
+      "And 假上游對 \"api-a\" 回傳 HTTP 402",
+      "When 客戶端以 model \"review\" 送出 1 次請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"api-c\"",
+      "And 成員 \"api-a\" 冷卻至 \"2026-11-01T00:00:00Z\"",
+      "When 假上游恢復正常且系統時間推進至 \"2026-11-01T00:00:01Z\"",
+      "And 客戶端以 model \"review\" 送出 1 次請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"api-a\""
+    ]
+  },
+  {
+    "feature": "tests/features/m2_routing.feature",
+    "location": "tests/features/m2_routing.feature:12",
+    "name": "slot 1 冷卻時由 slot 2 接手 (AC-3)",
+    "step_count": 13,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-c\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And local 成員 \"qwen-local\",provider \"hosted_vllm\",api_base 指向假 API 上游",
+      "And 加權抽選使用固定 seed 的亂數來源",
+      "Given target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a,api-b\"、slot 2 \"api-c\"",
+      "And 成員 \"api-a\" 與 \"api-b\" 在冷卻中",
+      "When 客戶端以 model \"review\" 送出 1 次請求",
+      "Then 回應狀態為 200",
+      "And 回應 header \"X-Spillway-Served-By\" 為 \"api-c\"",
+      "And 回應 header \"X-Spillway-Slot\" 為 \"2\"",
+      "And 假上游總共收到 1 次請求"
+    ]
+  },
+  {
+    "feature": "tests/features/m2_routing.feature",
+    "location": "tests/features/m2_routing.feature:21",
+    "name": "slot 內依優先權重分攤 (AC-4)",
+    "step_count": 9,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-c\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And local 成員 \"qwen-local\",provider \"hosted_vllm\",api_base 指向假 API 上游",
+      "And 加權抽選使用固定 seed 的亂數來源",
+      "Given target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a,api-b\"",
+      "When 對 route \"review\" 執行 400 次 dry-run",
+      "Then \"api-a\" 被選為第一順位的比例介於 0.70 與 0.80"
+    ]
+  },
+  {
+    "feature": "tests/features/m2_routing.feature",
+    "location": "tests/features/m2_routing.feature:26",
+    "name": "local/ 直呼不經路由 (AC-5)",
+    "step_count": 9,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-c\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And local 成員 \"qwen-local\",provider \"hosted_vllm\",api_base 指向假 API 上游",
+      "And 加權抽選使用固定 seed 的亂數來源",
+      "When 客戶端以 model \"local/qwen-local\" 送出 1 次請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"qwen-local\"",
+      "And 該次帳本列的 slot 為 NULL"
+    ]
+  },
+  {
+    "feature": "tests/features/m2_routing.feature",
+    "location": "tests/features/m2_routing.feature:31",
+    "name": "找不到 route",
+    "step_count": 9,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-c\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And local 成員 \"qwen-local\",provider \"hosted_vllm\",api_base 指向假 API 上游",
+      "And 加權抽選使用固定 seed 的亂數來源",
+      "When 客戶端以 model \"no-such-route\" 送出 1 次請求",
+      "Then 回應狀態為 404",
+      "And 錯誤碼為 \"route_not_found\""
+    ]
+  },
+  {
+    "feature": "tests/features/m2_routing.feature",
+    "location": "tests/features/m2_routing.feature:36",
+    "name": "全部失敗回 503 並列出每次嘗試",
+    "step_count": 12,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-c\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And local 成員 \"qwen-local\",provider \"hosted_vllm\",api_base 指向假 API 上游",
+      "And 加權抽選使用固定 seed 的亂數來源",
+      "Given target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a\"、slot 2 \"api-c\"",
+      "And 假上游對所有請求回傳 HTTP 500",
+      "When 客戶端以 model \"review\" 送出 1 次請求",
+      "Then 回應狀態為 503",
+      "And 錯誤碼為 \"no_candidate\"",
+      "And 錯誤內容依序列出 \"api-a:error,api-c:error\""
+    ]
+  },
+  {
+    "feature": "tests/features/m2_routing.feature",
+    "location": "tests/features/m2_routing.feature:44",
+    "name": "限流後冷卻並在到期後自動恢復 (4.2.6、4.5.2)",
+    "step_count": 14,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-c\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And local 成員 \"qwen-local\",provider \"hosted_vllm\",api_base 指向假 API 上游",
+      "And 加權抽選使用固定 seed 的亂數來源",
+      "Given target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a\"、slot 2 \"api-c\"",
+      "And 假上游對 \"api-a\" 回傳 HTTP 429",
+      "When 客戶端以 model \"review\" 送出 1 次請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"api-c\"",
+      "And 成員 \"api-a\" 冷卻至現在加 60 秒",
+      "When 假上游恢復正常且系統時間推進 61 秒",
+      "And 客戶端以 model \"review\" 送出 1 次請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"api-a\""
+    ]
+  },
+  {
+    "feature": "tests/features/m2c_cleanup.feature",
+    "location": "tests/features/m2c_cleanup.feature:4",
+    "name": "成員 params 含變體憑證鍵名時被拒且不回顯值",
+    "step_count": 5,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "When 以管理 API 建立 api 成員 \"api-x\",params 為 {\"x-api-key\": \"plain-value-123\"}",
+      "Then 管理 API 回應狀態為 422 且錯誤碼為 \"validation_error\"",
+      "And 錯誤訊息含 \"x-api-key\" 且不含 \"plain-value-123\"",
+      "And 資料庫中沒有成員 \"api-x\""
+    ]
+  },
+  {
+    "feature": "tests/features/m2c_cleanup.feature",
+    "location": "tests/features/m2c_cleanup.feature:11",
+    "name": "params.signals 的合法結構可寫入、不合法格式寫入時即被拒",
+    "step_count": 7,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "When 以管理 API 建立 api 成員 \"api-s\",params.signals 覆寫 \"rate_limit\" 規則為 HTTP 狀態 429",
+      "Then 管理 API 回應狀態為 201",
+      "And 成員 \"api-s\" 的 params.signals 與送出的內容相同",
+      "When 以管理 API 建立 api 成員 \"api-t\",params.signals 含未知類別鍵 \"no_such_kind\"",
+      "Then 管理 API 回應狀態為 422 且錯誤碼為 \"validation_error\"",
+      "And 資料庫中沒有成員 \"api-t\""
+    ]
+  },
+  {
+    "feature": "tests/features/m2c_cleanup.feature",
+    "location": "tests/features/m2c_cleanup.feature:20",
+    "name": "修改 local 成員的 api_base 後,經 route 的下一次請求立即以新設定判斷健康",
+    "step_count": 9,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And local 成員 \"loc-1\",provider \"hosted_vllm\",api_base 指向一個沒有服務的埠",
+      "And target 只含所列成員的 route \"lr\" 順序為 slot 1 \"loc-1\"",
+      "When 客戶端以 model \"lr\" 送出 1 次請求",
+      "Then 回應狀態為 503",
+      "When 以管理 API 把成員 \"loc-1\" 的 api_base 改為指向假 API 上游",
+      "And 客戶端以 model \"lr\" 送出 1 次請求,系統時間不前進",
+      "Then 回應狀態為 200",
+      "And 回應 header \"X-Spillway-Served-By\" 為 \"loc-1\""
+    ]
+  },
+  {
+    "feature": "tests/features/m2c_cleanup.feature",
+    "location": "tests/features/m2c_cleanup.feature:31",
+    "name": "未給 seed 的亂數來源下,同 slot 權重 high 與 low 的第一順位比例",
+    "step_count": 7,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 加權抽選使用未給 seed 的亂數來源",
+      "And target 只含所列成員的 route \"review\" 順序為 slot 1 \"api-a,api-b\"",
+      "When 對 route \"review\" 執行 4000 次 dry-run",
+      "Then \"api-a\" 被選為第一順位的比例介於 0.70 與 0.80"
+    ]
+  },
+  {
+    "feature": "tests/features/m3a_cli.feature",
+    "location": "tests/features/m3a_cli.feature:11",
+    "name": "預設順序下 task 請求由有額度的訂閱 CLI 成員處理 (AC-1)",
+    "step_count": 8,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度 credit_pool 10 美元每月重置",
+      "And CLI 成員 \"codex-sub\",provider \"codex-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "Given task route \"review\" 的 target 含 \"claude-sub\"、\"deepseek-api\",採預設順序",
+      "When 客戶端以 model \"review\" 送出 10 次 task 請求",
+      "Then 10 次回應的 header \"X-Spillway-Served-By\" 皆為 \"claude-sub\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3a_cli.feature",
+    "location": "tests/features/m3a_cli.feature:16",
+    "name": "擁有者把 api 成員拖到 slot 1 後由它處理 (AC-2)",
+    "step_count": 8,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度 credit_pool 10 美元每月重置",
+      "And CLI 成員 \"codex-sub\",provider \"codex-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "Given task route \"review\" 的 target 含 \"claude-sub\"、\"deepseek-api\",順序為 slot 1 \"deepseek-api\"、slot 2 \"claude-sub\"",
+      "When 客戶端以 model \"review\" 送出 10 次 task 請求",
+      "Then 10 次回應的 header \"X-Spillway-Served-By\" 皆為 \"deepseek-api\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3a_cli.feature",
+    "location": "tests/features/m3a_cli.feature:21",
+    "name": "第二個 claude-cli 成員被拒 (AC-12)",
+    "step_count": 7,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度 credit_pool 10 美元每月重置",
+      "And CLI 成員 \"codex-sub\",provider \"codex-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "When 以管理 API 建立 CLI 成員 \"claude-sub-2\",provider \"claude-cli\"",
+      "Then 管理 API 回應狀態為 409 且錯誤碼為 \"provider_single\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3a_cli.feature",
+    "location": "tests/features/m3a_cli.feature:25",
+    "name": "預估花費超過 credit_pool 剩餘時跳過 CLI 成員 (AC-16 CLI 版)",
+    "step_count": 11,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度 credit_pool 10 美元每月重置",
+      "And CLI 成員 \"codex-sub\",provider \"codex-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "Given task route \"review\" 的 target 含 \"claude-sub\"、\"deepseek-api\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And route \"review\" 勾選預估額度檢查",
+      "And CLI 成員 \"claude-sub\" 的 credit_pool 剩餘 0.01 美元且本次請求預估 P90 花費為 0.05 美元",
+      "When 客戶端以 model \"review\" 送出 1 次 task 請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"deepseek-api\"",
+      "And 成員 \"claude-sub\" 的帳本列狀態為 \"skipped_precheck\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3a_cli.feature",
+    "location": "tests/features/m3a_cli.feature:33",
+    "name": "上游回報額度用完後冷卻、重置後恢復 (AC-17 CLI 版)",
+    "step_count": 14,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度 credit_pool 10 美元每月重置",
+      "And CLI 成員 \"codex-sub\",provider \"codex-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "Given task route \"review\" 的 target 含 \"claude-sub\"、\"deepseek-api\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And 系統時間為 \"2026-11-10T12:00:00Z\"",
+      "And 假 claude 的情境設為額度用完",
+      "When 客戶端以 model \"review\" 送出 1 次 task 請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"deepseek-api\"",
+      "And CLI 成員 \"claude-sub\" 冷卻至 \"2026-12-01T00:00:00Z\"",
+      "When 假 claude 的情境設為成功且系統時間推進至 \"2026-12-01T00:00:01Z\"",
+      "And 客戶端以 model \"review\" 送出 1 次 task 請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"claude-sub\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3a_cli.feature",
+    "location": "tests/features/m3a_cli.feature:44",
+    "name": "CLI 成員併發額滿時由下一位接手、不排隊 (NFR-6)",
+    "step_count": 12,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度 credit_pool 10 美元每月重置",
+      "And CLI 成員 \"codex-sub\",provider \"codex-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "Given task route \"review\" 的 target 含 \"claude-sub\"、\"deepseek-api\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And 成員 \"claude-sub\" 的 max_concurrency 為 1,假 claude 會等到放行訊號才回應",
+      "When 客戶端以 model \"review\" 送出第 1 次 task 請求並等到假 claude 已開始",
+      "And 客戶端以 model \"review\" 送出第 2 次 task 請求",
+      "And 放行假 claude",
+      "Then 第 1 次由 \"claude-sub\" 處理、第 2 次由 \"deepseek-api\" 處理",
+      "And 帳本中 \"claude-sub\" 只有 1 列"
+    ]
+  },
+  {
+    "feature": "tests/features/m3a_cli.feature",
+    "location": "tests/features/m3a_cli.feature:53",
+    "name": "codex 成員花費記為 NULL 且依上游訊號判定狀態 (spec 5.2.3、5.3.1)",
+    "step_count": 13,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度 credit_pool 10 美元每月重置",
+      "And CLI 成員 \"codex-sub\",provider \"codex-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "Given task route \"review-codex\" 的 target 含 \"codex-sub\"、\"deepseek-api\",順序為 slot 1 \"codex-sub\"、slot 2 \"deepseek-api\"",
+      "When 客戶端以 model \"review-codex\" 送出 1 次 task 請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"codex-sub\"",
+      "And 成員 \"codex-sub\" 最新一列帳本的 cost_usd 為 NULL 且 tokens_out 有值",
+      "When 假 codex 的情境設為限流",
+      "And 客戶端以 model \"review-codex\" 送出 1 次 task 請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"deepseek-api\"",
+      "And 成員 \"codex-sub\" 的帳本列狀態為 \"rate_limited\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3a_cli.feature",
+    "location": "tests/features/m3a_cli.feature:63",
+    "name": "CLI 子行程不帶 API 金鑰與改道變數、帶深度標記、不載入任何 MCP (spec 7.3.2、7.3.3、7.4.3)",
+    "step_count": 15,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度 credit_pool 10 美元每月重置",
+      "And CLI 成員 \"codex-sub\",provider \"codex-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "Given 環境變數 \"ANTHROPIC_API_KEY\"、\"ANTHROPIC_BASE_URL\"、\"OPENAI_API_KEY\"、\"OPENAI_BASE_URL\" 設為測試假值",
+      "And CLI 成員 \"claude-sub\" 的 params.extra_args 設為 [\"--verbose\"]",
+      "And task route \"review\" 的 target 只含 \"claude-sub\"",
+      "And task route \"review-codex\" 的 target 只含 \"codex-sub\"",
+      "When 客戶端以 model \"review\" 送出 1 次 task 請求",
+      "And 客戶端以 model \"review-codex\" 送出 1 次 task 請求",
+      "Then 假 claude 收到的環境沒有 \"ANTHROPIC_API_KEY\" 與 \"ANTHROPIC_BASE_URL\",且 \"SPILLWAY_DEPTH\" 為 \"1\"",
+      "And 假 claude 收到的參數含 \"--strict-mcp-config\" 與 \"--verbose\",prompt 由 stdin 傳入",
+      "And 假 codex 收到的環境沒有 \"OPENAI_API_KEY\" 與 \"OPENAI_BASE_URL\",且 \"SPILLWAY_DEPTH\" 為 \"1\"",
+      "And 假 codex 收到的參數含 \"-c\" 與 \"mcp_servers={}\",倒數第二個參數為 \"--\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3a_cli.feature",
+    "location": "tests/features/m3a_cli.feature:75",
+    "name": "chat route 不選用 CLI 成員 (spec 4.2.3)",
+    "step_count": 8,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度 credit_pool 10 美元每月重置",
+      "And CLI 成員 \"codex-sub\",provider \"codex-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "Given route \"chat-route\" 的 target 含 \"claude-sub\"、\"deepseek-api\",採預設順序",
+      "When 客戶端以 model \"chat-route\" 送出 1 次請求",
+      "Then 回應 header \"X-Spillway-Served-By\" 為 \"deepseek-api\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3b_mcp.feature",
+    "location": "tests/features/m3b_mcp.feature:16",
+    "name": "群組端點只列出該群組的 route,all 列出全部 (spec 8.1.4)",
+    "step_count": 12,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And 已產生存取 token",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And 群組 \"coding\" 的選擇器含 \"claude-sub\"、\"deepseek-api\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And route \"chat-x\" 的 target 含 \"deepseek-api\",採預設順序",
+      "When MCP 用戶端以正確 token 連線 \"/mcp/coding\" 並列出工具",
+      "Then 工具 \"ask\" 的 route 選項只有 \"review\"",
+      "When MCP 用戶端以正確 token 連線 \"/mcp/all\" 並列出工具",
+      "Then 工具 \"ask\" 的 route 選項為 \"chat-x\"、\"review\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3b_mcp.feature",
+    "location": "tests/features/m3b_mcp.feature:22",
+    "name": "ask 由 route 處理並回報成員、slot 與花費 (spec 8.1、4.2.3)",
+    "step_count": 12,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And 已產生存取 token",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And 群組 \"coding\" 的選擇器含 \"claude-sub\"、\"deepseek-api\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And route \"chat-x\" 的 target 含 \"deepseek-api\",採預設順序",
+      "When MCP 用戶端以正確 token 連線 \"/mcp/coding\" 並以 route \"review\" 呼叫 ask",
+      "Then ask 結果不是錯誤且 served_by 為 \"claude-sub\"、slot 為 1",
+      "And ask 結果帶 cost_usd 欄位",
+      "And 帳本最新一列的 route_name 為 \"review\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3b_mcp.feature",
+    "location": "tests/features/m3b_mcp.feature:28",
+    "name": "list_routes 的順序與管理 API 一致 (spec 8.1、4.3;使用者故事 2)",
+    "step_count": 11,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And 已產生存取 token",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And 群組 \"coding\" 的選擇器含 \"claude-sub\"、\"deepseek-api\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And route \"chat-x\" 的 target 含 \"deepseek-api\",採預設順序",
+      "When MCP 用戶端以正確 token 連線 \"/mcp/coding\" 並呼叫 list_routes",
+      "Then list_routes 結果只含 route \"review\"",
+      "And route \"review\" 的 slot 與成員順序與 \"GET /api/routes/review\" 的 order 相同"
+    ]
+  },
+  {
+    "feature": "tests/features/m3b_mcp.feature",
+    "location": "tests/features/m3b_mcp.feature:33",
+    "name": "沒有或錯誤的 token 被拒,rotate 後舊 token 被拒 (spec 8.1.3)",
+    "step_count": 15,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And 已產生存取 token",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And 群組 \"coding\" 的選擇器含 \"claude-sub\"、\"deepseek-api\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And route \"chat-x\" 的 target 含 \"deepseek-api\",採預設順序",
+      "When 以不帶 Authorization 的請求送到 \"/mcp/coding\"",
+      "Then HTTP 回應狀態為 401 且錯誤碼為 \"unauthorized\"",
+      "When 以錯誤的 token 送到 \"/mcp/coding\"",
+      "Then HTTP 回應狀態為 401 且錯誤碼為 \"unauthorized\"",
+      "When 以管理 API rotate 存取 token",
+      "And 以 rotate 前的 token 送到 \"/mcp/coding\"",
+      "Then HTTP 回應狀態為 401 且錯誤碼為 \"unauthorized\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3b_mcp.feature",
+    "location": "tests/features/m3b_mcp.feature:43",
+    "name": "遞迴呼叫被拒 (spec 8.1.6;AC-11)",
+    "step_count": 13,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And 已產生存取 token",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And 群組 \"coding\" 的選擇器含 \"claude-sub\"、\"deepseek-api\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And route \"chat-x\" 的 target 含 \"deepseek-api\",採預設順序",
+      "When 以正確 token 且 header \"X-Spillway-Depth\" 為 \"1\" 送到 \"/mcp/coding\"",
+      "Then HTTP 回應狀態為 403 且錯誤碼為 \"recursion_blocked\"",
+      "When 以環境變數 SPILLWAY_DEPTH 為 \"1\" 執行 mcp-stdio --group coding,stdio 用戶端送出 initialize",
+      "Then stdio 用戶端收到 JSON-RPC 錯誤且 error.data.code 為 \"recursion_blocked\"",
+      "And mcp-stdio 的結束碼為 3"
+    ]
+  },
+  {
+    "feature": "tests/features/m3b_mcp.feature",
+    "location": "tests/features/m3b_mcp.feature:51",
+    "name": "新增 route 後已連線的 session 收到 list_changed (spec 8.1.5)",
+    "step_count": 12,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And 已產生存取 token",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And 群組 \"coding\" 的選擇器含 \"claude-sub\"、\"deepseek-api\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And route \"chat-x\" 的 target 含 \"deepseek-api\",採預設順序",
+      "Given MCP 用戶端以正確 token 連線 \"/mcp/coding\" 並開啟通知串流",
+      "When 以管理 API 建立 task route \"review2\",target 為群組 \"coding\"",
+      "Then MCP 用戶端在 5 秒內收到 \"notifications/tools/list_changed\"",
+      "And 重新列出工具後工具 \"ask\" 的 route 選項為 \"review\"、\"review2\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3b_mcp.feature",
+    "location": "tests/features/m3b_mcp.feature:57",
+    "name": "跨站 Origin 與非本機 Host 的請求被拒 (spec 9.1.4)",
+    "step_count": 14,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And 已產生存取 token",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And 群組 \"coding\" 的選擇器含 \"claude-sub\"、\"deepseek-api\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And route \"chat-x\" 的 target 含 \"deepseek-api\",採預設順序",
+      "Given 記錄目前存取 token 的雜湊",
+      "When 以 header \"Origin\" 為 \"http://evil.example\" 送 POST 到 \"/api/settings/token/rotate\"",
+      "Then HTTP 回應狀態為 403 且錯誤碼為 \"origin_not_allowed\"",
+      "And 存取 token 的雜湊未改變",
+      "When 以 header \"Host\" 為 \"evil.example:8787\" 送 GET 到 \"/v1/models\"",
+      "Then HTTP 回應狀態為 403 且錯誤碼為 \"host_not_allowed\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3b_mcp.feature",
+    "location": "tests/features/m3b_mcp.feature:65",
+    "name": "設定輸出 5 種工具皆以 SPILLWAY_TOKEN 參照 token (spec 8.2)",
+    "step_count": 12,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And 已產生存取 token",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And 群組 \"coding\" 的選擇器含 \"claude-sub\"、\"deepseek-api\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And route \"chat-x\" 的 target 含 \"deepseek-api\",採預設順序",
+      "When 以管理 API 取得群組 \"coding\" 的 MCP 設定,工具依序為 \"claude-code\"、\"codex\"、\"cursor\"、\"gemini\"、\"stdio\"",
+      "Then 每份設定的 env 為 [\"SPILLWAY_TOKEN\"] 且 content 含 \"SPILLWAY_TOKEN\"",
+      "And 每份設定的 content 不含存取 token 明文",
+      "And 除 \"stdio\" 外每份設定的 content 含 \"http://127.0.0.1:8787/mcp/coding\""
+    ]
+  },
+  {
+    "feature": "tests/features/m3b_mcp.feature",
+    "location": "tests/features/m3b_mcp.feature:72",
+    "name": "停機中進行中的 ask 得到 shutting_down (決策 14、18;ACC-20261101-02 F2)",
+    "step_count": 15,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex",
+      "And 已產生存取 token",
+      "And CLI 成員 \"claude-sub\",provider \"claude-cli\",額度類型 none",
+      "And 成員 \"deepseek-api\" 類型 \"api\" 優先權重 \"medium\" 額度比例 1",
+      "And 群組 \"coding\" 的選擇器含 \"claude-sub\"、\"deepseek-api\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"claude-sub\"、slot 2 \"deepseek-api\"",
+      "And route \"chat-x\" 的 target 含 \"deepseek-api\",採預設順序",
+      "Given 閘道以子行程 serve 啟動且寬限期為 2 秒",
+      "And 假 claude 收到 prompt 後持續執行不結束",
+      "When MCP 用戶端以正確 token 連線 \"/mcp/coding\" 並在背景以 route \"review\" 呼叫 ask",
+      "And 假 claude 已啟動後對 serve 送出 SIGTERM",
+      "Then ask 結果為錯誤且 structuredContent 的錯誤碼為 \"shutting_down\"",
+      "And 帳本最新一列的 error 為 \"shutdown\"",
+      "And serve 在寬限期內結束且沒有殘留的假 claude 行程"
+    ]
+  },
+  {
+    "feature": "tests/features/m4a_config.feature",
+    "location": "tests/features/m4a_config.feature:12",
+    "name": "匯出檔含成員、群組、route 與拖曳順序且不含憑證值 (spec 3.1.1;AC-10;NFR-4)",
+    "step_count": 12,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-a\" 的 credential_ref 為 \"env:SPILLWAY_TEST_KEY\" 且該環境變數為測試假值",
+      "And 群組 \"coding\" 的選擇器含 \"api-a\"、\"api-b\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"api-b\"、slot 2 \"api-a\"",
+      "When 以管理 API 匯出設定",
+      "Then 回應為 YAML 且 version 為 1",
+      "And 匯出檔含成員 \"api-a\"、\"api-b\",群組 \"coding\",route \"review\"",
+      "And route \"review\" 的 targets 依序為 slot 1 \"api-b\"、slot 2 \"api-a\"",
+      "And 成員 \"api-a\" 的 credential_ref 為 \"env:SPILLWAY_TEST_KEY\"",
+      "And 匯出檔不含該環境變數的值,也不含存取 token 明文"
+    ]
+  },
+  {
+    "feature": "tests/features/m4a_config.feature",
+    "location": "tests/features/m4a_config.feature:20",
+    "name": "匯出後在空資料庫以 replace 匯入,再匯出內容相同 (AC-10)",
+    "step_count": 11,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-a\" 的 credential_ref 為 \"env:SPILLWAY_TEST_KEY\" 且該環境變數為測試假值",
+      "And 群組 \"coding\" 的選擇器含 \"api-a\"、\"api-b\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"api-b\"、slot 2 \"api-a\"",
+      "Given 已匯出目前設定為檔案 A",
+      "When 在另一個空的閘道資料目錄以 mode \"replace\" 匯入檔案 A",
+      "Then 匯入回應狀態為 200",
+      "And 再次匯出的內容與檔案 A 相同",
+      "And dry-run route \"review\" 的第一順位為 \"api-b\""
+    ]
+  },
+  {
+    "feature": "tests/features/m4a_config.feature",
+    "location": "tests/features/m4a_config.feature:27",
+    "name": "merge 匯入只更新檔案列出的項目 (spec 3.1.3)",
+    "step_count": 10,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-a\" 的 credential_ref 為 \"env:SPILLWAY_TEST_KEY\" 且該環境變數為測試假值",
+      "And 群組 \"coding\" 的選擇器含 \"api-a\"、\"api-b\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"api-b\"、slot 2 \"api-a\"",
+      "When 以 mode \"merge\" 匯入只含成員 \"api-b\" 且其 tags 為 [\"coding\", \"cheap\"] 的設定",
+      "Then 匯入回應狀態為 200",
+      "And 成員 \"api-b\" 的 tags 為 [\"coding\", \"cheap\"]",
+      "And 成員 \"api-a\" 與 route \"review\" 不變"
+    ]
+  },
+  {
+    "feature": "tests/features/m4a_config.feature",
+    "location": "tests/features/m4a_config.feature:33",
+    "name": "任一欄位驗證失敗時整批不寫入並回傳欄位路徑 (spec 3.1.2)",
+    "step_count": 10,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-a\" 的 credential_ref 為 \"env:SPILLWAY_TEST_KEY\" 且該環境變數為測試假值",
+      "And 群組 \"coding\" 的選擇器含 \"api-a\"、\"api-b\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"api-b\"、slot 2 \"api-a\"",
+      "When 以 mode \"replace\" 匯入第二個成員的 kind 為 \"bogus\" 的設定",
+      "Then 管理 API 回應狀態為 422 且錯誤碼為 \"validation_error\"",
+      "And 錯誤訊息含欄位路徑 \"deployments[1].kind\"",
+      "And 成員、群組與 route 皆與匯入前相同"
+    ]
+  },
+  {
+    "feature": "tests/features/m4a_config.feature",
+    "location": "tests/features/m4a_config.feature:39",
+    "name": "replace 匯入前自動備份目前設定",
+    "step_count": 10,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-a\" 的 credential_ref 為 \"env:SPILLWAY_TEST_KEY\" 且該環境變數為測試假值",
+      "And 群組 \"coding\" 的選擇器含 \"api-a\"、\"api-b\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"api-b\"、slot 2 \"api-a\"",
+      "When 以 mode \"replace\" 匯入只含成員 \"api-c\" 的設定",
+      "Then 匯入回應狀態為 200",
+      "And 資料目錄的 backups 下有一個備份檔,內容等於匯入前的匯出",
+      "And 帳本列數與匯入前相同"
+    ]
+  },
+  {
+    "feature": "tests/features/m4a_config.feature",
+    "location": "tests/features/m4a_config.feature:45",
+    "name": "dry_run 匯入不寫入並列出變更 privileged 欄位的成員 (spec 3.1;決策 20)",
+    "step_count": 12,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-a\" 的 credential_ref 為 \"env:SPILLWAY_TEST_KEY\" 且該環境變數為測試假值",
+      "And 群組 \"coding\" 的選擇器含 \"api-a\"、\"api-b\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"api-b\"、slot 2 \"api-a\"",
+      "When 以 mode \"replace\" 且 dry_run 匯入把成員 \"api-b\" 的 params.api_base 改為 \"http://127.0.0.1:9/v1\" 的設定",
+      "Then 匯入回應狀態為 200",
+      "And 匯入回應的 dry_run 為 true 且 backup 為空",
+      "And 匯入回應的 privileged 為 [\"api-b\"]",
+      "And 成員、群組與 route 皆與匯入前相同",
+      "And 資料目錄的 backups 下沒有備份檔"
+    ]
+  },
+  {
+    "feature": "tests/features/m4a_config.feature",
+    "location": "tests/features/m4a_config.feature:53",
+    "name": "匯入違反 single 模組限制時回 409 (spec 9.2.3)",
+    "step_count": 9,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-a\" 的 credential_ref 為 \"env:SPILLWAY_TEST_KEY\" 且該環境變數為測試假值",
+      "And 群組 \"coding\" 的選擇器含 \"api-a\"、\"api-b\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"api-b\"、slot 2 \"api-a\"",
+      "When 以 mode \"merge\" 匯入兩個 provider 為 \"claude-cli\" 的成員",
+      "Then 管理 API 回應狀態為 409 且錯誤碼為 \"provider_single\"",
+      "And 成員、群組與 route 皆與匯入前相同"
+    ]
+  },
+  {
+    "feature": "tests/features/m4a_config.feature",
+    "location": "tests/features/m4a_config.feature:58",
+    "name": "帳本匯出 CSV 依篩選條件且不含 payload (UI-6)",
+    "step_count": 10,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-a\" 的 credential_ref 為 \"env:SPILLWAY_TEST_KEY\" 且該環境變數為測試假值",
+      "And 群組 \"coding\" 的選擇器含 \"api-a\"、\"api-b\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"api-b\"、slot 2 \"api-a\"",
+      "Given 帳本有 3 列,其中 2 列屬於 route \"review\"",
+      "When 以管理 API 匯出 route 為 \"review\" 的帳本 CSV",
+      "Then CSV 有標題列與 2 列資料",
+      "And CSV 不含任何請求或回應內容"
+    ]
+  },
+  {
+    "feature": "tests/features/m4a_config.feature",
+    "location": "tests/features/m4a_config.feature:64",
+    "name": "設定總覽不含 token 明文 (UI-7、首次設定精靈)",
+    "step_count": 9,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-a\" 的 credential_ref 為 \"env:SPILLWAY_TEST_KEY\" 且該環境變數為測試假值",
+      "And 群組 \"coding\" 的選擇器含 \"api-a\"、\"api-b\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"api-b\"、slot 2 \"api-a\"",
+      "When 以管理 API 取得設定總覽",
+      "Then 總覽含 port、data_dir、token_issued、first_run 與 counts",
+      "And 總覽不含存取 token 明文"
+    ]
+  },
+  {
+    "feature": "tests/features/m4a_config.feature",
+    "location": "tests/features/m4a_config.feature:69",
+    "name": "新群組名稱不可為 \".\" 或 \"..\" 或含控制字元 (CHG-20261102-01 已知限制)",
+    "step_count": 10,
+    "steps": [
+      "Given 一個空的閘道資料目錄與假 API 上游",
+      "And 成員 \"api-a\" 類型 \"api\" 優先權重 \"high\" 額度比例 1",
+      "And 成員 \"api-b\" 類型 \"api\" 優先權重 \"low\" 額度比例 1",
+      "And 成員 \"api-a\" 的 credential_ref 為 \"env:SPILLWAY_TEST_KEY\" 且該環境變數為測試假值",
+      "And 群組 \"coding\" 的選擇器含 \"api-a\"、\"api-b\"",
+      "And task route \"review\" 的 target 為群組 \"coding\",順序為 slot 1 \"api-b\"、slot 2 \"api-a\"",
+      "When 以管理 API 的請求 body 建立名為 \"..\" 的群組",
+      "Then 管理 API 回應狀態為 422 且錯誤碼為 \"validation_error\"",
+      "When 以管理 API 的請求 body 建立名稱含 U+202E 的群組",
+      "Then 管理 API 回應狀態為 422 且錯誤碼為 \"validation_error\""
+    ]
+  },
+  {
+    "feature": "tests/features/m4b_ui.feature",
+    "location": "tests/features/m4b_ui.feature:8",
+    "name": "總覽顯示每個成員的剩餘額度或冷卻至 (AC-6)",
+    "step_count": 8,
+    "steps": [
+      "Given 一個以假 API 上游啟動的閘道與瀏覽器",
+      "Given 成員 \"api-a\" 額度為每月 10 美元且已花費 4 美元",
+      "And 成員 \"api-b\" 額度為每月 10 美元且冷卻至 1 小時後",
+      "When 開啟畫面 \"總覽\"",
+      "Then 成員 \"api-a\" 的列顯示剩餘額度 \"$6.00\"",
+      "And 成員 \"api-b\" 的列顯示冷卻至的時間",
+      "When 在成員 \"api-b\" 的列按下 \"清除冷卻\"",
+      "Then 成員 \"api-b\" 的列不再顯示冷卻"
+    ]
+  },
+  {
+    "feature": "tests/features/m4b_ui.feature",
+    "location": "tests/features/m4b_ui.feature:17",
+    "name": "空資料庫依首次設定精靈加入 1 個 API 成員並呼叫 (AC-8)",
+    "step_count": 11,
+    "steps": [
+      "Given 一個以假 API 上游啟動的閘道與瀏覽器",
+      "Given 閘道行程的環境變數 \"SPILLWAY_TEST_KEY\" 已設定為假金鑰",
+      "When 開啟畫面 \"總覽\"",
+      "Then 畫面導向首次設定精靈",
+      "When 在精靈中依序選類型 \"api\"、供應商 \"openai\"、第一個模型,上游網址填假上游,憑證參照填 \"env:SPILLWAY_TEST_KEY\"",
+      "And 在精靈中按下 \"測試呼叫\"",
+      "Then 精靈顯示測試結果為成功,且假上游收到該模型的請求",
+      "When 在精靈中建立 route \"chat\" 並完成精靈",
+      "Then 精靈顯示可複製的呼叫範例",
+      "And 以該範例的 model 呼叫 \"/v1/chat/completions\" 回應狀態為 200",
+      "And 從開啟精靈到呼叫成功的時間不超過 10 分鐘"
+    ]
+  },
+  {
+    "feature": "tests/features/m4b_ui.feature",
+    "location": "tests/features/m4b_ui.feature:29",
+    "name": "成員表單以連動選單選取類型、供應商、模型 (AC-20)",
+    "step_count": 7,
+    "steps": [
+      "Given 一個以假 API 上游啟動的閘道與瀏覽器",
+      "When 開啟畫面 \"成員\" 並按下 \"新增成員\"",
+      "And 選類型 \"cli\"",
+      "Then 供應商選單只列出支援 \"cli\" 的模組",
+      "When 選供應商 \"claude-cli\" 與第一個模型",
+      "Then 模型選單的項目與 \"claude_cli\" 模組的 models.yaml 一致,最後一項為 \"其他(手動輸入)\"",
+      "And 能力欄位帶入該模型的 capabilities"
+    ]
+  },
+  {
+    "feature": "tests/features/m4b_ui.feature",
+    "location": "tests/features/m4b_ui.feature:37",
+    "name": "無法載入的模組在供應商選單停用並顯示原因 (AC-21)",
+    "step_count": 5,
+    "steps": [
+      "Given 一個以假 API 上游啟動的閘道與瀏覽器",
+      "Given 閘道以含一個 __init__.py 無法 import 的 adapter 模組的 extra_adapter_paths 啟動",
+      "When 開啟畫面 \"成員\" 並按下 \"新增成員\"",
+      "And 選該模組宣告的類型",
+      "Then 該模組的供應商選項為停用並顯示原因"
+    ]
+  },
+  {
+    "feature": "tests/features/m4b_ui.feature",
+    "location": "tests/features/m4b_ui.feature:43",
+    "name": "API 參考顯示四大類與可折疊索引,且與 mcp_catalog 一致 (AC-22)",
+    "step_count": 6,
+    "steps": [
+      "Given 一個以假 API 上游啟動的閘道與瀏覽器",
+      "When 開啟畫面 \"API 參考\"",
+      "Then 索引有 \"連線\"、\"工具\"、\"通知\"、\"錯誤碼\" 四大類",
+      "And 收合 \"工具\" 之後其項目不再顯示,再展開後恢復",
+      "And 畫面上的工具名稱、通知與錯誤碼與 mcp_catalog 的內容一致",
+      "And 畫面不含 \"/api/\" 與 \"/v1\" 字樣"
+    ]
+  },
+  {
+    "feature": "tests/features/m4b_ui.feature",
+    "location": "tests/features/m4b_ui.feature:50",
+    "name": "Route 編輯頁把 slot 拖到第一位並儲存後,請求改由該成員處理 (spec 10.1;AC-2 經畫面)",
+    "step_count": 9,
+    "steps": [
+      "Given 一個以假 API 上游啟動的閘道與瀏覽器",
+      "Given task route \"review\" 的手動順序為 slot 1 \"api-a\"、slot 2 \"api-b\"",
+      "When 開啟 route \"review\" 的編輯頁",
+      "Then 編輯頁的 slot 依序為 \"api-a\"、\"api-b\"",
+      "When 把 slot 2 整列拖到 slot 1 之前",
+      "Then 畫面頂端標示有未儲存的變更",
+      "When 按下 \"儲存\"",
+      "Then route \"review\" 的手動順序 slot 1 為 \"api-b\"",
+      "And 送出 3 次 task 請求皆由 \"api-b\" 處理"
+    ]
+  },
+  {
+    "feature": "tests/features/m4b_ui.feature",
+    "location": "tests/features/m4b_ui.feature:60",
+    "name": "匯入設定前顯示 dry_run 結果與 privileged 成員,確認後才寫入 (spec 3.1;CHG-20261102-02 決策 20)",
+    "step_count": 7,
+    "steps": [
+      "Given 一個以假 API 上游啟動的閘道與瀏覽器",
+      "When 開啟畫面 \"設定\",選擇一份把成員 \"api-b\" 的 params.api_base 改掉的設定檔與 mode \"replace\",按下 \"預覽匯入\"",
+      "Then 確認對話框列出計數與 privileged 成員 \"api-b\",資料尚未改變",
+      "When 在確認對話框按下 \"取消\"",
+      "Then 成員 \"api-b\" 的 params.api_base 不變,且沒有送出非 dry_run 的匯入請求",
+      "When 再次按下 \"預覽匯入\" 並在確認對話框按下 \"匯入\"",
+      "Then 畫面顯示備份檔名,成員 \"api-b\" 的 params.api_base 已改變"
+    ]
+  },
+  {
+    "feature": "tests/features/m4b_ui.feature",
+    "location": "tests/features/m4b_ui.feature:68",
+    "name": "畫面以純文字顯示使用者資料,不執行其中的標記 (UI 安全)",
+    "step_count": 6,
+    "steps": [
+      "Given 一個以假 API 上游啟動的閘道與瀏覽器",
+      "Given 成員 \"api-a\" 的 tags 含 \"<img src=x onerror=alert(1)>\"",
+      "And 帳本有一列的 error 為 \"<script>alert(1)</script>\"",
+      "When 依序開啟畫面 \"總覽\"、\"成員\"、\"帳本\"",
+      "Then 畫面上以文字顯示這兩個字串",
+      "And 頁面沒有執行任何對話框,也沒有新增 img 或 script 元素"
+    ]
+  },
+  {
+    "feature": "tests/features/m4b_ui.feature",
+    "location": "tests/features/m4b_ui.feature:75",
+    "name": "畫面與頁面原始碼不含存取 token 與金鑰明文 (NFR-4 的畫面部分;資料庫、匯出檔、日誌由操作驗收檢查)",
+    "step_count": 7,
+    "steps": [
+      "Given 一個以假 API 上游啟動的閘道與瀏覽器",
+      "Given 已產生過存取 token,且成員 \"api-a\" 的憑證參照指向值為假金鑰的環境變數",
+      "When 依序開啟全部 8 個畫面",
+      "Then 每個畫面的 HTML 與畫面呼叫的 API 回應都不含該 token 與假金鑰值",
+      "When 在畫面 \"設定\" 按下 \"重新產生 token\" 並確認",
+      "Then 對話框顯示新 token 一次;關閉對話框後頁面 DOM 與輸入欄位都不含新 token",
+      "And 重新整理後畫面只顯示 \"已產生\""
+    ]
+  },
+  {
+    "feature": "tests/features/m4b_ui.feature",
+    "location": "tests/features/m4b_ui.feature:83",
+    "name": "經畫面匯出設定,於另一個空資料目錄經確認對話框 replace 匯入後再匯出,兩份逐位元組相同 (AC-10)",
+    "step_count": 6,
+    "steps": [
+      "Given 一個以假 API 上游啟動的閘道與瀏覽器",
+      "Given 已有 2 個成員、1 個群組與 1 條有手動順序的 route",
+      "When 在畫面 \"設定\" 匯出設定為檔案 A",
+      "And 在另一個空資料目錄的閘道開啟畫面 \"設定\",以 mode \"replace\" 預覽匯入檔案 A 並在確認對話框按下 \"匯入\"",
+      "And 在該閘道的畫面 \"設定\" 匯出設定為檔案 B",
+      "Then 檔案 A 與 B 逐位元組相同,且 A 不含假金鑰值"
+    ]
+  }
+]
