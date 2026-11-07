@@ -975,7 +975,7 @@ Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>
 
 13.1.1 只有 `spillway serve` 在環境變數 `SPILLWAY_TEST_CONTROL` 的值為字面 `1` 時開啟控制介面；其他值（含空字串、`true`、`0`）視為未開啟。設定檔、管理 API、`init`、`mcp-stdio` 都無法開啟。實作中只有 serve 的啟動程序讀取本節的環境變數，再以明確參數交給 app。
 
-13.1.2 開啟時 `SPILLWAY_HOME` 必須明確設定（非空），且解析後（絕對路徑、解開符號連結）不得等於預設資料目錄 `platformdirs.user_data_dir("spillway")`；不符時在 stderr 印錯誤、以結束碼 2 結束，不建立資料目錄、不開啟資料庫。
+13.1.2 開啟時 `SPILLWAY_HOME` 必須明確設定（非空），且不得與預設資料目錄 `platformdirs.user_data_dir("spillway")` 是同一個目錄（包括大小寫不同、符號連結，以及以帳號的家目錄推得的預設位置——`$HOME` 被覆寫時仍以帳號家目錄比對；Linux 另含 `~/.local/share/spillway`）；不符時在 stderr 印錯誤、以結束碼 2 結束，不建立資料目錄、不開啟資料庫。
 
 13.1.3 開啟時 serve 在 stderr 印一行警告（14.3.2），控制介面掛在 `/__test__/` 之下，不列入 OpenAPI（serve 有提供 `/openapi.json` 時其中不得含 `/__test__`）。控制介面照舊經 9.1.4 的 Host／Origin 檢查、只綁 127.0.0.1，回應帶 `Cache-Control: no-store` 與 `X-Content-Type-Options: nosniff`。
 
@@ -989,10 +989,10 @@ Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>
 
 | 環境變數 | 值 | 作用 |
 | --- | --- | --- |
-| `SPILLWAY_TEST_START_TIME` | `YYYY-MM-DDTHH:MM:SSZ` | 以可控時鐘從該時刻開始（13.4.1）；未設定時用系統時鐘 |
-| `SPILLWAY_TEST_RNG_SEED` | 整數 | 路由抽選（4.4）的亂數種子（13.4.2） |
+| `SPILLWAY_TEST_START_TIME` | `YYYY-MM-DDTHH:MM:SSZ`（與 13.3.2 同一文法） | 以可控時鐘從該時刻開始（13.4.1）；未設定時用系統時鐘 |
+| `SPILLWAY_TEST_RNG_SEED` | 完全符合 `-?[0-9]+` 的十進位整數，範圍 −2^63 到 2^63−1 | 路由抽選（4.4）的亂數種子（13.4.2） |
 | `SPILLWAY_TEST_ADAPTER_PATHS` | 以作業系統路徑分隔字元（POSIX 為 `:`）分隔的路徑 | 額外載入的 adapter 模組所在目錄（Python 版為內含 7.6.1 模組資料夾的目錄；實作相依） |
-| `SPILLWAY_TEST_RETENTION_POLL_SECONDS` | 正數（秒，可為小數） | 保存排程的輪詢間隔 `poll`（預設 30） |
+| `SPILLWAY_TEST_RETENTION_POLL_SECONDS` | 完全符合 `[0-9]+(\.[0-9]+)?` 且大於 0（秒；不接受指數、底線、`inf`） | 保存排程的輪詢間隔 `poll`（預設 30） |
 | `SPILLWAY_TEST_RETENTION_STEPPED` | `1` | 保存排程改為 STEPPED 模式（13.4.6） |
 | `SPILLWAY_TEST_NO_TOKEN` | `1` | 不簽發存取 token：不印 `TOKEN_NOTICE`，`token_issued` 為 false，`/mcp/*` 回 401 |
 | `SPILLWAY_TEST_LOG_LEVEL` | `DEBUG` 或 `INFO` | 把日誌以 `SPILLWAY-LOG` 行輸出到 stderr（14.3.5），等級即該值 |
@@ -1005,18 +1005,21 @@ Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>
 
 13.3.1 請求與回應皆為 JSON；錯誤格式依 9.1.2。body 不接受未知欄位；欄位型別不符、缺少必要欄位回傳 HTTP 422，錯誤碼 `validation_error`。整數欄位不接受字串、小數或布林。
 
-13.3.2 時間一律為 `YYYY-MM-DDTHH:MM:SSZ`（UTC，到秒，2.1.2）；其他格式（含時區位移、小數秒、只有日期）與不存在的日期回傳 HTTP 422，錯誤碼 `validation_error`。
+13.3.2 時間一律為 `YYYY-MM-DDTHH:MM:SSZ`（UTC，到秒，2.1.2；數字只限 ASCII `0-9`，每欄位數固定）；其他格式（含全形數字、時區位移、小數秒、只有日期）與不存在的日期回傳 HTTP 422，錯誤碼 `validation_error`。
 
 13.3.3 所有 `/__test__/*` 的 GET 不改變資料庫狀態。
 
-13.3.4 錯誤碼：
+13.3.4 body 中值為 `null` 的欄位等同未給。請求先檢查 body 格式（422），再檢查成員或列是否存在（404），最後檢查狀態（409）。不支援的方法回 405（9.1.2 格式）。帶結尾斜線的路徑不屬於契約，測試不得使用。整數欄位的範圍是 −2^63 到 2^63−1，超出範圍回 422；推進後超出時鐘可表示的範圍同樣回 422。數值欄位接受 JSON 數字，不接受字串與布林，且必須是有限值。
+
+13.3.5 錯誤碼：
 
 | 狀態碼 | 錯誤碼 | 情況 |
 | --- | --- | --- |
 | 404 | `not_found` | 成員不存在（cooldowns、raw）；成員不存在或不是 `cli`（cli-slots） |
 | 409 | `clock_not_controllable` | 系統時鐘模式下要求設定或推進時鐘（`clock`、`retention/tick` 的 `advance_seconds` > 0） |
 | 409 | `retention_not_stepped` | 非 STEPPED 模式呼叫 `retention/tick` |
-| 409 | `retention_not_running` | 保存排程未執行 |
+| 409 | `retention_not_running` | 保存排程未執行，或 tick 等待期間排程停止 |
+| 409 | `retention_tick_timeout` | tick 等排程回到閘前逾時 |
 | 409 | `cli_slots_exceeded` | `acquire` 後進行中數量會超過上限 |
 | 409 | `cli_slots_underflow` | `release` 數量多於進行中數量 |
 | 422 | `validation_error` | 13.3.1、13.3.2；種入違反資料庫約束（例如 payload 對應的帳本列不存在） |
@@ -1057,9 +1060,9 @@ Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>
 13.4.6 保存清理（2.4.5）：
 - 保存排程啟動時先清理一次，之後在 `now >= next_due − 2 × poll` 時清理（`now` 為 13.4.1 的時鐘，`next_due` 為上次清理時刻加 1 小時，`poll` 為輪詢間隔）；每次清理後 `next_due` 更新為該次的 `now` 加 1 小時，不論成敗。
 - `retention/run`：立即清理一次（不看到期判斷），`deleted` 為刪除的內容列數，清理失敗時為 null。`GET /__test__/retention` 的 `runs` 為成功的清理次數（含啟動時那一次），`next_due` 尚未排定時為 null。
-- STEPPED 模式（`SPILLWAY_TEST_RETENTION_STEPPED=1`）：排程每一輪的輪詢等待換成一道閘，只有 `retention/tick` 會放行，真實時間經過不會觸發清理。`retention/tick` 依序：① 推進時鐘 `advance_seconds` 秒（系統時鐘模式下大於 0 時回 409 `clock_not_controllable`，不放行）；② 放行排程一輪（該輪照一般輪詢做到期判斷，到期才清理）；③ 等排程回到閘前才回應。`ran` 表示該輪是否清理、`deleted` 為該輪刪除列數（未清理或清理失敗為 null）、`runs` 與 `now` 為回應當下的值。並行的 tick 依序執行。非 STEPPED 模式回 409 `retention_not_stepped`。
+- STEPPED 模式（`SPILLWAY_TEST_RETENTION_STEPPED=1`）：排程每一輪的輪詢等待換成一道閘，只有 `retention/tick` 會放行，真實時間經過不會觸發清理。`retention/tick` 依序：① 推進時鐘 `advance_seconds` 秒（系統時鐘模式下大於 0 時回 409 `clock_not_controllable`，不放行）；② 放行排程一輪（該輪照一般輪詢做到期判斷，到期才清理）；③ 等排程回到閘前才回應。`ran` 表示該輪是否清理、`deleted` 為該輪刪除列數（未清理或清理失敗為 null）、`runs` 與 `now` 為回應當下的值。並行的 tick 依序執行。非 STEPPED 模式回 409 `retention_not_stepped`；等待期間排程停止回 409 `retention_not_running`；排程未在時限內（30 秒）回到閘前回 409 `retention_tick_timeout`。
 
-13.4.7 健康快取：列出 local 健康結果快取（4.2）中尚未過期的項目，依 `deployment` 排序；過了 TTL 的項目不列出。
+13.4.7 健康快取：列出 local 健康結果快取（4.2）中尚未過期的項目，依 `deployment` 排序；`now − 寫入時刻 ≥ TTL` 的項目視為過期、不列出（`now` 為 13.4.1 的時鐘）。
 
 13.4.8 CLI 名額（4.2.4、NFR-6）：`slots` 列出全部 `kind` 為 `cli` 的成員（依 `id` 排序），`in_flight` 為目前佔用的名額數，`limit` 為該成員的併發上限（`params.max_concurrency`，預設 1）。`acquire` 佔用 `n` 個名額，佔用後會超過 `limit` 時回 409 `cli_slots_exceeded` 且不佔用任何名額；`release` 釋放 `n` 個，多於進行中數量時回 409 `cli_slots_underflow` 且不釋放。以本端點佔用的名額與實際 CLI 呼叫共用，路由篩選視為進行中（`concurrency_full`）。
 
