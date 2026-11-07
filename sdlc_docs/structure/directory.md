@@ -16,7 +16,7 @@ spillway/
 ├── build-constraints.in         # 建置 `-e .` 用的 setuptools 版本(決策 9)
 ├── build-constraints.lock       # 上者的雜湊 lock(`--build-constraint`)
 ├── scripts/
-│   └── check_venv_integrity.py  # venv 入侵檢查(`python3 -I`;.pth、sitecustomize、RECORD 雜湊;決策 6 ⑤)
+│   └── check_venv_integrity.py  # venv 入侵檢查(`python3 -I -S`;.pth、sitecustomize、RECORD 雜湊;決策 6 ⑤)
 ├── docs/                        # 企劃書、規格書、UI 設計稿(需求來源,不放帳本)
 ├── sdlc_docs/                   # 治理帳本(knowledge/ 另有 rust-evaluation.md:Rust 評估報告,CHG-20261107-01)
 ├── artifacts/                   # 驗收與量測產物(不進版控,M2 起)

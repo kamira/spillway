@@ -12,11 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from tests.helpers.lockfile import BLOCKED_LITELLM, LockError, canon, parse_lock
+from tests.helpers.lockfile import BLOCKED_LITELLM, DUMMY_HASH as H, LockError, canon, parse_lock
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCKS = ("requirements.lock", "requirements-dev.lock", "build-constraints.lock")
-H = "--hash=sha256:" + "a" * 64
 
 
 def _read(name: str) -> str:
@@ -36,12 +35,16 @@ def pyproject() -> dict:
 
 def test_parser_accepts_marker_and_multiple_hashes():
     text = (f"foo-Bar==1.2 ; sys_platform == 'win32' \\\n    {H} \\\n    {H}\n"
-            f"# comment\n\nbaz==3.0 \\\n    {H}\n")
-    assert parse_lock(text) == {"foo-bar": {("1.2", "sys_platform == 'win32'")}, "baz": {("3.0", "")}}
+            f"# comment\n\nbaz==3.0 \\\n    {H}\n"
+            f"qux==1.0.post1 ; platform_machine == 'x86-64' {H}\n")
+    assert parse_lock(text) == {"foo-bar": {("1.2", "sys_platform == 'win32'")}, "baz": {("3.0", "")},
+                                "qux": {("1.0.post1", "platform_machine == 'x86-64'")}}
 
 
 @pytest.mark.parametrize("bad", [f"foo>=1.0 {H}", "foo==1.0", f"foo @ https://x/y.whl {H}",
-                                 "-e file:///tmp/x", "--index-url https://example.invalid/simple"])
+                                 "-e file:///tmp/x", "--index-url https://example.invalid/simple",
+                                 f"foo==1.* {H}", f"foo==1.0,<2 {H}", f"foo==1.0@https://x {H}",
+                                 f"foo==1.0 ; @ https://x {H}"])
 def test_parser_rejects(bad: str):
     with pytest.raises(LockError):
         parse_lock(bad + "\n")
@@ -87,6 +90,14 @@ def test_litellm_not_a_blocked_version(pyproject: dict):
     spec = next(s for s in pyproject["project"]["dependencies"] if _req_name(s) == "litellm")
     excluded = {p.strip()[2:].strip() for p in spec[len("litellm"):].split(",") if p.strip().startswith("!=")}
     assert excluded >= BLOCKED_LITELLM, f"pyproject 的 litellm 規格未排除:{sorted(BLOCKED_LITELLM - excluded)}"
+
+
+def test_runtime_lock_subset_of_dev_lock():
+    """runtime lock 的套件都在 dev lock(例外:只在 Python <3.12 才需要的套件,dev lock 為 ≥3.12)。"""
+    rt, dev = parse_lock(_read("requirements.lock")), parse_lock(_read("requirements-dev.lock"))
+    extra = {n for n in set(rt) - set(dev)
+             if not all("python_full_version < '3.12'" in m or "python_version < '3.12'" in m for _, m in rt[n])}
+    assert not extra, f"requirements.lock 有 dev lock 沒有的套件:{sorted(extra)}"
 
 
 def test_build_constraints_only_setuptools_matching_in_file():

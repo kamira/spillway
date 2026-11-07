@@ -63,7 +63,7 @@
 ## 6. 本次評估順帶發現:litellm 供應鏈事件
 
 - litellm 在 2026 年 PyPI 兩次被植入惡意版本:3 月的 1.82.7、1.82.8,與 10 月 21 日的 1.107.0(Python 啟動時執行的 `.pth`/`sitecustomize` 竊取憑證,上架約 2 小時後移除)。
-- **本機不受影響**(查核日 2026-11-07):venv 安裝的是 1.106.6;1.106.6 於 2026-10-28 上架,晚於 2026-10-21 的事件,至今(2026-11-07)未被撤回或標記;uv 快取沒有 1.107.0。以 `python3 -I scripts/check_venv_integrity.py .venv`(CHG-20261107-01 決策 6 ⑤)檢查:`.pth` 只有 `__editable__.spillway-0.1.0.pth`,沒有 `sitecustomize.py`、`usercustomize.py`,全部 RECORD 雜湊相符,site-packages 頂層沒有不屬於任何 RECORD 的項目;結果「沒有發現」(結束碼 0)。
+- **本機不受影響**(查核日 2026-11-07):venv 安裝的是 1.106.6;1.106.6 於 2026-10-28 上架,晚於 2026-10-21 的事件,至今(2026-11-07)未被撤回或標記;uv 快取沒有 1.107.0。以 `python3 -I scripts/check_venv_integrity.py .venv`(CHG-20261107-01 決策 6 ⑤)檢查:`.pth` 只有 `__editable__.spillway-0.1.0.pth`,沒有 `sitecustomize.py`、`usercustomize.py`,全部 RECORD 雜湊相符,site-packages 頂層沒有不屬於任何 RECORD 的項目;結果「沒有發現」(結束碼 0)(以系統 python3、未啟用 venv 執行;腳本之後改為須加 `-S`,見 CHG-20261107-01 施工審議)。
 - **處理**:`pyproject.toml` 原本的範圍是 `litellm>=1.50,<2`,任何一次全新安裝都會抓最新版;CHG-20261107-01 改為以雜湊 lock 安裝,並在 `pyproject.toml` 排除三個已知被植入的版本。
 
 ## 7. 參考

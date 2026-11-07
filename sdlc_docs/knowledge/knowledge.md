@@ -73,7 +73,7 @@
 - 使用者原話:「不限定 python,之後可以改用 rust;先把現在的需求處理完以後再評估 rust,最後才決定是否處理」(2026-11-03,開立 CHG-20261103-01 時)
 - 使用者原話(2026-11-07):評估後選「Plan a Rust rewrite」;四項選擇為「Config-driven + built-ins」「Own clients + litellm price JSON」「Black-box tests first, then port」「Yes, pin first」;開發環境的 Python 版本選「Two locks」
 - 規則:
-  1. 實作語言不限定 Python;之後可能改用 Rust。
+  1. 實作語言不限定 Python;之後可能改用 Rust。(2026-11-07 擁有者已決定規劃改寫,見規則 4)
   2. 三段順序:① 完成現有需求 → ② 評估改用 Rust → ③ 由使用者決定是否處理。順序不可跳過或對調。(② 已完成,2026-11-07,評估報告 `rust-evaluation.md`;③ 擁有者決定規劃改寫)
   3. 改寫 CHG 開立前,不新增 Rust 程式碼或建置流程。鎖定相依(CHG-20261107-01)與測試黑箱化不算遷移。
   4. 改寫的四項選擇(使用者 2026-11-07):① adapter 擴充採設定檔驅動加內建 adapter;② 自寫 HTTP client,價格與 context 表沿用 litellm 的 JSON;③ 先把測試改為黑箱再移植;④ 先鎖定相依。

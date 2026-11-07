@@ -8,13 +8,18 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["BLOCKED_LITELLM", "LockError", "canon", "parse_lock"]
+__all__ = ["BLOCKED_LITELLM", "DUMMY_HASH", "LockError", "canon", "parse_lock"]
 
 # 2026 年 PyPI 被植入的 litellm 版本(CHG-20261107-01 決策 5;來源見 sdlc_docs/knowledge/rust-evaluation.md 第 6 節)
 BLOCKED_LITELLM = frozenset({"1.82.7", "1.82.8", "1.107.0"})
 
+# 版本只允許 PEP 440 正規化後的字元(不含 `*`、`,`、`@`、`-`);marker 允許 `-`(如 `'x86-64'`),不允許 `@`
 _LINE = re.compile(
-    r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;]+)\s*(?:;\s*([^-]*?))?\s*((?:--hash=sha256:[0-9a-f]{64}\s*)+)$")
+    r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([0-9][0-9A-Za-z.!+]*)\s*"
+    r"(?:;\s*([A-Za-z0-9_ .'\"<>=!~()-]+?))?\s*((?:--hash=sha256:[0-9a-f]{64}\s*)+)$")
+
+# 測試樣本用的假雜湊
+DUMMY_HASH = "--hash=sha256:" + "a" * 64
 
 
 class LockError(ValueError):
