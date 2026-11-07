@@ -257,6 +257,7 @@ def test_hold_until_release(fake_cli, tmp_path, name):
     try:
         proc.stdin.write("held prompt")
         proc.stdin.close()
+        proc.stdin = None  # 3.12 的 communicate() 會 flush 已關閉的 stdin 而丟 ValueError(CHG-20261107-02 決策 7)
         fake_cli.wait_for_records(name, 1)  # 已開始
         time.sleep(0.4)
         assert proc.poll() is None  # 尚未放行
@@ -503,6 +504,7 @@ def test_waiting_fake_exits_when_control_dir_removed(fake_cli, scenario):
     try:
         proc.stdin.write(b"hi")
         proc.stdin.close()
+        proc.stdin = None  # 3.12 的 communicate() 會 flush 已關閉的 stdin 而丟 ValueError(CHG-20261107-02 決策 7)
         fake_cli.wait_for_records("claude", 1)
         shutil.rmtree(fake_cli.control_dir)
         assert proc.wait(timeout=10) != 0
