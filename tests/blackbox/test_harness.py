@@ -642,3 +642,39 @@ def test_compare_diff_and_behave_result_checks(tmp_path):
     errors: list[str] = []
     mod.check_behave_json(js, errors, [])
     assert any("skipped" in e for e in errors) and any("untested" in e for e in errors)
+
+
+def test_control_client_asserts_exact_key_sets():
+    """`Control` 對回應的鍵集合做完全比對(F12):多一個或少一個鍵都失敗。"""
+    import http.server
+    import threading
+
+    bodies = {"/__test__/clock": {"controllable": True, "now": "2026-11-01T12:00:00Z", "extra": 1},
+              "/__test__/rng": {"seeded": True},
+              "/__test__/cli-slots": {"slots": [{"deployment": "x", "in_flight": 0}]},
+              "/__test__/retention": {"runs": 1, "next_due": None}}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            data = json.dumps(bodies[self.path]).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        from tests.blackbox.control import Control
+
+        with Control(f"http://127.0.0.1:{srv.server_address[1]}") as c:
+            assert c.retention() == {"runs": 1, "next_due": None}
+            for call in (c.clock, c.rng, c.cli_slots):
+                with pytest.raises(AssertionError, match="鍵"):
+                    call()
+    finally:
+        srv.shutdown()
