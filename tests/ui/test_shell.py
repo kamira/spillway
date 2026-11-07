@@ -22,15 +22,16 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Browser, Page, expect
 
-from tests.helpers import TEST_KEY, TEST_KEY_ENV
-from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import MakeGw, NewPage, NAV, PAGES, api, close_and_collect, goto, guard_of, import_module, open_context
+from tests.blackbox.guard import FORCE_ENV
+from tests.blackbox.harness import Serve
+from tests.blackbox.mask import TEST_KEY, TEST_KEY_ENV
+from tests.blackbox.ui import MakeGw, NewPage, NAV, PAGES, api, close_and_collect, goto, guard_of, import_module, open_context
 
 REPO = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
-def gw(make_ui_gateway: MakeGw) -> LiveGateway:
+def gw(make_ui_gateway: MakeGw) -> Serve:
     g = make_ui_gateway()
     # 有一條 route → first_run 為 false,總覽不導向精靈(T4 決策 11);沒有成員 → 不顯示續作橫幅
     api(g, "POST", "/api/routes", {"name": "shell", "target": {"tags": {"any": ["shell"]}}})
@@ -38,7 +39,7 @@ def gw(make_ui_gateway: MakeGw) -> LiveGateway:
 
 
 @pytest.fixture
-def page(new_page: NewPage, gw: LiveGateway) -> Page:
+def page(new_page: NewPage, gw: Serve) -> Page:
     p = new_page()
     goto(p, gw, "/ui/")
     return p
@@ -68,7 +69,7 @@ def test_fake_fixtures_available(fake_api, fake_cli) -> None:  # noqa: ANN001
 
 # ---- 10 頁的外框 ---------------------------------------------------------------------------------
 
-def test_pages_load_clean(new_page: NewPage, gw: LiveGateway) -> None:
+def test_pages_load_clean(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     for spec in PAGES:
         guard = guard_of(page)
@@ -87,7 +88,7 @@ def test_pages_load_clean(new_page: NewPage, gw: LiveGateway) -> None:
         guard.assert_clean()
 
 
-def test_nav_links_reach_pages(page: Page, gw: LiveGateway) -> None:
+def test_nav_links_reach_pages(page: Page, gw: Serve) -> None:
     titles = {p.path: p.title for p in PAGES}
     for text, href in NAV:
         page.locator("nav.nav").get_by_role("link", name=text, exact=True).click()
@@ -96,7 +97,7 @@ def test_nav_links_reach_pages(page: Page, gw: LiveGateway) -> None:
         expect(page.locator('nav.nav a[aria-current="page"]')).to_have_text(text)
 
 
-def test_query_and_hash_send_only_get(new_page: NewPage, gw: LiveGateway) -> None:
+def test_query_and_hash_send_only_get(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     for spec in PAGES:
         guard_of(page).requests.clear()
@@ -106,7 +107,7 @@ def test_query_and_hash_send_only_get(new_page: NewPage, gw: LiveGateway) -> Non
         assert methods and set(methods) == {"GET"}, (spec.file, guard_of(page).requests)
 
 
-def test_root_redirects_to_ui(new_page: NewPage, gw: LiveGateway) -> None:
+def test_root_redirects_to_ui(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     page.goto(gw.url("/"))
     expect(page).to_have_url(gw.url("/ui/"))
@@ -115,7 +116,7 @@ def test_root_redirects_to_ui(new_page: NewPage, gw: LiveGateway) -> None:
 
 # ---- api.js ---------------------------------------------------------------------------------------
 
-def test_api_js_mutations_pass_host_origin(page: Page, gw: LiveGateway) -> None:
+def test_api_js_mutations_pass_host_origin(page: Page, gw: Serve) -> None:
     import_module(page, "api.js")
     origins: list[tuple[str, str | None]] = []
     page.on("request", lambda r: origins.append((r.method, r.headers.get("origin")))
@@ -135,7 +136,7 @@ def test_api_js_mutations_pass_host_origin(page: Page, gw: LiveGateway) -> None:
 
 
 @pytest.mark.expect_http_errors(404, 500, 502)
-def test_api_js_errors(page: Page, gw: LiveGateway) -> None:
+def test_api_js_errors(page: Page, gw: Serve) -> None:
     import_module(page, "api.js")
     page.route("**/api/__t3/nonjson", lambda r: r.fulfill(status=502, body="bad gateway",
                                                           content_type="text/plain"))
@@ -436,7 +437,7 @@ def _group_select(page: Page, opts: str) -> dict:
     }""", opts)
 
 
-def test_fill_group_select(page: Page, gw: LiveGateway) -> None:
+def test_fill_group_select(page: Page, gw: Serve) -> None:
     import_module(page, "ui.js")
     empty = _group_select(page, {"emptyLabel": "(尚無群組)"})
     assert (empty["values"], empty["texts"]) == ([""], ["(尚無群組)"])
@@ -492,7 +493,7 @@ def test_formatters_and_labels(page: Page) -> None:
     assert out["nav"] == [t for t, _ in NAV]
 
 
-def test_navigate_helper(page: Page, gw: LiveGateway) -> None:
+def test_navigate_helper(page: Page, gw: Serve) -> None:
     import_module(page, "ui.js")
     bad = page.evaluate("""() => { try { window.__mods["ui.js"].navigate("javascript:alert(1)"); return "ok"; }
                                    catch (e) { return e.name; } }""")
@@ -554,7 +555,7 @@ def test_non_local_request_blocked_and_recorded(page: Page) -> None:
     assert any(v.kind == "request" and v.url.startswith("http://example.invalid/") for v in taken)
 
 
-def test_close_and_collect_catches_late_events(browser: Browser, gw: LiveGateway) -> None:
+def test_close_and_collect_catches_late_events(browser: Browser, gw: Serve) -> None:
     """T3 審議 M2:最後一個 Playwright 呼叫之後才發生的 console error 與 pageerror,關閉 context 時才送達。"""
     ctx, guard = open_context(browser)
     page = ctx.new_page()
@@ -566,7 +567,7 @@ def test_close_and_collect_catches_late_events(browser: Browser, gw: LiveGateway
     assert [(v.kind, v.text) for v in found] == [("console", "t3 late error"), ("pageerror", "t3 late boom")]
 
 
-def test_manual_dialogs_beforeunload(page: Page, gw: LiveGateway) -> None:
+def test_manual_dialogs_beforeunload(page: Page, gw: Serve) -> None:
     guard = guard_of(page)
     page.evaluate("""() => { window.addEventListener("beforeunload", (e) => { e.preventDefault(); e.returnValue = ""; }); }""")
     page.locator("main h1").click()   # beforeunload 需要使用者互動才會顯示
@@ -633,7 +634,10 @@ def test_trusted_types_enforced_and_playwright_ops_work(page: Page, tmp_path: Pa
 
 def test_async_tests_after_ui_module_pass() -> None:
     """在子行程依序跑本檔的一個 Playwright 測試與一個 anyio 測試模組,後者必須全過。"""
-    env = {**os.environ, "PYTHONPATH": str(REPO / "src"), "LITELLM_LOCAL_MODEL_COST_MAP": "True"}
+    # 黑箱化(CHG-20261107-03 T5):子行程沿用本行程的環境(PYTHONPATH 等;serve 經 SPILLWAY_CMD 啟動),
+    # 不再自組 src 路徑;後半是 unit 測試(會 import spillway),所以拿掉強制守門的旗標
+    env = {k: v for k, v in os.environ.items() if k != FORCE_ENV}
+    env["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
          "tests/ui/test_shell.py::test_root_redirects_to_ui", "tests/unit/api/test_drain.py"],

@@ -15,11 +15,11 @@ import pytest
 import yaml
 from playwright.sync_api import Locator, Page, Request, Route, expect
 
-from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import (CLIP, MakeGw, NewPage, api, confirm_dialog, db_execute, db_snapshot, goto, guard_of,
+from tests.blackbox.harness import Serve
+from tests.blackbox.ui import (CLIP, MakeGw, NewPage, api, confirm_dialog, db_snapshot, goto, guard_of,
                                import_module)
-from tests.helpers.ui_members import seed_member
-from tests.helpers.ui_settings import (
+from tests.blackbox.ui.members import seed_member
+from tests.blackbox.ui.settings import (
     choose_import,
     export_yaml,
     import_dialog,
@@ -31,7 +31,7 @@ from tests.helpers.ui_settings import (
 
 
 @pytest.fixture
-def gw(make_ui_gateway: MakeGw) -> LiveGateway:
+def gw(make_ui_gateway: MakeGw) -> Serve:
     return make_ui_gateway()
 
 
@@ -45,7 +45,7 @@ def query(url: str) -> dict[str, list[str]]:
 
 # ---- ① 總覽 -----------------------------------------------------------------------------------------
 
-def test_overview_matches_api_and_copy_serve(new_page: NewPage, gw: LiveGateway) -> None:
+def test_overview_matches_api_and_copy_serve(new_page: NewPage, gw: Serve) -> None:
     s = api(gw, "GET", "/api/settings").json()
     page = new_page(permissions=CLIP)
     open_settings(page, gw)
@@ -72,7 +72,7 @@ def test_overview_matches_api_and_copy_serve(new_page: NewPage, gw: LiveGateway)
 
 
 def test_overview_token_not_issued(new_page: NewPage, make_ui_gateway: MakeGw) -> None:
-    gw = make_ui_gateway(token=False)
+    gw = make_ui_gateway(no_token=True)
     page = new_page()
     open_settings(page, gw, "#token")
     expect(page.locator("#ov-token")).to_have_text("未產生")
@@ -83,7 +83,7 @@ def test_overview_token_not_issued(new_page: NewPage, make_ui_gateway: MakeGw) -
 
 # ---- ② context ---------------------------------------------------------------------------------------
 
-def test_context_form_roundtrip_kb(new_page: NewPage, gw: LiveGateway) -> None:
+def test_context_form_roundtrip_kb(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_settings(page, gw)
     cur = api(gw, "GET", "/api/settings/context").json()
@@ -121,7 +121,7 @@ def test_context_form_roundtrip_kb(new_page: NewPage, gw: LiveGateway) -> None:
 
 
 @pytest.mark.expect_http_errors(422)
-def test_context_below_1kb_shows_422(new_page: NewPage, gw: LiveGateway) -> None:
+def test_context_below_1kb_shows_422(new_page: NewPage, gw: Serve) -> None:
     before = api(gw, "GET", "/api/settings/context").json()
     page = new_page()
     open_settings(page, gw)
@@ -137,7 +137,7 @@ def test_context_below_1kb_shows_422(new_page: NewPage, gw: LiveGateway) -> None
     assert api(gw, "GET", "/api/settings/context").json() == before
 
 
-def test_context_client_validation(new_page: NewPage, gw: LiveGateway) -> None:
+def test_context_client_validation(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_settings(page, gw)
     page.locator("#ctx-days").fill("1.5")
@@ -152,7 +152,7 @@ def test_context_client_validation(new_page: NewPage, gw: LiveGateway) -> None:
 
 # ---- ③ 匯出 ------------------------------------------------------------------------------------------
 
-def test_export_download_matches_api(new_page: NewPage, gw: LiveGateway) -> None:
+def test_export_download_matches_api(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "api-a")
     page = new_page()
     open_settings(page, gw)
@@ -167,9 +167,9 @@ def test_export_download_matches_api(new_page: NewPage, gw: LiveGateway) -> None
 
 
 @pytest.mark.expect_http_errors(422)
-def test_export_422_shows_message_without_download(new_page: NewPage, gw: LiveGateway) -> None:
+def test_export_422_shows_message_without_download(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "api-a")
-    db_execute(gw, "UPDATE deployments SET params = ? WHERE id = ?", ('{"api_key": "x"}', "api-a"))
+    gw.control.raw_deployment_params("api-a", {"api_key": "sk-fake-0000"})   # 損壞狀態:繞過驗證(spec 13.4.5)
     page = new_page()
     open_settings(page, gw)
     downloads: list = []
@@ -186,7 +186,7 @@ def test_export_422_shows_message_without_download(new_page: NewPage, gw: LiveGa
 
 # ---- ④ 匯入 ------------------------------------------------------------------------------------------
 
-def changed_config(gw: LiveGateway, dep_id: str, new_base: str) -> bytes:
+def changed_config(gw: Serve, dep_id: str, new_base: str) -> bytes:
     doc = yaml.safe_load(export_yaml(gw))
     for dep in doc["deployments"]:
         if dep["id"] == dep_id:
@@ -194,7 +194,7 @@ def changed_config(gw: LiveGateway, dep_id: str, new_base: str) -> bytes:
     return yaml.safe_dump(doc, allow_unicode=True, sort_keys=False).encode("utf-8")
 
 
-def dry_run(gw: LiveGateway, data: bytes, mode: str) -> dict:
+def dry_run(gw: Serve, data: bytes, mode: str) -> dict:
     with gw.http() as c:
         r = c.post(f"/api/config/import?mode={mode}&dry_run=true", content=data,
                    headers={"Content-Type": "application/yaml"})
@@ -213,7 +213,7 @@ def record_import_bodies(page: Page) -> list[tuple[str, bytes]]:
     return bodies
 
 
-def test_import_replace_preview_cancel_then_import(new_page: NewPage, gw: LiveGateway) -> None:
+def test_import_replace_preview_cancel_then_import(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "api-a")
     seed_member(gw, "api-b", params={"api_base": "http://127.0.0.1:9/v1"})
     data = changed_config(gw, "api-b", "http://127.0.0.1:10/v1")
@@ -272,7 +272,7 @@ def test_import_replace_preview_cancel_then_import(new_page: NewPage, gw: LiveGa
     assert dep["params"]["api_base"] == "http://127.0.0.1:10/v1"
 
 
-def test_import_merge_no_backup_and_escape_cancels(new_page: NewPage, gw: LiveGateway) -> None:
+def test_import_merge_no_backup_and_escape_cancels(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "api-a")
     data = changed_config(gw, "api-a", "http://127.0.0.1:11/v1")
     page = new_page()
@@ -299,7 +299,7 @@ def test_import_merge_no_backup_and_escape_cancels(new_page: NewPage, gw: LiveGa
     assert api(gw, "GET", "/api/deployments/api-a").json()["params"]["api_base"] == "http://127.0.0.1:11/v1"
 
 
-def test_import_change_invalidates_preview(new_page: NewPage, gw: LiveGateway) -> None:
+def test_import_change_invalidates_preview(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "api-a")
     first = changed_config(gw, "api-a", "http://127.0.0.1:12/v1")
     second = changed_config(gw, "api-a", "http://127.0.0.1:13/v1")
@@ -343,7 +343,7 @@ def test_import_change_invalidates_preview(new_page: NewPage, gw: LiveGateway) -
 
 
 @pytest.mark.expect_http_errors(422)
-def test_import_422_lists_all_errors(new_page: NewPage, gw: LiveGateway) -> None:
+def test_import_422_lists_all_errors(new_page: NewPage, gw: Serve) -> None:
     bad = {"version": 1, "deployments": [{"id": f"bad {i}", "kind": "nope"} for i in range(30)]}
     data = yaml.safe_dump(bad).encode("utf-8")
     with gw.http() as c:
@@ -365,7 +365,7 @@ def test_import_422_lists_all_errors(new_page: NewPage, gw: LiveGateway) -> None
 
 
 @pytest.mark.expect_http_errors(409)
-def test_import_409_shown_without_dialog(new_page: NewPage, gw: LiveGateway) -> None:
+def test_import_409_shown_without_dialog(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "c1", kind="cli", provider="claude-cli", model="sonnet", params={}, credential_ref=None,
                 capabilities={"ctx": 1000, "tools": True, "vision": False, "efforts": []})
     doc = yaml.safe_load(export_yaml(gw))
@@ -382,7 +382,7 @@ def test_import_409_shown_without_dialog(new_page: NewPage, gw: LiveGateway) -> 
     expect(import_dialog(page)).to_have_count(0)
 
 
-def test_import_too_large_not_sent(new_page: NewPage, gw: LiveGateway) -> None:
+def test_import_too_large_not_sent(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_settings(page, gw)
     choose_import(page, b"#" * (1_048_576 + 1))
@@ -405,7 +405,7 @@ def token_dialog(page: Page) -> Locator:
 
 
 def test_token_first_generate_copy_and_wipe(new_page: NewPage, make_ui_gateway: MakeGw) -> None:
-    gw = make_ui_gateway(token=False)
+    gw = make_ui_gateway(no_token=True)
     page = new_page(permissions=CLIP)
     open_settings(page, gw, "#token")
     guard = guard_of(page)
@@ -459,7 +459,7 @@ def test_token_first_generate_copy_and_wipe(new_page: NewPage, make_ui_gateway: 
     assert page_leaks(page, token) == []
 
 
-def test_token_rotate_reprompt_when_not_copied(new_page: NewPage, gw: LiveGateway) -> None:
+def test_token_rotate_reprompt_when_not_copied(new_page: NewPage, gw: Serve) -> None:
     old_hash = token_hash(gw)
     page = new_page()                                       # 未授與剪貼簿權限 → 複製失敗
     open_settings(page, gw)
@@ -501,7 +501,7 @@ def test_token_rotate_reprompt_when_not_copied(new_page: NewPage, gw: LiveGatewa
 
 
 @pytest.mark.expect_http_errors(500)
-def test_token_unknown_state_uses_rotate_wording(new_page: NewPage, gw: LiveGateway) -> None:
+def test_token_unknown_state_uses_rotate_wording(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     page.route("**/api/settings", lambda route: route.fulfill(
         status=500, content_type="application/json",
@@ -518,7 +518,7 @@ def test_token_unknown_state_uses_rotate_wording(new_page: NewPage, gw: LiveGate
     expect(confirm).to_have_count(0)
 
 
-def test_token_wiped_on_pagehide_and_back(new_page: NewPage, gw: LiveGateway) -> None:
+def test_token_wiped_on_pagehide_and_back(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_settings(page, gw)
     page.locator("#token-rotate").click()

@@ -15,9 +15,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import MakeGw, NewPage, api, goto, guard_of, import_module
-from tests.helpers.ui_routes import (
+from tests.blackbox.harness import Serve
+from tests.blackbox.ui import MakeGw, NewPage, api, goto, guard_of, import_module
+from tests.blackbox.ui.routes import (
     add_members, api_body, card, create_route, drag_card, drag_slot, editor_slots, effective_slots,
     local_body, new_slot_zone, open_editor, put_order, route_order, route_order_full, set_cooldown,
     set_enabled, slot, slot_head,
@@ -25,7 +25,7 @@ from tests.helpers.ui_routes import (
 
 
 @pytest.fixture
-def gw(make_ui_gateway: MakeGw, fake_api) -> LiveGateway:  # noqa: ANN001
+def gw(make_ui_gateway: MakeGw, fake_api) -> Serve:  # noqa: ANN001
     g = make_ui_gateway()
     body_a = api_body("api-a", fake_api)
     body_a["budget"] = {"type": "usd", "limit_amount": 10, "window": "monthly"}
@@ -40,7 +40,7 @@ def page(new_page: NewPage) -> Page:
     return new_page()
 
 
-def route_targets(gw: LiveGateway, name: str) -> list[str]:
+def route_targets(gw: Serve, name: str) -> list[str]:
     with gw.db() as conn:
         return sorted(r[0] for r in conn.execute(
             "SELECT deployment_id FROM route_targets WHERE route_name = ?", (name,)))
@@ -48,7 +48,7 @@ def route_targets(gw: LiveGateway, name: str) -> list[str]:
 
 # ---- L1:applyMove ------------------------------------------------------------------------------
 
-def test_apply_move_pure(page: Page, gw: LiveGateway) -> None:
+def test_apply_move_pure(page: Page, gw: Serve) -> None:
     open_editor(page, gw, "rt")
     import_module(page, "route-editor.js")
     cases = page.evaluate("""() => {
@@ -108,7 +108,7 @@ def test_apply_move_pure(page: Page, gw: LiveGateway) -> None:
 
 # ---- L2:編輯頁 ---------------------------------------------------------------------------------
 
-def test_editor_initial_state_and_header(page: Page, gw: LiveGateway) -> None:
+def test_editor_initial_state_and_header(page: Page, gw: Serve) -> None:
     open_editor(page, gw, "rt")
     assert editor_slots(page) == effective_slots(gw, "rt") == [["api-a", "api-b"], ["q-local"]]
     expect(page.locator("#route-name")).to_have_text("rt")
@@ -141,7 +141,7 @@ def test_editor_initial_state_and_header(page: Page, gw: LiveGateway) -> None:
     expect(page.locator("#chat-note")).to_be_visible()
 
 
-def test_drag_and_drop_then_save(page: Page, gw: LiveGateway) -> None:
+def test_drag_and_drop_then_save(page: Page, gw: Serve) -> None:
     open_editor(page, gw, "rt")
     # 拖曳目標(各 slot 與新 slot 區)在 dragstart 之前就可見且有尺寸
     expect(new_slot_zone(page)).to_be_visible()
@@ -177,7 +177,7 @@ def test_drag_and_drop_then_save(page: Page, gw: LiveGateway) -> None:
     expect(card(page, "api-a").locator('select[data-role="effort"]')).to_have_value("high")
 
 
-def test_keyboard_alternatives_match_drag(page: Page, gw: LiveGateway) -> None:
+def test_keyboard_alternatives_match_drag(page: Page, gw: Serve) -> None:
     open_editor(page, gw, "rt")
     card(page, "api-b").locator('select[data-role="move"]').select_option("new")
     assert editor_slots(page) == [["api-a"], ["q-local"], ["api-b"]]
@@ -202,7 +202,7 @@ def test_keyboard_alternatives_match_drag(page: Page, gw: LiveGateway) -> None:
     expect(page.locator("#dirty-banner")).to_be_hidden()
 
 
-def test_beforeunload_prompts_when_dirty(page: Page, gw: LiveGateway) -> None:
+def test_beforeunload_prompts_when_dirty(page: Page, gw: Serve) -> None:
     open_editor(page, gw, "rt")
     slot_head(page, 1).locator('[data-role="up"]').click()      # 以 click 製造變更
     expect(page.locator("#dirty-banner")).to_be_visible()
@@ -226,7 +226,7 @@ def test_beforeunload_prompts_when_dirty(page: Page, gw: LiveGateway) -> None:
     assert len(guard.dialogs) == before
 
 
-def test_disabled_cooling_unsorted_cards_are_kept(page: Page, gw: LiveGateway, fake_api) -> None:  # noqa: ANN001
+def test_disabled_cooling_unsorted_cards_are_kept(page: Page, gw: Serve, fake_api) -> None:  # noqa: ANN001
     add_members(gw, api_body("api-c", fake_api))
     put_order(gw, "rt", [[("api-a", "low", "high")], [("api-c", "high", "low")], ["q-local"]])
     set_enabled(gw, "api-c", False)
@@ -257,7 +257,7 @@ def test_disabled_cooling_unsorted_cards_are_kept(page: Page, gw: LiveGateway, f
     expect(card(page, "api-c").locator('[data-mark="disabled"]')).to_have_text("停用")
 
 
-def test_stale_members_hidden_and_cleared_on_save(page: Page, gw: LiveGateway) -> None:
+def test_stale_members_hidden_and_cleared_on_save(page: Page, gw: Serve) -> None:
     put_order(gw, "rt", [["api-a"], ["api-b"]])
     body = api(gw, "GET", "/api/deployments/api-b").json()
     for k in ("cooling_until", "cooling_reason"):
@@ -275,7 +275,7 @@ def test_stale_members_hidden_and_cleared_on_save(page: Page, gw: LiveGateway) -
     assert route_order_full(gw, "rt") == [[{"deployment": "api-b", "effort": None, "weight": "high"}]]
 
 
-def test_empty_slots_go_through_restore_confirm(page: Page, gw: LiveGateway) -> None:
+def test_empty_slots_go_through_restore_confirm(page: Page, gw: Serve) -> None:
     put_order(gw, "rt", [["api-a"], ["api-b"]])
     api(gw, "PUT", "/api/routes/rt", {"target": {"tags": {"all": ["nobody"]}}, "mode": "task"})
     open_editor(page, gw, "rt")
@@ -299,7 +299,7 @@ def test_empty_slots_go_through_restore_confirm(page: Page, gw: LiveGateway) -> 
     assert api(gw, "GET", "/api/routes/rt").json()["mode"] == "chat"
 
 
-def test_settings_save_does_not_revert_external_target(page: Page, gw: LiveGateway) -> None:
+def test_settings_save_does_not_revert_external_target(page: Page, gw: Serve) -> None:
     open_editor(page, gw, "rt")
     new_target = {"tags": {"all": [], "any": ["r", "other"], "none": []}}
     api(gw, "PUT", "/api/routes/rt", {"target": new_target, "mode": "task"})   # 另一分頁改了 target
@@ -323,7 +323,7 @@ def test_settings_save_does_not_revert_external_target(page: Page, gw: LiveGatew
     assert (r["target"], r["mode"]) == (new_target, "chat")
 
 
-def test_restore_default(page: Page, gw: LiveGateway) -> None:
+def test_restore_default(page: Page, gw: Serve) -> None:
     put_order(gw, "rt", [["q-local"], ["api-b"], ["api-a"]])
     open_editor(page, gw, "rt")
     assert editor_slots(page) == [["q-local"], ["api-b"], ["api-a"]]
@@ -340,7 +340,7 @@ def test_restore_default(page: Page, gw: LiveGateway) -> None:
     assert editor_slots(page) == [["api-a", "api-b"], ["q-local"]]
 
 
-def test_settings_save_without_freezing_order(page: Page, gw: LiveGateway) -> None:
+def test_settings_save_without_freezing_order(page: Page, gw: Serve) -> None:
     open_editor(page, gw, "rt")
     page.locator("#route-record").select_option(label="關")
     expect(page.locator("#dirty-banner")).to_be_visible()
@@ -364,7 +364,7 @@ def test_settings_save_without_freezing_order(page: Page, gw: LiveGateway) -> No
     assert api(gw, "GET", "/api/routes/rt").json()["record_context"] is True
 
 
-def test_dry_run_panel(page: Page, gw: LiveGateway, fake_api) -> None:  # noqa: ANN001
+def test_dry_run_panel(page: Page, gw: Serve, fake_api) -> None:  # noqa: ANN001
     add_members(gw, api_body("api-off", fake_api, enabled=False))
     create_route(gw, "cloud", {"tags": {"all": ["r"], "none": ["local-only"]}}, mode="chat")
     put_order(gw, "cloud", [["api-b", "api-a"], ["api-off"]])
@@ -380,7 +380,7 @@ def test_dry_run_panel(page: Page, gw: LiveGateway, fake_api) -> None:  # noqa: 
     expect(page.locator("#dry-random")).to_have_text("slot 內依權重隨機抽選,每次順序可能不同")
 
 
-def test_dry_run_slot_labels_match_editor(page: Page, gw: LiveGateway) -> None:
+def test_dry_run_slot_labels_match_editor(page: Page, gw: Serve) -> None:
     # 預設順序:api 為 planner slot 2、local 為 slot 3;畫面一律以位置標 Slot 1、Slot 2
     eff = api(gw, "GET", "/api/routes/rt/effective-order").json()
     assert [s["slot"] for s in eff["slots"]] == [2, 3]
@@ -401,7 +401,7 @@ def test_dry_run_slot_labels_match_editor(page: Page, gw: LiveGateway) -> None:
     expect(page.locator("#dry-dirty")).to_have_text("目前有未儲存的變更,dry-run 依已儲存的設定")
 
 
-def test_stored_effort_outside_capabilities_is_kept(page: Page, gw: LiveGateway) -> None:
+def test_stored_effort_outside_capabilities_is_kept(page: Page, gw: Serve) -> None:
     put_order(gw, "rt", [[("api-a", "max", "high"), "api-b"], ["q-local"]])
     open_editor(page, gw, "rt")
     effort = card(page, "api-a").locator('select[data-role="effort"]')
@@ -415,7 +415,7 @@ def test_stored_effort_outside_capabilities_is_kept(page: Page, gw: LiveGateway)
     expect(card(page, "api-a").locator('select[data-role="effort"]')).to_have_value("max")
 
 
-def test_cli_card_marked_when_mode_chat(page: Page, gw: LiveGateway) -> None:
+def test_cli_card_marked_when_mode_chat(page: Page, gw: Serve) -> None:
     add_members(gw, {"id": "cli-a", "model_name": "cli-a", "kind": "cli", "provider": "claude-cli",
                      "model": "claude-sonnet-4-5", "tags": ["r"]})
     open_editor(page, gw, "rt")
@@ -429,7 +429,7 @@ def test_cli_card_marked_when_mode_chat(page: Page, gw: LiveGateway) -> None:
 
 
 @pytest.mark.expect_http_errors(422)
-def test_member_not_in_target_shows_422(page: Page, gw: LiveGateway) -> None:
+def test_member_not_in_target_shows_422(page: Page, gw: Serve) -> None:
     open_editor(page, gw, "rt")
     # 另一分頁先改了 route target:api-a 不再屬於目標
     body = api(gw, "GET", "/api/deployments/api-b").json()
@@ -458,7 +458,7 @@ def test_member_not_in_target_shows_422(page: Page, gw: LiveGateway) -> None:
 
 
 @pytest.mark.expect_http_errors(404)
-def test_editor_missing_or_unknown_route(page: Page, gw: LiveGateway) -> None:
+def test_editor_missing_or_unknown_route(page: Page, gw: Serve) -> None:
     goto(page, gw, "/ui/route.html")
     expect(page.locator("#msgbar")).to_contain_text("缺少 route 名稱")
     open_url = "/ui/route.html?name=" + "nope%3Cimg%20src%3Dx%3E"
@@ -470,7 +470,7 @@ def test_editor_missing_or_unknown_route(page: Page, gw: LiveGateway) -> None:
 
 # ---- L2:清單頁 ---------------------------------------------------------------------------------
 
-def test_routes_list_create_delete_and_record_tristate(page: Page, gw: LiveGateway) -> None:
+def test_routes_list_create_delete_and_record_tristate(page: Page, gw: Serve) -> None:
     api(gw, "POST", "/api/groups", {"name": "coding", "selector": {"any": ["r"]}}, expect=(201,))
     create_route(gw, "tagged", {"group": "coding"}, mode="chat", tags=["daily", "<img src=x onerror=alert(1)>"],
                  record_context=True, budget_precheck=True)
@@ -538,7 +538,7 @@ def test_routes_list_create_delete_and_record_tristate(page: Page, gw: LiveGatew
 
 
 @pytest.mark.expect_http_errors(409)
-def test_routes_list_create_conflict_shows_message(page: Page, gw: LiveGateway) -> None:
+def test_routes_list_create_conflict_shows_message(page: Page, gw: Serve) -> None:
     goto(page, gw, "/ui/routes.html")
     form = page.locator("#route-new")
     expect(form).to_have_attribute("data-state", "ready")
