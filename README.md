@@ -249,7 +249,7 @@ SPILLWAY_BLACKBOX_GUARD=1 .venv/bin/python -m pytest -q -p no:cacheprovider test
 
 ### 測試模式的環境變數（僅供測試）
 
-`SPILLWAY_TEST_CONTROL=1` 讓 `serve` 開啟測試控制介面 `/__test__/*`；啟動期旋鈕 `SPILLWAY_TEST_START_TIME`、`SPILLWAY_TEST_RNG_SEED`、`SPILLWAY_TEST_ADAPTER_PATHS`、`SPILLWAY_TEST_RETENTION_POLL_SECONDS`、`SPILLWAY_TEST_RETENTION_STEPPED`、`SPILLWAY_TEST_NO_TOKEN`、`SPILLWAY_TEST_LOG_LEVEL`（`docs/spec.md` 13.2）只在開啟時讀取。**這些變數僅供測試，正式使用請勿設定**：控制介面可以改寫資料庫狀態（含繞過驗證寫入成員參數），`SPILLWAY_TEST_LOG_LEVEL` 的輸出不遮罩。開啟時 `SPILLWAY_HOME` 必須明確設定，且不可是預設資料目錄，否則 `serve` 以結束碼 2 結束、不開啟資料庫；開啟後 stderr 會印一行警告。未設 `SPILLWAY_TEST_CONTROL` 時設了旋鈕，`serve` 只印出變數名並忽略。harness 會自行設定這些變數，執行測試時不需要手動設定。既有的 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`、`SPILLWAY_TEST_MCP_MAX_SESSIONS` 同樣僅供測試，是有意的例外：不受 `SPILLWAY_TEST_CONTROL` 限制。
+`SPILLWAY_TEST_CONTROL=1` 讓 `serve` 開啟測試控制介面 `/__test__/*`；啟動期旋鈕 `SPILLWAY_TEST_START_TIME`、`SPILLWAY_TEST_RNG_SEED`、`SPILLWAY_TEST_ADAPTER_PATHS`、`SPILLWAY_TEST_RETENTION_POLL_SECONDS`、`SPILLWAY_TEST_RETENTION_STEPPED`、`SPILLWAY_TEST_NO_TOKEN`、`SPILLWAY_TEST_LOG_LEVEL`（`docs/spec.md` 13.2）只在開啟時讀取。**這些變數僅供測試，正式使用請勿設定**：控制介面可以改寫資料庫狀態（含繞過驗證寫入成員參數），`SPILLWAY_TEST_LOG_LEVEL` 的輸出不遮罩。開啟時 `SPILLWAY_HOME` 必須明確設定，且不可是預設資料目錄（`platformdirs` 的位置），否則 `serve` 以結束碼 2 結束、不開啟資料庫；若你把真實資料放在自訂的 `SPILLWAY_HOME`，這項檢查保護不到它，請勿對它開啟測試模式；開啟後 stderr 會印一行警告。未設 `SPILLWAY_TEST_CONTROL` 時設了旋鈕，`serve` 只印出變數名並忽略。harness 會自行設定這些變數，執行測試時不需要手動設定。既有的 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`、`SPILLWAY_TEST_MCP_MAX_SESSIONS` 同樣僅供測試，是有意的例外：不受 `SPILLWAY_TEST_CONTROL` 限制。
 
 ### 升級相依
 
