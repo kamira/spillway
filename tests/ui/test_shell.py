@@ -634,9 +634,11 @@ def test_trusted_types_enforced_and_playwright_ops_work(page: Page, tmp_path: Pa
 
 def test_async_tests_after_ui_module_pass() -> None:
     """在子行程依序跑本檔的一個 Playwright 測試與一個 anyio 測試模組,後者必須全過。"""
-    # 黑箱化(CHG-20261107-03 T5):子行程沿用本行程的環境(PYTHONPATH 等;serve 經 SPILLWAY_CMD 啟動),
-    # 不再自組 src 路徑;後半是 unit 測試(會 import spillway),所以拿掉強制守門的旗標
+    # 黑箱化(CHG-20261107-03 T5):後半是 unit 測試(會 import spillway,依決策 1 為 Python 專屬),所以拿掉
+    # 強制守門的旗標,並和轉換前一樣把 PYTHONPATH 覆寫成本樹的 src——不能讓 editable `.pth` 解析到別的
+    # checkout(施工審議 T5 F3;邊界允許清單)
     env = {k: v for k, v in os.environ.items() if k != FORCE_ENV}
+    env["PYTHONPATH"] = str(REPO / "src")
     env["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",

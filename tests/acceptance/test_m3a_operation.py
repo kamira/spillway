@@ -500,12 +500,13 @@ def test_m3a_acceptance_operation(tmp_path):
     obs["http_log_lines"] = len(log_lines)
     RESULTS.write_text(json.dumps(obs, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                        encoding="utf-8")
-    serve_text = serve.stderr_bytes().decode("utf-8", errors="replace")   # 原始 stderr(未遮罩)
+    # 原始 stderr 與 stdout(未遮罩;stdout 含 uvicorn access log,施工審議 T3 F1)
+    serve_text = (serve.stderr_bytes() + serve.stdout_bytes()).decode("utf-8", errors="replace")
     leaks = {}
     for name, secret in (("init_token", token), ("rotated_token", token2)):
         leaks[name] = (_files_containing(ARTIFACTS, secret) + _files_containing(home, secret)
                        + _files_containing(tmp_path, secret)
-                       + (["serve stderr"] if secret in serve_text else []))
+                       + (["serve stderr/stdout"] if secret in serve_text else []))
     assert leaks == {"init_token": [], "rotated_token": []}, leaks
     ledger_text = json.dumps(_q(db_path, "SELECT * FROM usage_ledger"), ensure_ascii=False)
     assert token not in ledger_text and token2 not in ledger_text

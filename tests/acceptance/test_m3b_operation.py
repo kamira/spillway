@@ -18,7 +18,7 @@ MCP 一律以官方 SDK 用戶端實際連線(Streamable HTTP 對子行程 serve
 - `operation-results.json`:各函式的觀察值(不含任何秘密)與 M3 閘門對照表(`m3_gates`)。
 GET 通知串流「已在伺服器端就緒」:以「改一次 route → 收到 `tools/list_changed`」證明(同
 tests/integration/mcp/test_mcp_shutdown.py;本檔的 serve 未開啟測試控制介面,不用 `/__test__/mcp/sessions`)。
-資料庫一律唯讀開啟(`tests.blackbox.db.read_db`);serve 的 stderr 以原始位元組(`Serve.stderr_bytes()`)檢查 token。
+資料庫一律唯讀開啟(`tests.blackbox.db.read_db`);serve 的 stderr 與 stdout 以原始位元組(`Serve.stderr_bytes()`、`stdout_bytes()`)檢查 token。
 """
 from __future__ import annotations
 
@@ -273,11 +273,12 @@ class Op:
 
     def assert_no_token_leak(self) -> dict[str, list[str]]:
         leaks: dict[str, list[str]] = {}
-        logs = b"".join(s.stderr_bytes() for s in self.serves)      # 原始 stderr(未遮罩)
+        # 原始 stderr 與 stdout(未遮罩;stdout 含 uvicorn access log,施工審議 T3 F1)
+        logs = b"".join(s.stderr_bytes() + s.stdout_bytes() for s in self.serves)
         for i, tok in enumerate(self.tokens):
             found = _files_containing(self.home, tok) + _files_containing(ARTIFACTS, tok)
             if tok.encode() in logs:
-                found.append("serve stderr")
+                found.append("serve stderr/stdout")
             leaks[f"token{i}"] = found
         assert all(not v for v in leaks.values()), leaks
         return leaks

@@ -626,8 +626,10 @@ def test_m4b_operation(env: dict[str, Any], browser: Browser) -> None:  # noqa: 
     # NFR-4:資料庫、匯出檔、CSV、第二資料目錄 backups/、serve 日誌、畫面 HTML 與 API 回應
     secrets = [FAKE_KEY, *TOKENS]
     files = [tmp / "A.yaml", tmp / "B.yaml", tmp / "ledger.csv", *(s.log_path for s in env["serves"])]
-    stderr_hits = [str(s.log_path.name) for s in env["serves"] for sec in secrets if sec.encode() in s.stderr_bytes()]
-    assert stderr_hits == [], stderr_hits             # 原始 stderr(日誌檔是遮罩副本)
+    # 原始 stderr 與 stdout(日誌檔是遮罩副本;stdout 含 uvicorn access log,施工審議 T3 F1)
+    stderr_hits = [str(s.log_path.name) for s in env["serves"] for sec in secrets
+                   if sec.encode() in s.stderr_bytes() + s.stdout_bytes()]
+    assert stderr_hits == [], stderr_hits
     for home in (tmp / "a", tmp / "b", tmp / "c"):
         files += [p for p in home.glob("spillway.db*") if p.is_file()]
     backups = sorted((tmp / "b" / "backups").glob("*"))

@@ -159,9 +159,13 @@ def _safe(text: str) -> str:
 
 
 class Node:
-    """一個資料目錄 + 一個子行程 serve + 一個 httpx client。"""
+    """一個資料目錄 + 一個子行程 serve + 一個 httpx client。
 
-    def __init__(self, env: "Env", name: str, *, seed=None, extra_env: dict[str, str] | None = None) -> None:
+    `control=False`:不開測試控制介面(較接近正式設定);只有要經 `/__test__/*` 種資料的節點才開
+    (施工審議 T3 F5)。"""
+
+    def __init__(self, env: "Env", name: str, *, seed=None, extra_env: dict[str, str] | None = None,
+                 control: bool = True) -> None:
         self.env = env
         self.name = name
         self.home = env.tmp / name
@@ -170,7 +174,7 @@ class Node:
             seed(self.home)               # serve 啟動前以 sqlite3 建庫(AM-2);token 由 serve 簽發
         else:
             self._init_token()
-        self.serve = Serve(self.home, fake_bin=env.fake_bin, graceful_timeout=GRACE,
+        self.serve = Serve(self.home, control=control, fake_bin=env.fake_bin, graceful_timeout=GRACE,
                            log_path=env.tmp / f"serve-{name}.log",
                            extra_env={**env.extra_env, **(extra_env or {})})
         env.serves.append(self.serve)
@@ -436,7 +440,7 @@ def test_m4a_operation_config(env: Env):
                        "api_a_credential_ref": next(d for d in doc_a["deployments"]
                                                     if d["id"] == API_A)["credential_ref"]}
     assert obs["export_a"]["api_a_credential_ref"] == "env:SPILLWAY_TEST_KEY"
-    s2 = env.node("home-2")
+    s2 = env.node("home-2", control=False)
     r = s2.import_(a, "replace")
     obs["import_a_on_serve2"] = {"status": r.status_code, **{k: r.json()[k] for k in ("created", "backup")}}
     assert r.status_code == 200, _safe(r.text)
@@ -451,7 +455,7 @@ def test_m4a_operation_config(env: Env):
     s3 = env.node("home-3", seed=_seed_golden)
     _seed_golden_runtime(s3)
     g = s3.export()
-    s4 = env.node("home-4")
+    s4 = env.node("home-4", control=False)
     r = s4.import_(g, "replace")
     assert r.status_code == 200, _safe(r.text)
     g2 = s4.export()
@@ -578,7 +582,7 @@ def test_m4a_operation_config(env: Env):
 
 
 async def test_m4a_operation_mcp_stdio_max_sessions(env: Env):
-    s = env.node("home-mcp", extra_env={"SPILLWAY_TEST_MCP_MAX_SESSIONS": "1"})
+    s = env.node("home-mcp", control=False, extra_env={"SPILLWAY_TEST_MCP_MAX_SESSIONS": "1"})
     await asyncio.to_thread(_seed, s, env.fake_base)
     async with mcp_http_session(s.serve.mcp_url(GROUP), s.token,
                                 event_hooks=HttpLog.async_hooks()) as (sess, _init, _sid):
@@ -594,7 +598,8 @@ async def test_m4a_operation_mcp_stdio_max_sessions(env: Env):
     assert out.init is None and out.error is not None, (out.error, out.returncode)
     assert out.error.data == {"http_status": 503}, out.error
     assert out.returncode == 1 and obs["stderr_token_free"], (out.returncode, _safe(out.stderr))
-    log = s.serve.stderr_bytes().decode("utf-8", errors="replace")   # 原始 stderr(未遮罩)
+    # 原始 stderr 與 stdout(未遮罩;stdout 含 uvicorn access log,施工審議 T3 F1)
+    log = (s.serve.stderr_bytes() + s.serve.stdout_bytes()).decode("utf-8", errors="replace")
     token_in_log = any(t in log for t in TOKENS)
     key_in_log = procs.TEST_KEY in log
     del log

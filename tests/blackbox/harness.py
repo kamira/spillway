@@ -19,8 +19,10 @@
   時不設定任何旋鈕)、`graceful_timeout=3.0`(`SPILLWAY_TEST_GRACEFUL_TIMEOUT`;None 為不設定)、
   `mcp_max_sessions`、`extra_env`、`fake_bin`、`port`(預設隨機空埠)、`log_path`、
   `allowed_unavailable_adapters`(允許載入失敗的模組名)、`allow_stderr`(stop() 時允許的問題行 regex)。
-- 啟動:行程群組獨立(`start_new_session=True`),stdout 丟棄,stderr 由背景執行緒讀取:原始位元組留在
-  記憶體(`stderr_bytes()`),寫入 `log_path` 的副本把 token 換成 `***`。
+- 啟動:行程群組獨立(`start_new_session=True`),stderr 與 stdout 各由一個背景執行緒讀取(pipe 不會塞滿):
+  原始位元組留在記憶體(`stderr_bytes()`、`stdout_bytes()`),兩者寫入 `log_path` 的副本都把 token 換成
+  `***`。stdout 含 uvicorn access log(方法、路徑與查詢字串),token 外洩掃描必須涵蓋它(施工審議 T3 F1);
+  `stop()` 的問題掃描只看 stderr。
 - 就緒(spec 14.4):`GET /api/settings/context` 回 200 且行程仍在執行;不看 pid、lsof。
 - token 只從 spec 14.2 的 `TOKEN_NOTICE` 單行解析(`token`;未簽發時 None)。
 - `adapter_paths` 非空時,就緒後以 `GET /api/adapters` 斷言每個路徑下的每個模組資料夾(含 `__init__.py`
@@ -43,6 +45,7 @@
 - MCP:`mcp_session(group="all", *, token=<s.token>, headers=None, message_handler=None, read_timeout=60)`
   (async context manager,yield `McpClient`);`stream_open(session_id)`;
   `await wait_stream_open(session_id, timeout=5.0)`。
+- stdout:`stdout_bytes()`、`stdout_text()`(token 已換成 `***`)。
 - stderr:`stderr_bytes()`、`stderr_text()`(token 已換成 `***`)、`stderr_offset()`、
   `stderr_since(offset) -> bytes`、`drain_stderr(quiet=0.3, timeout=5.0)`(等到一段時間沒有新輸出)。
 
@@ -50,7 +53,8 @@
 成為實作;② 讓實作另開行程群組、轉送 SIGINT/SIGTERM,在實作結束後以相同結束狀態結束——實作以訊號結束時,
 重設該訊號為預設處置後對自己重送同一訊號(不可改成 `exit 128+n`)。包裝程式與實作若在同一個群組,包裝程式
 不可再轉送訊號(否則實作會收到兩次;第二個 SIGINT 為強制結束)。停機後包裝程式與實作的所有子孫行程不得殘留,
-也不得繼續持有 stderr:`stop()` 在行程結束後斷言 stderr 已到 EOF、行程群組已清空(否則 SIGKILL 該群組並失敗)。
+也不得繼續持有 stderr 或 stdout:`stop()` 在行程結束後斷言兩者都已到 EOF、行程群組已清空(否則 SIGKILL
+該群組並失敗)。
 `SPILLWAY_CMD` 的第一個字是含路徑分隔字元的相對路徑(例如 `./wrap.sh`、`target/debug/spillway`)時,
 以測試行程啟動時的工作目錄解析(`INVOCATION_DIR`;子行程的 cwd 是暫存目錄)。
 
@@ -210,35 +214,55 @@ def stderr_problems(text: str, allow: Iterable[str] = ()) -> list[str]:
             if _PROBLEM_RE.search(ln) and not any(a.search(ln) for a in allowed)]
 
 
-class _StderrPump:
-    """背景讀子行程 stderr:原始位元組留在記憶體,寫入日誌檔的副本遮掉 token。"""
+class _Secrets:
+    """stdout 與 stderr 兩個讀取執行緒共用的 token 清單(施工審議 T3 F1)。"""
 
-    def __init__(self, stream: Any, log_path: Path) -> None:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.items: list[bytes] = []
+
+    def add(self, secret: str) -> None:
+        with self.lock:
+            if secret and secret.encode() not in self.items:
+                self.items.append(secret.encode())
+
+    def mask(self, data: bytes) -> bytes:
+        with self.lock:
+            for s in self.items:
+                data = data.replace(s, b"***")
+        return data
+
+
+class _StderrPump:
+    """背景讀子行程的一條輸出(stderr 或 stdout):原始位元組留在記憶體,寫入日誌檔的副本遮掉 token。
+
+    `parse_token=True`(stderr)時,讀到 `TOKEN_NOTICE` 行就把 token 加進共用的 `secrets`;stdout 的
+    pump 共用同一份 `secrets`,所以兩條輸出寫進 `log_path` 的副本都會遮掉 token。"""
+
+    def __init__(self, stream: Any, log_path: Path, *, secrets: _Secrets | None = None,
+                 parse_token: bool = True, name: str = "serve-stderr") -> None:
         self._stream = stream
         self._log = log_path.open("ab")
         self._lock = threading.Lock()
         self._raw = bytearray()
-        self._secrets: list[bytes] = []
+        self._secrets = secrets if secrets is not None else _Secrets()
+        self._parse_token = parse_token
         self.last_write = time.monotonic()
-        self._thread = threading.Thread(target=self._run, name="serve-stderr", daemon=True)
+        self._thread = threading.Thread(target=self._run, name=name, daemon=True)
         self._thread.start()
 
     def add_secret(self, secret: str) -> None:
-        with self._lock:
-            if secret and secret.encode() not in self._secrets:
-                self._secrets.append(secret.encode())
+        self._secrets.add(secret)
 
     def _run(self) -> None:
         prefix = TOKEN_NOTICE.encode("utf-8")
         for line in iter(self._stream.readline, b""):
             body = line.rstrip(b"\n")
-            if body.startswith(prefix) and TOKEN_RE.fullmatch(body[len(prefix):]):
+            if self._parse_token and body.startswith(prefix) and TOKEN_RE.fullmatch(body[len(prefix):]):
                 self.add_secret(body[len(prefix):].decode("ascii"))
             with self._lock:
                 self._raw += line
-                masked = line
-                for s in self._secrets:
-                    masked = masked.replace(s, b"***")
+                masked = self._secrets.mask(line)
                 self.last_write = time.monotonic()
             self._log.write(masked)
             self._log.flush()
@@ -248,14 +272,10 @@ class _StderrPump:
             return bytes(self._raw)
 
     def masked_text(self) -> str:
-        with self._lock:
-            data = bytes(self._raw)
-            for s in self._secrets:
-                data = data.replace(s, b"***")
-        return data.decode("utf-8", errors="replace")
+        return self._secrets.mask(self.raw()).decode("utf-8", errors="replace")
 
     def join(self, timeout: float = 10.0) -> bool:
-        """等讀取執行緒結束(stderr 到 EOF);回傳是否已結束。已結束時關閉日誌檔。"""
+        """等讀取執行緒結束(輸出到 EOF);回傳是否已結束。已結束時關閉日誌檔。"""
         self._thread.join(timeout)
         if self._thread.is_alive():
             return False
@@ -335,6 +355,7 @@ class Serve:
         self.token: str | None = None
         self.proc: subprocess.Popen[bytes] | None = None
         self._pump: _StderrPump | None = None
+        self._out_pump: _StderrPump | None = None
         self._control: Control | None = None
         self._stopped = True
         self._secrets: list[str] = []
@@ -369,11 +390,14 @@ class Serve:
         assert self.proc is None or self.proc.poll() is not None, "serve 已在執行"
         self.proc = subprocess.Popen(
             [*spillway_cmd(), "serve", "--port", str(self.port)], env=self.env(), cwd=str(self.home.parent),
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=True)
-        self._pump = _StderrPump(self.proc.stderr, self.log_path)
+        secrets = _Secrets()
         for s in self._secrets:
-            self._pump.add_secret(s)
+            secrets.add(s)
+        self._pump = _StderrPump(self.proc.stderr, self.log_path, secrets=secrets)
+        self._out_pump = _StderrPump(self.proc.stdout, self.log_path, secrets=secrets, parse_token=False,
+                                     name="serve-stdout")
         self._stopped = False
         _LIVE.add(self)
         if wait_ready:
@@ -449,8 +473,10 @@ class Serve:
         return time.monotonic() - start
 
     def _finish(self, pump_timeout: float = 10.0) -> bool:
-        """收尾;回傳 stderr 是否已到 EOF。"""
+        """收尾;回傳 stderr 與 stdout 是否都已到 EOF。"""
         eof = True if self._pump is None else self._pump.join(pump_timeout)
+        if self._out_pump is not None:
+            eof = self._out_pump.join(pump_timeout) and eof
         if self._control is not None:
             self._control.close()
             self._control = None
@@ -499,14 +525,16 @@ class Serve:
                 self.signal(_signal.SIGKILL)
                 self.proc.wait(15)
         eof = self._pump.join(5.0) if self._pump is not None else True
+        out_eof = self._out_pump.join(5.0) if self._out_pump is not None else True
         leftover = self._reap_group()
-        if not eof:   # 殘留的子孫行程已被 SIGKILL,讓讀取執行緒收尾
+        if not (eof and out_eof):   # 殘留的子孫行程已被 SIGKILL,讓讀取執行緒收尾
             self._finish(5.0)
         self._finish()
         rc = self.proc.returncode
         text = self.stderr_text()
         assert not timed_out, f"serve 未在 {limit} 秒內結束(已 SIGKILL)\n{text[-4000:]}"
         assert eof, "stderr 未關閉:可能有子行程殘留(已 SIGKILL 行程群組)"
+        assert out_eof, "stdout 未關閉:可能有子行程殘留(已 SIGKILL 行程群組)"
         assert not leftover, "serve 結束後行程群組仍有行程殘留(已 SIGKILL)"
         assert rc == expect_code, f"serve 結束碼 {rc},預期 {expect_code}\n{text[-4000:]}"
         problems = stderr_problems(text, (*self.allow_stderr, *allow_stderr))
@@ -611,6 +639,13 @@ class Serve:
     # ------------------------------------------------------------------ stderr
     def stderr_bytes(self) -> bytes:
         return b"" if self._pump is None else self._pump.raw()
+
+    def stdout_bytes(self) -> bytes:
+        """serve stdout 的原始位元組(uvicorn access log 等;token 未遮,外洩掃描用;施工審議 T3 F1)。"""
+        return b"" if self._out_pump is None else self._out_pump.raw()
+
+    def stdout_text(self) -> str:
+        return "" if self._out_pump is None else self._out_pump.masked_text()
 
     def stderr_text(self) -> str:
         return "" if self._pump is None else self._pump.masked_text()

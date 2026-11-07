@@ -21,6 +21,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import time
 import tomllib
 import types
 from datetime import datetime, timedelta, timezone
@@ -141,6 +142,77 @@ def test_serve_ready_token_and_log_masking(serve_factory):
     saved = s.log_path.read_text(encoding="utf-8")
     assert s.token not in saved and TOKEN_NOTICE + "***" in saved   # 保存的日誌遮掉 token
     assert s.token not in s.stderr_text()
+
+
+_FAKE_TOKEN = "F" * 20 + "-_" + "k7" * 10 + "Q"
+# 不 exec 實作的假 serve:啟動時在 stderr 印 TOKEN_NOTICE,`GET /emit` 時把哨兵字串與該 token 寫到 stdout
+_STDOUT_EMITTER = (
+    "import http.server\n"
+    f"TOKEN = {_FAKE_TOKEN!r}\n"
+    f"sys.stderr.write({TOKEN_NOTICE!r} + TOKEN + '\\n')\n"
+    "sys.stderr.flush()\n"
+    "class H(http.server.BaseHTTPRequestHandler):\n"
+    "    def do_GET(self):\n"
+    "        if self.path == '/emit':\n"
+    "            sys.stdout.write('SENTINEL-STDOUT-7f3a token=' + TOKEN + '\\n')\n"
+    "            sys.stdout.flush()\n"
+    "        self.send_response(200)\n"
+    "        self.send_header('Content-Length', '0')\n"
+    "        self.end_headers()\n"
+    "    def log_message(self, *a):\n"
+    "        pass\n"
+    "http.server.HTTPServer(('127.0.0.1', int(ARGS[ARGS.index('--port') + 1])), H).serve_forever()\n")
+
+
+def _wait_for(pred, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        time.sleep(0.05)
+    return pred()
+
+
+def test_stdout_is_captured_and_masked_in_log(tmp_path, monkeypatch):
+    """施工審議 T3 F1:serve 的 stdout 由第二個讀取執行緒保留原始位元組(`stdout_bytes()`),
+    寫入 `log_path` 的副本把 token 換成 `***`。"""
+    monkeypatch.setenv("SPILLWAY_CMD", _py_wrapper(tmp_path, "emitter", _STDOUT_EMITTER))
+    s = Serve(tmp_path / "home", control=False).start(timeout=10)
+    try:
+        assert s.token == _FAKE_TOKEN
+        assert s.request("GET", "/emit").status_code == 200
+        assert _wait_for(lambda: b"SENTINEL-STDOUT-7f3a" in s.stdout_bytes())
+        assert _FAKE_TOKEN.encode() in s.stdout_bytes()        # 原始 stdout 未遮
+        assert _FAKE_TOKEN not in s.stdout_text() and "token=***" in s.stdout_text()
+    except BaseException:
+        s.kill()
+        raise
+    s.stop()
+    saved = s.log_path.read_text(encoding="utf-8")
+    assert "SENTINEL-STDOUT-7f3a token=***" in saved   # stdout 也寫進日誌副本,token 已遮
+    assert _FAKE_TOKEN not in saved and TOKEN_NOTICE + "***" in saved
+
+
+def test_real_serve_access_log_lands_in_stdout(serve_factory):
+    """施工審議 T3 F1:uvicorn access log(含查詢字串)寫在 serve stdout,所以 token 外洩掃描必須涵蓋
+    `stdout_bytes()`;保存的日誌副本與 `stdout_text()` 遮掉 token。"""
+    s = serve_factory()
+    assert s.token is not None
+    assert s.request("GET", "/api/settings/context", params={"probe": s.token}).status_code == 200
+    assert _wait_for(lambda: s.token.encode() in s.stdout_bytes()), s.stdout_text()[-2000:]
+    assert s.token not in s.stdout_text() and "probe=***" in s.stdout_text()
+    s.stop()
+    saved = s.log_path.read_text(encoding="utf-8")
+    assert "probe=***" in saved and s.token not in saved
+
+
+def test_free_port_never_returns_default_serve_port(monkeypatch):
+    """施工審議 T4 F6:作業系統剛好配到 8787 時重抽。"""
+    from tests.blackbox import ports
+
+    seq = iter([ports.DEFAULT_SERVE_PORT, ports.DEFAULT_SERVE_PORT, 40123])
+    monkeypatch.setattr(ports, "_os_free_port", lambda: next(seq))
+    assert ports.free_port() == 40123
 
 
 def test_no_token_knob_leaves_token_none(serve_factory):

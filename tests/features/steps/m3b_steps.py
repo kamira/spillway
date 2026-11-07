@@ -417,9 +417,10 @@ def step_config_no_token(context):
 
 @step(r'除 "stdio" 外每份設定的 content 含 "([^"]+)"')
 def step_config_url(context, url):
-    # AM-12:feature 文字的網址帶預設埠 8787;serve 以隨機埠啟動,換成實際埠後比對(觀察方式改變)
+    # AM-12:feature 文字的網址帶預設埠 8787;serve 以 harness 選的隨機埠啟動(`free_port()` 一律不回 8787,
+    # 施工審議 T4 F6),換成實際埠後比對(觀察方式改變)
     port = context.gw.serve.port
-    assert f":{DEFAULT_PORT}/" in url and port != DEFAULT_PORT, (url, port)
+    assert f":{DEFAULT_PORT}/" in url, (url, port)
     url = url.replace(f"127.0.0.1:{DEFAULT_PORT}/", f"127.0.0.1:{port}/")
     for tool, cfg in context.m3b_configs.items():
         if tool == "stdio":

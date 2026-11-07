@@ -128,6 +128,9 @@ def step_contract(context):
     env = {k: v for k, v in os.environ.items() if k not in REAL_KEY_VARS and k != FORCE_ENV}
     env["SPILLWAY_CONTRACT_EXTRA_PATHS"] = str(context.module_dir.parent)
     env["SPILLWAY_CONTRACT_HARNESS_PATHS"] = str(_harness_dir(context))
+    # Python 專屬的 adapter 合約測試(決策 1)必須測步驟檔所在這棵樹的 src,不能讓 editable `.pth`
+    # 解析到別的 checkout(施工審議 T4 F2;邊界允許清單)
+    env["PYTHONPATH"] = os.pathsep.join([str(REPO_ROOT / "src"), str(REPO_ROOT)])
     env["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     contract = REPO_ROOT / "tests" / "contract"
     # design 規則 3:合約測試 = 形狀契約 + call 狀態,兩檔都跑(末端審查 M29)

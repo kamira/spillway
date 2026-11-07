@@ -15,8 +15,9 @@ Fixture
 - `make_ui_gateway(**opts) -> Serve`(函式範圍):經 `tests/blackbox/plugin.serve_factory` 啟動 serve 子行程
   (資料目錄在 `tmp_path`;開啟測試控制介面)並等到就緒;`opts` 為 `Serve` 的選項(`start_time`、
   `adapter_paths`、`allowed_unavailable_adapters`、`no_token` 等)。`retention_poll_seconds` 預設 3600
-  (背景清理不干擾測試,與原行程內 gateway 相同)。測試有用 `fake_api` 時,先建立它再啟動 serve(子行程的
-  環境在啟動時決定,`SPILLWAY_TEST_KEY` 必須已設定)。測試結束時停止(`Serve.stop()` 的結束碼與 stderr 斷言;
+  (背景清理不干擾測試,與原行程內 gateway 相同)。子行程的環境在啟動時決定,所以啟動 serve 前,先建立
+  測試用到的每一個會設定環境的 fixture(`ENV_FIXTURES`:`fake_api` 設 `SPILLWAY_TEST_KEY`、`fake_cli` 把假
+  CLI 放上 PATH、`fake_key_env`);新增這類 fixture 時必須加進 `ENV_FIXTURES`(施工審議 T5 F4)。測試結束時停止(`Serve.stop()` 的結束碼與 stderr 斷言;
   測試失敗時改為 kill)。
 - `fake_api`:沿用 `tests/fakes/plugin.py`(伺服器為 session 範圍,行程內;不 import spillway),另設
   `SPILLWAY_TEST_KEY` 為假金鑰(`tests.blackbox.mask.TEST_KEY`)。
@@ -41,6 +42,9 @@ from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_
 from tests.blackbox.harness import Serve
 from tests.blackbox.mask import TEST_KEY, TEST_KEY_ENV
 from tests.blackbox.ui import PageGuard, close_and_collect, open_context
+
+# 會設定環境變數的 fixture:make_ui_gateway 啟動 serve 前先建立(子行程的環境在啟動時決定)
+ENV_FIXTURES = ("fake_api", "fake_cli", "fake_key_env")
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -78,8 +82,9 @@ def browser(playwright: Playwright) -> Iterator[Browser]:
 def make_ui_gateway(serve_factory: Callable[..., Serve],
                     request: pytest.FixtureRequest) -> Iterator[Callable[..., Serve]]:
     def make(**opts: Any) -> Serve:
-        if "fake_api" in request.fixturenames:
-            request.getfixturevalue("fake_api")   # 先設好 SPILLWAY_TEST_KEY,子行程才看得到
+        for name in ENV_FIXTURES:
+            if name in request.fixturenames:
+                request.getfixturevalue(name)   # 先設好環境(金鑰、PATH),子行程才看得到
         opts.setdefault("retention_poll_seconds", 3600)
         return serve_factory(**opts)
 
