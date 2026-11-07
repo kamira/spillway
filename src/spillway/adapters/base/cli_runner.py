@@ -10,6 +10,8 @@ max_output_bytes=8 MiB) -> CliOutput`
 - 環境:以目前 `os.environ` 為底,移除 `env_remove` 與 `extra_env_remove`,再套上 `env_set`。
   `extra_env_remove`(集合,預設空)由 Router 在每次 CLI 嘗試前設為「所有成員 `credential_ref`
   為 `env:<名>` 的變數名」(決策 9 施工審議補記),`run` 一律併入 `env_remove`。
+  另外一律移除 `TEST_CONTROL_ENV_NAMES`(CHG-20261107-03 決策 5 ⑦):`SPILLWAY_TEST_CONTROL` 與決策 6 的
+  啟動期測試旋鈕,CLI 子行程(及其孫行程,例如以 MCP 回呼的 `spillway`)不繼承測試模式。
 - `stdin` 未給時為 `DEVNULL`;給 `str` 時以 UTF-8 編碼送入後關閉。
 - 逾時(`timed_out=True`、`killed_reason="timeout"`)、`run` 所在 task 被取消(`CancelledError`,
   `killed_reason="cancelled"`,例外照常往上丟)、停機(`terminate_all`/`kill_all_sync`,
@@ -57,12 +59,26 @@ __all__ = [
     "DEFAULT_MAX_OUTPUT_BYTES",
     "DEFAULT_TERM_GRACE",
     "KILLED_REASONS",
+    "TEST_CONTROL_ENV_NAMES",
 ]
 
 DEFAULT_TERM_GRACE = 5.0                    # SIGTERM 之後等多久才 SIGKILL(秒)
 DEFAULT_DRAIN_TIMEOUT = 2.0                 # 主行程結束後讀管線的上限(秒)
 DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024  # stdout、stderr 各自的上限
 KILLED_REASONS = ("timeout", "cancelled", "shutdown")
+
+# CHG-20261107-03 決策 5 ⑦、6:測試控制介面開關與啟動期旋鈕的環境變數名(單一定義;`spillway.cli` 由此 import)。
+# 一般 serve 的子行程本來就不會有這些變數;測試模式的 serve 啟動 CLI 子行程時一律移除。
+TEST_CONTROL_ENV_NAMES: tuple[str, ...] = (
+    "SPILLWAY_TEST_CONTROL",
+    "SPILLWAY_TEST_START_TIME",
+    "SPILLWAY_TEST_RNG_SEED",
+    "SPILLWAY_TEST_ADAPTER_PATHS",
+    "SPILLWAY_TEST_RETENTION_POLL_SECONDS",
+    "SPILLWAY_TEST_RETENTION_STEPPED",
+    "SPILLWAY_TEST_NO_TOKEN",
+    "SPILLWAY_TEST_LOG_LEVEL",
+)
 
 _TIMEOUT_ERROR = "params.timeout 必須是正數(秒)"
 
@@ -235,7 +251,7 @@ class CliRunner:
         if isinstance(env_remove, str):   # 防呆:字串會被逐字元當成變數名
             raise TypeError("env_remove 必須是變數名的序列,不可為單一字串")
         env = dict(os.environ)
-        for name in (*env_remove, *self.extra_env_remove):
+        for name in (*env_remove, *self.extra_env_remove, *TEST_CONTROL_ENV_NAMES):
             env.pop(name, None)
         if env_set:
             env.update({str(k): str(v) for k, v in env_set.items()})
