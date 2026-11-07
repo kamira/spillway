@@ -1,0 +1,4 @@
+# 已轉換成黑箱的測試目錄(CHG-20261107-03 決策 9;邊界守門與執行期守門的範圍)。
+# `tests/blackbox` 一律在範圍內,不必列出。每行一個相對於 repo 根目錄的目錄;`#` 開頭為註解。
+# wave 3 的 T3、T4、T5 完成轉換時各自在下方加一行(只加自己的目錄,不改其他行):
+#   T3:tests/acceptance   T4:tests/features   T5:tests/ui
