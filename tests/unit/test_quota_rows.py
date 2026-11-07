@@ -103,3 +103,22 @@ def test_query_count_independent_of_member_count(conn):
         repo.save_deployment(conn, api_member(f"m{i}", "http://127.0.0.1:9"))
     conn.commit()
     assert count() == base
+
+
+def test_daily_spend_7d_and_est_days_left_share_daily(conn):
+    """CHG-20261103-01 決策 10 ③:`daily_spend_7d = spend7 / 7`,`est_days_left` 由同一個值推導。"""
+    for i in ("new", "quiet", "pool"):
+        repo.save_deployment(conn, api_member(i, "http://127.0.0.1:9"))
+    repo.save_budget(conn, "quiet", Budget(type="usd", limit_amount=5.0, window="none", reset_anchor=None))
+    repo.save_budget(conn, "pool", Budget(type="credit_pool", limit_amount=20.0, window="none",
+                                          reset_anchor=None))
+    _spend(conn, "quiet", 4.0, NOW - timedelta(days=7, seconds=1))   # 剛好超出 7 天
+    _spend(conn, "pool", 0.3, NOW - timedelta(days=2))
+    _spend(conn, "pool", 0.4, NOW - timedelta(days=7))               # 邊界(含)
+    conn.commit()
+    rows = {r["id"]: r for r in member_quota_rows(conn, FakeClock(NOW), NOW)}
+    assert rows["new"]["daily_spend_7d"] == 0.0
+    assert rows["quiet"]["daily_spend_7d"] == 0.0 and rows["quiet"]["est_days_left"] is None
+    pool = rows["pool"]
+    assert pool["daily_spend_7d"] == (0.3 + 0.4) / 7
+    assert pool["est_days_left"] == max(pool["remaining"], 0.0) / pool["daily_spend_7d"]

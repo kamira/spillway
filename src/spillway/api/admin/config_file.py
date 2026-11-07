@@ -13,7 +13,7 @@
    解析與模型驗證的錯誤一次回全部(上限 `MAX_ERRORS` 筆,以「; 」串接),不回顯輸入值;
    路徑格式見 `configio.format_path`(例 `deployments[1].kind`、`routes["a.b"].targets[0][1].deployment`)。
 
-套用階段(`configio.apply`)的檢查(targets 參照、目標群組、single)回第一筆,由 `config_io.py` 轉換。
+套用階段(`configio.apply`)的檢查(targets 參照、目標群組、single)回第一筆,由 `config_http.py` 轉換。
 """
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ from spillway import configio
 from spillway.api import ApiError, redact_echo
 from spillway.store import repo
 
+from .common import invalid
 from .models import (
     _ID_PATTERN,
     _ROUTE_PATTERN,
@@ -125,8 +126,8 @@ def _name_errors(data: Mapping[str, Any]) -> list[str]:
     return errors
 
 
-def _invalid(errors: list[str]) -> ApiError:
-    return ApiError(422, "validation_error", redact_echo("; ".join(errors[:MAX_ERRORS])))
+def _joined_invalid(errors: list[str]) -> ApiError:
+    return invalid(None, redact_echo("; ".join(errors[:MAX_ERRORS])))
 
 
 def _plan(model: ConfigFileIn) -> configio.ConfigPlan:
@@ -152,7 +153,7 @@ def parse(text: str) -> configio.ConfigPlan:
     try:
         data = configio.load_yaml(text)
     except configio.ConfigSyntaxError as exc:
-        raise _invalid([_msg(exc.path, exc.reason)]) from None
+        raise _joined_invalid([_msg(exc.path, exc.reason)]) from None
     errors = _name_errors(data)
     model: ConfigFileIn | None = None
     try:
@@ -160,6 +161,6 @@ def parse(text: str) -> configio.ConfigPlan:
     except ValidationError as exc:
         errors = _pydantic_errors(exc) + errors
     if errors:
-        raise _invalid(errors)
+        raise _joined_invalid(errors)
     assert model is not None
     return _plan(model)

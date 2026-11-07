@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>編輯 Route · Spillway</title>
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/routes.css">
+<script type="module" src="assets/js/route-editor.js"></script>
+</head>
+<body>
+<div class="shell">
+<nav class="nav" aria-label="主選單">
+<div class="brand">Spillway <span class="brand-sub">溢流閘</span></div>
+<a href="/ui/">總覽</a>
+<a href="/ui/members.html">成員</a>
+<a href="/ui/groups.html">群組與 Tag</a>
+<a href="/ui/routes.html" aria-current="page">Route</a>
+<a href="/ui/mcp.html">MCP 設定</a>
+<a href="/ui/ledger.html">帳本</a>
+<a href="/ui/settings.html">設定</a>
+<a href="/ui/api-reference.html">API 參考</a>
+<div class="nav-host mono" id="nav-host"></div>
+</nav>
+<main class="main" id="main">
+<div class="head">
+<div>
+<p class="muted" id="route-crumb"><a href="/ui/routes.html">Route</a> / <span class="mono" id="route-name"></span></p>
+<h1>編輯 Route</h1>
+</div>
+<div class="row" id="route-actions"></div>
+</div>
+<div id="editor" class="stack"></div>
+</main>
+</div>
+</body>
+</html>

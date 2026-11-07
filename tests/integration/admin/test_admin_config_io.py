@@ -420,6 +420,33 @@ async def test_privileged_in_response(client):
     assert "127.0.0.1" not in r.text and "SPILLWAY_TEST_KEY" not in r.text
 
 
+async def test_privileged_includes_provider_change(client, db):
+    """CHG-20261103-01 T2(決策 10 ⑥,M4a 帶入):既有成員只改 `provider` 也列入 `privileged`;
+    新成員不因 provider 而列入。"""
+    base = [_member("p", credential_ref="env:SPILLWAY_TEST_KEY"), _member("same")]
+    r = await _import(client, _yaml(deployments=base))
+    assert r.status_code == 200, r.text
+    assert r.json()["privileged"] == ["p"]                     # credential_ref(新成員不看 provider)
+    before = list(db.iterdump())
+    changed = [{**_member("p", credential_ref="env:SPILLWAY_TEST_KEY"), "provider": "anthropic",
+                "model": "claude-sonnet-4-5"},
+               _member("same"), _member("new-one")]
+    r = await _import(client, _yaml(deployments=changed), "merge", dry_run=True)
+    assert r.status_code == 200, r.text
+    assert r.json()["privileged"] == ["p"]
+    assert list(db.iterdump()) == before
+
+
+def test_is_privileged_change_pure():
+    def dep(provider: str, **kw) -> Deployment:
+        return Deployment(id="d", model_name="d", kind="api", provider=provider, model="m", **kw)
+
+    assert configio.is_privileged_change(dep("openai"), dep("anthropic")) is True
+    assert configio.is_privileged_change(dep("openai"), dep("openai")) is False
+    assert configio.is_privileged_change(None, dep("openai")) is False
+    assert configio.is_privileged_change(None, dep("openai", credential_ref="env:X")) is True
+
+
 async def test_dry_run_no_side_effects(make_app, make_client, db, db_path):
     seed_golden(db)
     async with _instrumented(make_app, make_client) as (app, c, calls):

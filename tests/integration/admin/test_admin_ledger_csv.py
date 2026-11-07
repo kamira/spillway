@@ -334,3 +334,41 @@ async def test_memory_and_time_recorded(make_app, db, clock, record_property):
     print(f"\n[T5 L2] 10k rows {elapsed_10k:.3f}s; tracemalloc peak 10k={peak_10k} B, "
           f"50k={peak_50k} B, diff={peak_50k - peak_10k} B")
     assert peak_50k - peak_10k < 5 * 1024 * 1024
+
+
+# ---------------------------------------------------------------- min_depth
+# CHG-20261103-01 T2(決策 10 ④;AM-13)
+
+
+@pytest.mark.parametrize("params", [{"min_depth": 1}, {"min_depth": 2, "deployment": "a"},
+                                    {"min_depth": 0}])
+async def test_csv_min_depth_matches_ledger_list(client, db, clock, params):
+    for i, depth in enumerate([0, 1, 2, 0, 1, 3]):
+        add(db, clock, minutes_ago=i, dep="a" if i % 2 else "b", fallback_depth=depth)
+    listed = (await client.get("/api/ledger", params={**params, "page_size": 500})).json()
+    r = await client.get("/api/ledger/export.csv", params=params)
+    assert r.status_code == 200, r.text
+    rows = parse(r.text)
+    depth_col = rows[0].index("fallback_depth")
+    assert [int(row[0]) for row in rows[1:]] == [x["id"] for x in listed["items"]]
+    assert rows[1:] and all(int(row[depth_col]) >= params["min_depth"] for row in rows[1:])
+
+
+@pytest.mark.parametrize("value", ["-1", "101", "x"])
+async def test_csv_min_depth_invalid(client, value):
+    msg = assert_error(await client.get("/api/ledger/export.csv", params={"min_depth": value}), 422,
+                       "validation_error")
+    assert "query.min_depth" in msg
+
+
+async def test_csv_row_cap_applies_after_min_depth(client, db, clock, monkeypatch):
+    """上限檢查以套用 `min_depth` 後的列數計算。"""
+    monkeypatch.setattr(ledger_api, "LEDGER_CSV_MAX_ROWS", 3)
+    for i, depth in enumerate([0, 1, 0, 2, 0, 1]):
+        add(db, clock, minutes_ago=i, fallback_depth=depth)
+    assert_error(await client.get("/api/ledger/export.csv"), 422, "validation_error")
+    r = await client.get("/api/ledger/export.csv", params={"min_depth": 1})
+    assert r.status_code == 200, r.text
+    assert len(parse(r.text)) == 1 + 3
+    assert_error(await client.get("/api/ledger/export.csv", params={"min_depth": 0}), 422,
+                 "validation_error")

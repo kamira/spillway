@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>群組與 Tag · Spillway</title>
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/groups.css">
+<script type="module" src="assets/js/groups.js"></script>
+</head>
+<body>
+<div class="shell">
+<nav class="nav" aria-label="主選單">
+<div class="brand">Spillway <span class="brand-sub">溢流閘</span></div>
+<a href="/ui/">總覽</a>
+<a href="/ui/members.html">成員</a>
+<a href="/ui/groups.html" aria-current="page">群組與 Tag</a>
+<a href="/ui/routes.html">Route</a>
+<a href="/ui/mcp.html">MCP 設定</a>
+<a href="/ui/ledger.html">帳本</a>
+<a href="/ui/settings.html">設定</a>
+<a href="/ui/api-reference.html">API 參考</a>
+<div class="nav-host mono" id="nav-host"></div>
+</nav>
+<main class="main" id="main">
+<div class="head">
+<div>
+<h1>群組與 Tag</h1>
+<p class="sub">群組是有名稱的 tag 條件;route 指向群組,或直接指向 tag 條件。</p>
+</div>
+<button class="btn primary" type="button" id="new-group">+ 新增群組</button>
+</div>
+<div class="split groups-layout">
+<section class="card" aria-label="群組清單">
+<div class="glist" id="group-list"></div>
+</section>
+<section class="card" aria-labelledby="group-editor-title" id="group-editor" hidden></section>
+<section class="card" aria-labelledby="tags-title" id="tag-card">
+<h2 id="tags-title">所有 Tag</h2>
+<ul class="plain" id="tag-list"></ul>
+<p class="muted small">要修改 tag,請點選成員,在成員頁編輯該成員的 tags。</p>
+</section>
+</div>
+</main>
+</div>
+</body>
+</html>

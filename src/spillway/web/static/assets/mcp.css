@@ -1,0 +1,11 @@
+/* UI-5 MCP 設定(CHG-20261103-01 T7)。版面依 docs/ui/Mcp.dc.html;設計稿的 inline 樣式改成 class。 */
+.mcp-layout { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.mcp-main { flex: 999 1 600px; min-width: 0; gap: 16px; }
+.mcp-layout > .stack { flex: 1 1 300px; min-width: 0; gap: 16px; }
+.mcp-variant { display: flex; flex-direction: column; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line-soft); }
+.mcp-variant:last-child { border-bottom: 0; }
+.mcp-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.mcp-notes .note strong { margin-right: 4px; }
+.mcp-toolname { font-weight: 500; }
+.mcp-toollist li { align-items: flex-start; }
+.mcp-toollist li:last-child { border-bottom: 0; }

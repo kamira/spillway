@@ -468,9 +468,11 @@ def list_ledger(
     until: datetime | None = None,
     limit: int | None = None,
     offset: int = 0,
+    min_depth: int | None = None,
 ) -> list[LedgerRow]:
-    """依條件列出帳本,新到舊(ts DESC, id DESC)。`since` 含、`until` 不含。"""
-    where, args = _ledger_where(route_name, deployment_id, status, since, until)
+    """依條件列出帳本,新到舊(ts DESC, id DESC)。`since` 含、`until` 不含;`min_depth` 為
+    `fallback_depth >= min_depth`(CHG-20261103-01 決策 10 ④)。"""
+    where, args = _ledger_where(route_name, deployment_id, status, since, until, min_depth)
     sql = "SELECT * FROM usage_ledger" + where
     sql += " ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?"
     args += [-1 if limit is None else limit, offset]
@@ -483,6 +485,7 @@ def _ledger_where(
     status: str | None,
     since: datetime | None,
     until: datetime | None,
+    min_depth: int | None = None,
 ) -> tuple[str, list[Any]]:
     """`list_ledger` 與 `count_ledger` 共用的篩選條件:回傳 `(" WHERE …" 或 "", 參數)`。"""
     where: list[str] = []
@@ -497,6 +500,9 @@ def _ledger_where(
     if until is not None:
         where.append("ts < ?")
         args.append(to_iso(until))
+    if min_depth is not None:
+        where.append("fallback_depth >= ?")
+        args.append(min_depth)
     return (" WHERE " + " AND ".join(where) if where else ""), args
 
 
@@ -508,11 +514,12 @@ def count_ledger(
     status: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
+    min_depth: int | None = None,
 ) -> int:
     """符合條件的帳本列數(條件同 `list_ledger`;管理 API 分頁的 `total`)。
 
     與 `list_ledger` 是兩條獨立敘述,呼叫端不包交易(CHG-20261101-02 決策審議 D25)。"""
-    where, args = _ledger_where(route_name, deployment_id, status, since, until)
+    where, args = _ledger_where(route_name, deployment_id, status, since, until, min_depth)
     return int(conn.execute("SELECT COUNT(*) FROM usage_ledger" + where, args).fetchone()[0])
 
 
@@ -526,13 +533,16 @@ def iter_ledger(
     until: datetime | None = None,
     limit: int,
     batch: int = 1000,
+    min_depth: int | None = None,
 ) -> Iterator[list[LedgerRow]]:
     """依條件逐批讀出帳本(條件與順序同 `list_ledger`:新到舊),每批至多 `batch` 列、合計至多 `limit` 列。
 
     帳本 CSV 匯出用(CHG-20261102-02 決策 9):以 `fetchmany` 分批讀,不一次載入整個結果;
     整段在一個讀交易內(`BEGIN` … `COMMIT`),各批看到同一份快照。呼叫端在中途停止迭代
-    (`close()`、例外)時回滾讀交易。呼叫端已在交易中時沿用,不另開也不提交。"""
-    where, args = _ledger_where(route_name, deployment_id, status, since, until)
+    (`close()`、例外)時回滾讀交易。呼叫端已在交易中時沿用,不另開也不提交。
+    交易跨越多次 yield,所以不用 `read_tx`(context manager),在此自行 `BEGIN`(D27 串流例外;
+    「已在交易內就沿用」的規則與 `read_tx` 相同)。"""
+    where, args = _ledger_where(route_name, deployment_id, status, since, until, min_depth)
     sql = "SELECT * FROM usage_ledger" + where + " ORDER BY ts DESC, id DESC LIMIT ?"
     args.append(limit)
     own = not conn.in_transaction
@@ -768,21 +778,28 @@ def get_context_settings(conn: sqlite3.Connection) -> ContextSettings:
 
 
 @contextmanager
-def read_snapshot(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-    """單一讀交易:已在交易內(含 `transaction(conn)` 的寫鎖)時沿用、不另開;否則 `BEGIN`(DEFERRED,
-    不取寫鎖)… 結束時 `COMMIT`(例外時 `ROLLBACK`)。WAL 模式下區塊內的多條 SELECT 看到同一份快照。"""
+def read_tx(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """讀交易(CHG-20261103-01 決策 21 ④):已在交易內(`conn.in_transaction`,含 `transaction(conn)` 的
+    寫鎖或外層 `read_tx`)時直接 yield,不 BEGIN、不 ROLLBACK,外層交易照常由外層結束;否則 `BEGIN`
+    (DEFERRED,不取寫鎖;SQLite 不會強制唯讀,呼叫端只做讀取)… 結束時一律 `ROLLBACK`(只讀,結果與
+    COMMIT 相同)。WAL 模式下區塊內的多條 SELECT 看到同一份快照。
+    `iter_ledger` 是 generator,交易跨越多次 yield,仍在函式內自行 `BEGIN`(D27 串流例外)。"""
     if conn.in_transaction:
         yield conn
         return
     conn.execute("BEGIN")
     try:
         yield conn
-    except BaseException:
+    finally:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
-        raise
-    if conn.in_transaction:
-        conn.execute("COMMIT")
+
+
+@contextmanager
+def read_snapshot(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
+    """單一讀交易(`read_tx`):整份設定在同一份快照內讀出。"""
+    with read_tx(conn):
+        yield conn
 
 
 def list_all_route_targets(conn: sqlite3.Connection) -> dict[str, list[RouteTarget]]:

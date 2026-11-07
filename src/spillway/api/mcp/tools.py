@@ -23,7 +23,9 @@ route(spec 8.1.4)。群組在 session 期間被刪:`tools/list` 回空清單、`
   `catalog.TOOL_ERRORS`。
 
 `list_routes`(決策 12,終審修訂):`{"routes": [{name, mode, ordered, slots: [{slot, members: [{id, effort,
-weight}]}]}]}`;兩種情形都以 `routing.OrderPlanner().plan(route_targets, 候選, 成員)` 產生,與 Router 實際
+weight}]}]}]}`;兩種情形都以 `routing.static_plan(route, route_targets, 成員, 群組)` 產生(內部即
+`routing.OrderPlanner().plan(route_targets, 候選, 成員)`;與 `GET /api/routes/{name}/effective-order` 共用,
+CHG-20261103-01 決策 10 ②),與 Router 實際
 使用的順序相同:手動 slot(`repo.list_route_targets`)在前,未列入手動順序的成員依 spec 4.3.2 接成後續層級
 (4.3.3),已不是成員的 target 略過;chat route 不列 cli 成員(與 CandidateFilter 一致;編號仍依全部成員
 固定)。有已存的手動順序時 `ordered` 為 `"manual"`,否則為 `"default"`。不套用冷卻、額度等執行期篩選。
@@ -51,12 +53,11 @@ from spillway.domain import EFFORTS, ChatRequest
 from spillway.quota import member_quota_rows
 from spillway.redact import REDACTOR
 from spillway.routing import (
-    Candidate,
     InvalidEffort,
-    OrderPlanner,
     RouteNotFound,
     RouteOutcome,
     members_of,
+    static_plan,
 )
 from spillway.routing.target import normalize_selector
 from spillway.settings import MCP_ALL_GROUP
@@ -363,13 +364,9 @@ def _list_routes(app: Any, group: str) -> types.CallToolResult:
         groups = repo.list_groups(conn) if routes else []
         out = []
         for r in routes:
-            # 與 Router 同一條路徑(決策 12 終審修訂):手動 slot 在前、未列入的成員接成後續層級、
-            # 已不是成員的 target 略過;chat route 不列 cli 成員(CandidateFilter)
+            # 靜態順序見 `routing.static_plan`(與 `/api/routes/{name}/effective-order` 共用)
             targets = repo.list_route_targets(conn, r.name)   # 已依 (slot, position, id) 排序
-            members = members_of(r.target, deps, groups)
-            pool = [d for d in members if not (r.mode == "chat" and d.kind == "cli")]
-            cands = [Candidate(deployment=d, estimate=None) for d in pool]  # type: ignore[arg-type]
-            plan = OrderPlanner().plan(targets, cands, members)
+            plan = static_plan(r, targets, deps, groups)
             out.append({"name": r.name, "mode": r.mode,
                         "ordered": "manual" if targets else "default", "slots": [
                 {"slot": s.number,

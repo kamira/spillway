@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>設定 · Spillway</title>
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/settings.css">
+<script type="module" src="assets/js/settings.js"></script>
+</head>
+<body>
+<div class="shell">
+<nav class="nav" aria-label="主選單">
+<div class="brand">Spillway <span class="brand-sub">溢流閘</span></div>
+<a href="/ui/">總覽</a>
+<a href="/ui/members.html">成員</a>
+<a href="/ui/groups.html">群組與 Tag</a>
+<a href="/ui/routes.html">Route</a>
+<a href="/ui/mcp.html">MCP 設定</a>
+<a href="/ui/ledger.html">帳本</a>
+<a href="/ui/settings.html" aria-current="page">設定</a>
+<a href="/ui/api-reference.html">API 參考</a>
+<div class="nav-host mono" id="nav-host"></div>
+</nav>
+<main class="main" id="main">
+<div class="head">
+<div>
+<h1>設定</h1>
+<p class="sub">伺服器資訊、context 記錄、設定檔匯入匯出與存取 token。</p>
+</div>
+<a class="btn" id="wizard-link" href="/ui/wizard.html">開啟首次設定精靈</a>
+</div>
+<div class="settings-grid">
+<section class="card" aria-labelledby="overview-h" id="overview" data-loaded="false">
+<h2 id="overview-h">伺服器</h2>
+<dl>
+<dt>版本</dt><dd class="mono" id="ov-version">—</dd>
+<dt>資料目錄</dt><dd class="mono" id="ov-data-dir">—</dd>
+<dt>埠號</dt><dd class="mono" id="ov-port">—</dd>
+<dt>存取 token</dt><dd id="ov-token">—</dd>
+</dl>
+<div class="stack tight">
+<span class="field-label">啟動指令(埠號唯讀;要換埠請以此指令重新啟動)</span>
+<div class="row">
+<code class="settings-cmd mono grow" id="serve-cmd" tabindex="0"></code>
+<button class="btn sm" type="button" id="serve-copy">複製</button>
+</div>
+<p class="note warn" id="serve-copy-hint" role="status" hidden></p>
+</div>
+</section>
+<section class="card" aria-labelledby="context-h" id="context-card">
+<h2 id="context-h">Context 記錄</h2>
+<form class="stack" id="context-form" novalidate>
+<label class="check"><input type="checkbox" id="ctx-record" name="record_context_default">預設記錄每次呼叫的請求與回應內容(record_context_default)</label>
+<div class="grid2">
+<label class="f" for="ctx-days"><span class="field-label">保存天數</span><input type="number" id="ctx-days" name="context_retention_days" min="0" max="36500" step="1"><span class="hint" id="ctx-days-zero" hidden>0 表示不保存內容:新的呼叫不寫入內容,既有內容於下次清理時刪除。</span></label>
+<label class="f" for="ctx-kb"><span class="field-label">單筆上限(KB)</span><input type="number" id="ctx-kb" name="context_max_kb" min="1" step="any"><span class="hint">1 KB = 1024 bytes;最小 1 KB</span></label>
+</div>
+<p class="muted small">寫入前會遮罩疑似金鑰的字串;route 可個別覆寫是否記錄。</p>
+<p class="callout err" id="ctx-error" role="alert" hidden></p>
+<div class="row between">
+<span class="muted small" id="ctx-stats"></span>
+<button class="btn primary" type="submit" id="ctx-save">儲存</button>
+</div>
+</form>
+</section>
+<section class="card" aria-labelledby="io-h" id="io-card">
+<h2 id="io-h">匯入與匯出</h2>
+<p class="small">匯出檔只含憑證參照,不含任何金鑰。</p>
+<div class="row"><a class="btn" id="export-link" href="/api/config/export" download>匯出 YAML</a></div>
+<hr>
+<div class="stack" id="import-box">
+<label class="f" for="import-file"><span class="field-label">匯入設定檔(YAML,上限 1 MiB)</span><input type="file" id="import-file" name="import_file" accept=".yaml,.yml,application/yaml,text/yaml"></label>
+<fieldset class="settings-modes">
+<legend class="field-label">匯入模式</legend>
+<label class="radio"><input type="radio" name="import_mode" value="merge" checked>merge:以 id 或名稱合併更新</label>
+<label class="radio"><input type="radio" name="import_mode" value="replace">replace:清空設定後寫入(帳本保留;會先備份到 backups/)</label>
+</fieldset>
+<p class="muted small">檔案或 mode 改變後,先前的預覽作廢。</p>
+<div class="row"><button class="btn primary" type="button" id="import-preview" disabled>預覽匯入</button></div>
+<div class="callout err" id="import-errors" role="alert" hidden></div>
+<div class="callout ok" id="import-result" role="status" hidden></div>
+</div>
+</section>
+<section class="card" aria-labelledby="token-h" id="token">
+<h2 id="token-h">存取 token</h2>
+<p>狀態:<span id="token-status">—</span></p>
+<p class="small">MCP 用戶端以環境變數 <span class="mono">SPILLWAY_TOKEN</span> 帶入 token。資料庫只存雜湊,產生後只顯示一次;重新產生後舊 token 立即失效。</p>
+<div class="row"><button class="btn" type="button" id="token-rotate">重新產生 token</button></div>
+</section>
+</div>
+</main>
+</div>
+</body>
+</html>

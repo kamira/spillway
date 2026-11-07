@@ -16,7 +16,7 @@ import pytest
 
 SUBMODULES = (
     "common", "models", "secrets", "deployments", "groups", "routes", "planning",
-    "ledger", "settings", "dashboard", "adapters", "config_io", "config_file",
+    "ledger", "settings", "dashboard", "adapters", "config_http", "config_file",
 )
 MAX_LINES = 400
 LOGGER_NAME = "spillway.api.admin"
@@ -47,6 +47,9 @@ EXPECTED_OPENAPI: dict[str, dict[str, tuple[str, ...]]] = {
     "/api/routes/{name}/order": {"delete": ("204", "422"), "put": ("200", "422")},
     # CHG-20261102-01 T5(決策 16;允許清單 ④)
     "/api/mcp/config": {"get": ("200", "404", "422")},
+    "/api/groups/preview": {"post": ("200", "422")},                       # CHG-20261103-01 T2
+    "/api/routes/{name}/effective-order": {"get": ("200", "422")},         # CHG-20261103-01 T2
+    "/api/mcp/catalog": {"get": ("200", "404", "422")},                    # CHG-20261103-01 T2
     "/api/settings/context": {"get": ("200",), "put": ("200", "422")},
     # CHG-20261101-03 T7(決策 14;允許清單「rotate 路徑」)
     "/api/settings/token/rotate": {"post": ("200",)},

@@ -1,0 +1,15 @@
+/* UI-8 API 參考(CHG-20261103-01 T7;決策 4、19)。左側可折疊索引 + 右側內容窗格。 */
+.ref-index { gap: 8px; position: sticky; top: 16px; }
+.ref-index details { border-bottom: 1px solid var(--line-soft); padding-bottom: 6px; }
+.ref-index details:last-child { border-bottom: 0; }
+ul.plain.ref-items li { padding: 0; border-bottom: 0; }
+.ref-items a { display: flex; align-items: center; width: 100%; min-height: 36px; padding: 0 12px; border-radius: 8px; color: var(--fg); text-decoration: none; overflow-wrap: anywhere; }
+.ref-items a:hover { background: var(--surface-alt); }
+.ref-items a[aria-current="true"] { background: var(--accent-soft); color: var(--accent-fg); font-weight: 600; }
+.ref-detail { min-width: 0; gap: 14px; }
+.ref-json { white-space: pre; max-height: 480px; overflow: auto; }
+.ref-index details > summary { list-style: none; }
+.ref-index details > summary::-webkit-details-marker { display: none; }
+.ref-index details > summary::before { content: "\25B8"; display: inline-block; width: 1em; color: var(--muted); }
+.ref-index details[open] > summary::before { content: "\25BE"; }
+.ref-detail h2.mono { font-size: 18px; }

@@ -1,0 +1,4 @@
+/* UI-3 群組與 Tag(CHG-20261103-01 T5)。版面沿用 app.css 的 .split;「所有 Tag」卡片跨兩欄。 */
+.groups-layout > #tag-card { grid-column: 1 / -1; }
+.selrow input[type=text] { min-width: 180px; }
+.preview-head { display: flex; align-items: baseline; gap: 10px; }

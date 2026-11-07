@@ -12,6 +12,8 @@
 
 修訂：2026-11-02 CHG-20261102-02（3.1 設定檔規則：`merge`／`replace` 語意改為新增或整筆取代並刪除檔案外實體、`targets` 形狀、逐欄匯出規則、匯入請求邊界、嚴格解析、驗證與欄位路徑、套用順序、自動備份、設定檔為可信輸入與 `privileged`、`dry_run`、回應；3.2 範例 `limit` → `limit_amount` 並補欄位；8.1.2 `mcp-stdio` 依 body 且錯誤碼與狀態碼成對判斷拒絕、token 去除前後空白；8.1.3 token 去除前後空白；8.2.1 移除頂層 `format`、`path`、`content`；9.1.4 重複 `Host` 改寫為 400／403 兩路徑；9.2 新增 `/api/ledger/export.csv`、`GET /api/settings`，`/api/config/import` 註明 `mode` 必填與 `dry_run`；9.2.5 群組名稱規則；新增 9.2.6 帳本 CSV、9.2.7 設定總覽；第 10 節 UI-8 名稱「API 參考」）
 
+修訂：2026-11-03 CHG-20261103-01（3.1.12、3.1.14 `privileged` 加入既有成員的 `provider` 變更；9.2 新增 `POST /api/groups/preview`、`GET /api/routes/{name}/effective-order`、`GET /api/mcp/catalog`，`/api/ledger` 與 `/api/ledger/export.csv` 加參數 `min_depth`，`/api/dashboard` 加近 7 天日均花費；新增 9.2.8；第 10 節首段改寫為靜態頁經 `/api` 取資料、網址 `/ui/`、安全標頭與不連外；UI-1 不提供期間切換；UI-3 編輯 tag 不做改名；UI-7 匯入確認流程、token 只顯示一次與精靈網址；UI-8 版面；10.2.2 LiteLLM provider 欄位與已移除模組的顯示；10.2.6 保留能力清單外的既有 effort）
+
 ## 1 範圍與名詞定義
 
 本規格定義單人使用的 LLM 路由閘道之資料模型、路由規則、介面與驗收標準；目的、選型與風險見企劃書。
@@ -227,11 +229,11 @@ CREATE TABLE settings (
 
 3.1.11 自動備份：`replace`（非 `dry_run`）在同一交易的寫鎖內、刪除之前，將匯入前的設定以 3.1.6 的格式寫入資料目錄下的 `backups/config-<UTC yyyymmddThhmmssZ>.yaml`（同名已存在時加 `-2`、`-3`…，不覆寫）；目錄新建時權限 0700、檔案 0600；`backups` 為 symlink 或不是目錄時回傳 HTTP 500，錯誤碼 `internal_error`，不匯入。備份不會自動清理。`replace` 在刪除任何資料前，須先在同一寫鎖內檢查匯入前的設定能通過 3.1.6 的憑證鍵名掃描與 3.1.9 的解析；不能通過時回傳 HTTP 422，錯誤碼 `validation_error`，列出位置（不含值），不刪除、不寫備份；`dry_run=true` 回傳同一個 422。因此 `replace` 寫下的備份一定可以通過匯入，以 `replace` 匯入備份檔即可還原設定。要繼續時，先以管理 API 修正所列資料列再重試。
 
-3.1.12 設定檔是可信輸入：匯入等同以擁有者權限執行的設定（可改變憑證參照、上游位址與 CLI 參數），只可匯入可信來源。回應的 `privileged` 列出匯入後相對匯入前新增或變更了下列欄位的成員 `id`（依 `id` 排序；只含 id，不含值；被刪除的成員不列）：`credential_ref`；`params` 頂層的 URL 類鍵（`api_base`、`base_url`、`url`、`endpoint`，或以 `_url`、`_base`、`_endpoint` 結尾）；`kind: cli` 成員的 `params.extra_args`、`params.effort_args`、`params.cwd`。`params.timeout` 等其他鍵不列入。`dry_run=true` 時系統同樣解析、驗證、套用並檢查，之後回滾：不寫入、不寫備份、不讓健康快取失效、不發送 `list_changed`；回應同樣的計數與 `privileged`，`backup` 為 null；驗證失敗時回傳與非 `dry_run` 相同的錯誤。伺服端不強制確認 privileged 變更。
+3.1.12 設定檔是可信輸入：匯入等同以擁有者權限執行的設定（可改變憑證參照、供應商、上游位址與 CLI 參數），只可匯入可信來源。回應的 `privileged` 列出匯入後相對匯入前新增或變更了下列欄位的成員 `id`（依 `id` 排序；只含 id，不含值；被刪除的成員不列）：`credential_ref`；既有成員的 `provider`（改變憑證送往何處；新成員只看其餘欄位）；`params` 頂層的 URL 類鍵（`api_base`、`base_url`、`url`、`endpoint`，或以 `_url`、`_base`、`_endpoint` 結尾）；`kind: cli` 成員的 `params.extra_args`、`params.effort_args`、`params.cwd`。`params.timeout` 等其他鍵不列入。`dry_run=true` 時系統同樣解析、驗證、套用並檢查，之後回滾：不寫入、不寫備份、不讓健康快取失效、不發送 `list_changed`；回應同樣的計數與 `privileged`，`backup` 為 null；驗證失敗時回傳與非 `dry_run` 相同的錯誤。伺服端不強制確認 privileged 變更。
 
 3.1.13 匯入成功回應：`{"mode", "dry_run", "created", "updated", "deleted", "backup", "privileged"}`；`created`、`updated`、`deleted` 各為 `{"deployments", "groups", "routes"}` 計數（`updated` 為檔案中且匯入前已存在的實體數，不論內容是否改變；`merge` 的 `deleted` 皆為 0）；`backup` 為 `backups/` 下的檔名，`merge` 與 `dry_run` 為 null。
 
-3.1.14 已知限制：① 備份不自動清理，不驗證 `credential_ref` 指向的變數或 keyring 項目是否存在；② 3.1.10 ⑤ 的最終狀態檢查涵蓋整個資料庫，既有資料已違反規則（route 指向不存在的群組、`single` 群組有兩個同 provider 成員）時，每一次 `merge` 匯入都被擋下；③ 改變成員的 `provider` 不列入 `privileged`。
+3.1.14 已知限制：① 備份不自動清理，不驗證 `credential_ref` 指向的變數或 keyring 項目是否存在；② 3.1.10 ⑤ 的最終狀態檢查涵蓋整個資料庫，既有資料已違反規則（route 指向不存在的群組、`single` 群組有兩個同 provider 成員）時，每一次 `merge` 匯入都被擋下。（原 ③「改變成員的 `provider` 不列入 `privileged`」已由 CHG-20261103-01 刪除，見 3.1.12。）
 
 ### 3.2 範例
 
@@ -795,18 +797,21 @@ env_vars = ["SPILLWAY_TOKEN"]
 | --- | --- | --- |
 | POST | `/v1/chat/completions` | 呼叫；`model` 依 4.1 解析 |
 | GET | `/v1/models` | 列出 route、`model_name`、`local/<id>` |
-| GET | `/api/dashboard` | 各成員額度、本期花費、冷卻狀態、近 24 小時請求數 |
+| GET | `/api/dashboard` | 各成員額度、本期花費、冷卻狀態、近 24 小時請求數、近 7 天日均花費（9.2.8） |
 | GET / POST / PUT / DELETE | `/api/deployments[/{id}]` | 成員 CRUD（含 tag、額度） |
 | POST | `/api/deployments/{id}/test` | 送出一次測試呼叫並回傳結果 |
 | POST | `/api/deployments/{id}/clear-cooldown` | 清除冷卻（刪除該成員的 `cooldowns` 列） |
 | GET / POST / PUT / DELETE | `/api/groups[/{name}]` | 群組 CRUD；GET 含符合的成員預覽；建立時的名稱規則（含保留字 `all`）見 9.2.5 |
+| POST | `/api/groups/preview` | 以尚未儲存的選擇器預覽符合的成員，不寫入（9.2.8） |
 | GET / POST / PUT / DELETE | `/api/routes[/{name}]` | Route CRUD |
+| GET | `/api/routes/{name}/effective-order` | 目前生效的靜態順序（9.2.8） |
 | PUT | `/api/routes/{name}/order` | 儲存拖曳結果：body 為 slot 清單，每個 slot 含成員 id、effort、優先權重 |
 | DELETE | `/api/routes/{name}/order` | 還原預設順序（4.3.4） |
 | POST | `/api/routes/{name}/dry-run` | 以範例請求模擬路由，回傳候選與順序，不呼叫上游 |
-| GET | `/api/ledger` | 帳本查詢；參數 `from`、`to`、`deployment`、`route`、`status`、`page` |
+| GET | `/api/ledger` | 帳本查詢；參數 `from`、`to`、`deployment`、`route`、`status`、`min_depth`（9.2.8）、`page` |
 | GET | `/api/ledger/export.csv` | 帳本 CSV 匯出（9.2.6）；篩選參數同 `/api/ledger`，不分頁 |
 | GET | `/api/mcp/config` | MCP 設定輸出（8.2）；參數 `group`（群組名或 `all`）、`tool`（`claude-code`、`codex`、`cursor`、`gemini`、`stdio`） |
+| GET | `/api/mcp/catalog` | UI-8 的資料（9.2.8）；參數 `group`（群組名或 `all`，預設 `all`） |
 | POST | `/api/config/import` | 匯入 YAML（3.1.7–3.1.13）；參數 `mode=merge\|replace`（必填）、`dry_run=true`（選填，預覽後回滾）；`replace` 先檢查匯入前的設定可通過憑證鍵名掃描與解析，否則 422 `validation_error`（3.1.11） |
 | GET | `/api/config/export` | 匯出 YAML（3.1.6） |
 | GET | `/api/settings` | 設定總覽（9.2.7） |
@@ -833,9 +838,17 @@ env_vars = ["SPILLWAY_TOKEN"]
 
 9.2.5 群組名稱規則：建立或改名群組時（`POST /api/groups` 的 body 與設定匯入；目前沒有改名端點，`PUT /api/groups/{name}` 只取代選擇器），名稱必須為 1–200 個字元，不可為 `.`、`..` 或保留字 `all`（`/mcp/all` 暴露全部 route），不可含 `/` 或 Unicode 類別 Cc、Cf、Cs、Co、Cn、Zl、Zp、Zs 的字元（含空白、控制字元、雙向控制字元、孤立代理字元、私用字元），且必須已是 Unicode NFC 正規化形式（系統不自動正規化）；違反時回傳 HTTP 422，錯誤碼 `validation_error`。本規則不作用於 PUT、GET、DELETE 的路徑參數：既有名稱不符本規則的群組照常查詢、修改選擇器與刪除。成員 `id` 的規則不變。
 
-9.2.6 帳本 CSV（`GET /api/ledger/export.csv`）：篩選參數與 `GET /api/ledger` 相同（`from`、`to`、`deployment`、`route`、`status`），不分頁，依 `ts`、`id` 由新到舊；符合的列超過 100,000 列時回傳 HTTP 422，錯誤碼 `validation_error`（請縮小範圍）。欄位與順序：`id, ts, route_name, deployment_id, effort, tokens_in, tokens_out, cost_usd, status, slot, fallback_depth, latency_ms, est_tokens_in, est_tokens_out_p50, est_tokens_out_p90, est_cost_usd_p90, error`；第一列為標題；`ts` 為 UTC ISO 8601；null 輸出空字串；不含 `usage_payloads` 內容。字串欄位以 `=`、`+`、`-`、`@`、Tab、CR 開頭時，系統必須在值前加 `'`（試算表公式注入防護），數字欄不加。回應 `Content-Type: text/csv; charset=utf-8`，內容以 UTF-8 BOM 開頭、行尾 CRLF，並帶 `Content-Disposition: attachment; filename="spillway-ledger-<UTC yyyymmddThhmmssZ>.csv"`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`。上限以串流前的計數判斷；計數與串流讀取之間新增的列可能使輸出在第 100,000 列處截掉最舊的列。下載期間系統持有該次讀取的快照。
+9.2.6 帳本 CSV（`GET /api/ledger/export.csv`）：篩選參數與 `GET /api/ledger` 相同（`from`、`to`、`deployment`、`route`、`status`、`min_depth`），不分頁，依 `ts`、`id` 由新到舊；符合的列超過 100,000 列時回傳 HTTP 422，錯誤碼 `validation_error`（請縮小範圍）。欄位與順序：`id, ts, route_name, deployment_id, effort, tokens_in, tokens_out, cost_usd, status, slot, fallback_depth, latency_ms, est_tokens_in, est_tokens_out_p50, est_tokens_out_p90, est_cost_usd_p90, error`；第一列為標題；`ts` 為 UTC ISO 8601；null 輸出空字串；不含 `usage_payloads` 內容。字串欄位以 `=`、`+`、`-`、`@`、Tab、CR 開頭時，系統必須在值前加 `'`（試算表公式注入防護），數字欄不加。回應 `Content-Type: text/csv; charset=utf-8`，內容以 UTF-8 BOM 開頭、行尾 CRLF，並帶 `Content-Disposition: attachment; filename="spillway-ledger-<UTC yyyymmddThhmmssZ>.csv"`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`。上限以串流前的計數判斷；計數與串流讀取之間新增的列可能使輸出在第 100,000 列處截掉最舊的列。下載期間系統持有該次讀取的快照。
 
 9.2.7 設定總覽（`GET /api/settings`）：回應 `{"port", "data_dir", "version", "token_issued", "first_run", "counts": {"deployments", "groups", "routes", "ledger_ok"}, "context": {"record_context_default", "context_retention_days", "context_max_bytes", "payload_count", "payload_bytes"}}`。`port` 為 serve 綁定的埠（唯讀、顯示用，不含綁定位址）；`data_dir` 為資料庫所在目錄（與 `backups/` 同一目錄）；`version` 為已安裝的套件版本；`token_issued` 表示存取 token 是否已產生（回應不含 token 或其雜湊）；`first_run` 為 `counts.deployments == 0` 且 `counts.routes == 0`（不看群組；以 `replace` 匯入空設定後再次為 true）；`ledger_ok` 為 `status = ok` 的帳本列數；`payload_count`、`payload_bytes` 為 `usage_payloads` 的列數與 `bytes` 加總。
+
+9.2.8 畫面用的讀取端點（CHG-20261103-01）：以下端點都不寫入，錯誤格式依 9.1.2，Host／Origin 檢查依 9.1.4。
+
+- `POST /api/groups/preview`：body `{"selector": {"all", "any", "none"}}`（與 `PUT /api/groups/{name}` 相同；未知鍵或非字串 tag 回傳 HTTP 422，錯誤碼 `validation_error`）；回應 `{"members": [{"id", "model_name", "kind", "provider", "enabled"}]}`，形狀與 `GET /api/groups/{name}` 的 `members` 相同（含停用成員，依 `id` 排序）；空選擇器符合全部成員。
+- `GET /api/routes/{name}/effective-order`：回應 `{"route", "mode", "ordered", "slots": [{"slot", "entries": [{"deployment", "effort", "weight", "unsorted"}]}]}`。`ordered` 為 `manual`（該 route 有手動排序）或 `default`。順序為靜態：候選為 route 目標的全部成員（含停用、冷卻中與健康不佳的成員，不經 4.2 的篩選），只有 chat route 排除 `cli` 成員；依 4.3 決定順序，`slot` 保留編號（可能不連號），不在手動排序內的成員接在後面並帶 `unsorted: true`；手動排序中已不屬於目標的成員不輸出。群組不存在或沒有成員時 `slots` 為 `[]`；route 不存在回傳 HTTP 404，錯誤碼 `not_found`。各 slot 的成員與 MCP `list_routes` 相同。`GET /api/routes/{name}` 的回應不變。
+- `GET /api/dashboard` 的每個成員另帶 `daily_spend_7d`：最近 7 天實際花費 ÷ 7（USD，不四捨五入；無花費時為 0.0；沒有上限或沒有額度設定的成員也輸出）；`est_days_left`（5.4.6）由它推導。
+- `min_depth`（`GET /api/ledger`、`GET /api/ledger/export.csv`）：整數 0–100，只列 `fallback_depth >= min_depth` 的列；超出範圍或不是整數回傳 HTTP 422，錯誤碼 `validation_error`。UI-6 的「只看 fallback」送 `min_depth=1`。
+- `GET /api/mcp/catalog?group=<name>`：`group` 預設 `all`；回應為 `mcp_catalog(app, group)`：`{"group", "connection": {"transport", "url", "groups": [{"name", "url"}], "auth", "stdio"}, "tools", "notifications", "errors": {"http", "tool", "sdk_transport"}}`。群組不存在且不是 `all` 時回傳 HTTP 404，錯誤碼 `not_found`。內容不含 token，只以環境變數 `SPILLWAY_TOKEN` 參照；不列 `/api/*` 與 `/v1`。
 
 ### 9.3 拖曳儲存格式
 
@@ -857,18 +870,18 @@ PUT /api/routes/review/order
 
 ## 10 Web UI 畫面清單
 
-Web UI 共 8 個畫面，左側固定導覽；UI-1–UI-7 的 layout 見 [UI layout 設計稿](ui/)，UI-8 沒有 layout 稿，版面於 M4b 的 CHG 決定；目的與範圍見 [企劃書](proposal.md)。
+Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>/ui/`（`GET /` 轉址到 `/ui/`；首次設定精靈為 `/ui/wizard.html`）。畫面是靜態 HTML、CSS 與 JavaScript，不經建置、不用模板、不用第三方前端套件；所有資料由瀏覽器以同源請求呼叫 `/api/*` 取得（UI-8 經 `GET /api/mcp/catalog`），伺服端只提供這些檔案（只允許 GET、HEAD；只提供 `.html`、`.css`、`.js`，點檔與其他檔案回傳 404）。`/` 與 `/ui` 的回應帶 `Content-Security-Policy`（只允許同源的 script、style、圖片與連線，含 Trusted Types，禁止被嵌入框架）、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`Cross-Origin-Opener-Policy: same-origin`、`Cross-Origin-Resource-Policy: same-origin` 與 `Cache-Control: no-cache`；`/api` 的回應一律帶 `Cache-Control: no-store` 與 `X-Content-Type-Options: nosniff`。畫面不連外（不載入外部字型或任何外部資源，使用系統字型），使用者資料（成員設定、帳本內容等）一律以純文字顯示。本段依企劃書第六節「細節於規格書定案」決定（CHG-20261103-01）。UI-1–UI-7 的 layout 見 [UI layout 設計稿](ui/)（實作與設計稿的差異見 `sdlc_docs/structure/design.md`「設計差異」），UI-8 沒有 layout 稿；目的與範圍見 [企劃書](proposal.md)。
 
 | 編號 | 畫面 | 用途 | 主要操作 |
 | --- | --- | --- | --- |
-| UI-1 | 總覽 | 各成員剩餘額度、預估可用天數、冷卻狀態、近 24 小時請求 | 清除冷卻、跳至成員 |
+| UI-1 | 總覽 | 各成員剩餘額度、預估可用天數、近 7 天日均花費、冷卻狀態、近 24 小時請求；摘要卡顯示冷卻中成員數與近 24 小時請求數。不提供期間切換（額度期間由各成員的 `window` 決定） | 清除冷卻、跳至成員 |
 | UI-2 | 成員 | 成員清單與編輯（類型、供應商、模型以選單選取；能力、額度、tag、憑證參照） | 新增、測試呼叫、啟用切換 |
-| UI-3 | 群組與 Tag | 以 all、any、none 編輯選擇器，即時預覽符合的成員 | 新增群組、編輯 tag |
+| UI-3 | 群組與 Tag | 以 all、any、none 編輯選擇器，即時預覽符合的成員（`POST /api/groups/preview`） | 新增群組、編輯 tag（列出全部 tag 與各 tag 的成員，點選成員到 UI-2 修改其 tags；tag 改名延後，CHG-20261103-01 決策 24） |
 | UI-4 | Route | Route 清單；編輯頁以拖曳調整 slot 與成員順序，逐成員以選單設定 effort 與優先權重（高、中、低）；route 層級勾選「預估額度檢查」與「記錄 context」 | 拖曳、還原預設、dry-run |
 | UI-5 | MCP 設定 | 選群組與工具，顯示各放置方式（`variants`）的設定內容、放置路徑與注意事項（8.2.1） | 複製、下載 |
 | UI-6 | 帳本 | 每次嘗試的紀錄，含預估與實際 token、花費；點選列開啟請求與回應內容 | 篩選、匯出 CSV |
-| UI-7 | 設定 | 首次設定精靈、YAML 匯入匯出、存取 token、埠號、context 記錄預設與保存天數 | 匯入、匯出、重新產生 token |
-| UI-8 | API 參考 | 只列 MCP 介面，內容於執行期產生、與程式一致（資料來源 `mcp_catalog(app, group)`），依類型分四大類：連線（各群組端點 URL、傳輸、驗證方式、`mcp-stdio`）、工具（`ask`、`list_routes`、`quota_status` 的說明與 inputSchema／outputSchema）、通知（`tools/list_changed`）、錯誤碼；不列 `/api/*` 與 `/v1` | 以可折疊索引切換大類 |
+| UI-7 | 設定 | 首次設定精靈（獨立頁 `/ui/wizard.html`，UI-7 頁首有連結；`GET /api/settings` 的 `first_run` 為 true 時開啟總覽 `/ui/`（含 `/`）即導向精靈）、YAML 匯入匯出、存取 token、埠號（唯讀）、context 記錄預設與保存天數 | 匯入（選檔與 `mode` 後按「預覽匯入」才送 `dry_run=true`；確認對話框顯示新增、更新、刪除計數與 `privileged` 成員 id，按「匯入」才以同一份內容寫入；檔案或 `mode` 改變後先前的預覽作廢）、匯出、重新產生 token（新 token 只在對話框顯示一次，關閉時清除，不寫入瀏覽器儲存或網址） |
+| UI-8 | API 參考 | 只列 MCP 介面，內容於執行期產生、與程式一致（資料來源 `mcp_catalog(app, group)`），依類型分四大類：連線（各群組端點 URL、傳輸、驗證方式、`mcp-stdio`）、工具（`ask`、`list_routes`、`quota_status` 的說明與 inputSchema／outputSchema）、通知（`tools/list_changed`）、錯誤碼；不列 `/api/*` 與 `/v1`。版面：頂端群組選單（預設 `all`）、左側可折疊索引（四大類，各類下列項目）、右側顯示所選項目的內容 | 以可折疊索引切換大類與項目、切換群組 |
 
 ### 10.1 拖曳規則（UI-4）
 
@@ -884,7 +897,7 @@ Web UI 共 8 個畫面，左側固定導覽；UI-1–UI-7 的 layout 見 [UI lay
 
 10.2.1 選單內容必須取自 `GET /api/adapters`（9.2.2），不可寫死在畫面中。
 
-10.2.2 UI-2 建立與編輯成員時，必須依序以連動選單選取類型（`kind`）、供應商（`provider`）、模型（`model`）：供應商選單只列支援所選類型的模組；模型選單只列該模組的可用模型清單，以 `label` 顯示、以 `id` 寫入。
+10.2.2 UI-2 建立與編輯成員時，必須依序以連動選單選取類型（`kind`）、供應商（`provider`）、模型（`model`）：供應商選單只列支援所選類型的模組；模型選單只列該模組的可用模型清單，以 `label` 顯示、以 `id` 寫入。所選模組為通用後備 `litellm` 時另顯示「LiteLLM provider」欄位（選定模型時帶入該模型在 `models.yaml` 宣告的 provider；空白即 `litellm`）。編輯既有成員而其供應商不在選單時：沒有對應模組的 api、local 成員以 `litellm` 後備開啟，原 provider 顯示在「LiteLLM provider」欄位（7.6.9）；其他情況仍顯示原值並標示原因。UI-2 的成員清單置於編輯表單上方（CHG-20261103-01）。
 
 10.2.3 選定模型後，系統必須以該模型的 `capabilities` 帶入能力欄位；使用者仍可修改。
 
@@ -892,7 +905,7 @@ Web UI 共 8 個畫面，左側固定導覽；UI-1–UI-7 的 layout 見 [UI lay
 
 10.2.5 模型選單最後一項為「其他（手動輸入）」，選取後可輸入模型 `id`，能力欄位須手動填寫。
 
-10.2.6 UI-4 的 effort 選單只可列出該成員 `capabilities.efforts` 所含等級與「不指定」；優先權重選單為高、中、低。
+10.2.6 UI-4 的 effort 選單只可列出該成員 `capabilities.efforts` 所含等級與「不指定」；優先權重選單為高、中、低。例外：手動排序中已存的 effort 不在 `capabilities.efforts` 內時（例如模型能力後來改變），選單另列該值並標「不在能力清單」，以免儲存時被改掉（CHG-20261103-01 決策 14）。
 
 ## 11 非功能需求
 

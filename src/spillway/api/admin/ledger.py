@@ -17,18 +17,18 @@ from starlette.types import Receive, Scope, Send
 
 from spillway.api import ApiError
 from spillway.api.deps import request_conn
-from spillway.clock import to_iso
-from spillway.configio import utc_stamp_filename
+from spillway.clock import to_iso, utc_stamp
 from spillway.domain import LEDGER_STATUSES
 from spillway.ledger import LedgerNotFound, payload_status
 from spillway.store import repo
 
-from .common import _clock, _invalid, _not_found, router
+from .common import _clock, _not_found, invalid, router
 
 
 LEDGER_PAGE_SIZE = 50
 LEDGER_PAGE_SIZE_MAX = 500
 LEDGER_PAGE_MAX = 1_000_000      # S2:offset 留在 SQLite int64 內;超過回 422
+LEDGER_MIN_DEPTH_MAX = 100       # CHG-20261103-01 決策 10 ④:`min_depth` 0–100
 
 
 # ================================================================ /api/ledger
@@ -42,7 +42,7 @@ def _parse_time(value: str | None, path: str) -> datetime | None:
     try:
         dt = datetime.fromisoformat(value)
     except ValueError:
-        raise _invalid(path, "必須是 ISO 8601 時間(例:2026-10-30T12:00:00Z)") from None
+        raise invalid(path, "必須是 ISO 8601 時間(例:2026-10-30T12:00:00Z)") from None
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
@@ -67,11 +67,13 @@ async def list_ledger(
     status: StatusLit | None = None,
     page: Annotated[int, Query(ge=1, le=LEDGER_PAGE_MAX)] = 1,
     page_size: Annotated[int, Query(ge=1, le=LEDGER_PAGE_SIZE_MAX)] = LEDGER_PAGE_SIZE,
+    min_depth: Annotated[int | None, Query(ge=0, le=LEDGER_MIN_DEPTH_MAX)] = None,
 ) -> dict[str, Any]:
     """帳本查詢(spec 9.2)。
 
     參數:`from`(含)、`to`(不含)為 ISO 8601 時間或日期(無時區視為 UTC);`deployment`、`route`、
-    `status` 為等值篩選;`page` 自 1 起、上限 1,000,000(超過回 422);`page_size` 預設 50、上限 500(本筆另加的可選參數)。
+    `status` 為等值篩選;`min_depth`(0–100)只列 `fallback_depth >= min_depth` 的列
+    (CHG-20261103-01 決策 10 ④);`page` 自 1 起、上限 1,000,000(超過回 422);`page_size` 預設 50、上限 500(本筆另加的可選參數)。
 
     分頁格式:`{items: [帳本列…], page, page_size, total, pages}`;`items` 依 `ts DESC, id DESC`
     (新到舊);`total` 為符合條件的總列數,`pages = ceil(total / page_size)`(total 為 0 時 0);
@@ -81,11 +83,11 @@ async def list_ledger(
     until = _parse_time(to, "query.to")
     with request_conn(request) as conn:
         rows = repo.list_ledger(conn, route_name=route, deployment_id=deployment, status=status,
-                                since=since, until=until, limit=page_size,
+                                since=since, until=until, min_depth=min_depth, limit=page_size,
                                 offset=(page - 1) * page_size)
         # 清單與計數為兩條獨立敘述,不包交易(決策審議 D25)
         total = repo.count_ledger(conn, route_name=route, deployment_id=deployment, status=status,
-                                  since=since, until=until)
+                                  since=since, until=until, min_depth=min_depth)
     return {"items": [_ledger_out(r) for r in rows], "page": page, "page_size": page_size,
             "total": total, "pages": math.ceil(total / page_size)}
 
@@ -96,7 +98,6 @@ async def list_ledger(
 
 LEDGER_CSV_MAX_ROWS = 100_000
 LEDGER_CSV_BATCH = 1000
-LEDGER_CSV_FILENAME_FORMAT = "spillway-ledger-%Y%m%dT%H%M%SZ.csv"
 # 欄位與順序同 `_ledger_out`(`id` 在前,其餘為 `repo.LedgerRow` 欄位順序)
 LEDGER_CSV_COLUMNS = (
     "id", "ts", "route_name", "deployment_id", "effort", "tokens_in", "tokens_out", "cost_usd",
@@ -149,9 +150,10 @@ async def export_ledger_csv(
     deployment: Annotated[str | None, Query()] = None,
     route: Annotated[str | None, Query()] = None,
     status: Annotated[StatusLit | None, Query()] = None,
+    min_depth: Annotated[int | None, Query(ge=0, le=LEDGER_MIN_DEPTH_MAX)] = None,
 ) -> StreamingResponse:
     """帳本 CSV 匯出(spec 9.2.6;決策 9)。篩選參數同 `GET /api/ledger`(`from`、`to`、`deployment`、
-    `route`、`status`),不分頁,依 `ts DESC, id DESC`;符合列數超過 100,000 → 422 `validation_error`
+    `route`、`status`、`min_depth`),不分頁,依 `ts DESC, id DESC`;符合列數超過 100,000 → 422 `validation_error`
     (請縮小範圍)。
 
     欄位與順序同帳本列(`LEDGER_CSV_COLUMNS`);`ts` 為 UTC ISO 8601;None 為空字串;不含 payload。
@@ -166,13 +168,13 @@ async def export_ledger_csv(
     since = _parse_time(from_, "query.from")
     until = _parse_time(to, "query.to")
     filters: dict[str, Any] = {"route_name": route, "deployment_id": deployment, "status": status,
-                               "since": since, "until": until}
+                               "since": since, "until": until, "min_depth": min_depth}
     with request_conn(request) as conn:
         total = repo.count_ledger(conn, **filters)
     if total > LEDGER_CSV_MAX_ROWS:
-        raise _invalid("query", f"符合條件的帳本列有 {total} 列,超過上限 {LEDGER_CSV_MAX_ROWS} 列,"
-                                "請縮小範圍")
-    filename = utc_stamp_filename(_clock(request).now(), LEDGER_CSV_FILENAME_FORMAT)
+        raise invalid("query", f"符合條件的帳本列有 {total} 列,超過上限 {LEDGER_CSV_MAX_ROWS} 列,"
+                               "請縮小範圍")
+    filename = f"spillway-ledger-{utc_stamp(_clock(request).now())}.csv"
     factory = request.app.state.conn_factory
 
     async def body() -> AsyncIterator[str]:

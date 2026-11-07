@@ -27,10 +27,11 @@ import jinja2
 from fastapi import Request
 
 from spillway.api.deps import request_conn
+from spillway.api.mcp.catalog import mcp_catalog
 from spillway.settings import MCP_ALL_GROUP, TOKEN_ENV, mcp_url
 from spillway.store import repo
 
-from .common import _invalid, _not_found, router
+from .common import _not_found, invalid, router
 
 DEFAULT_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates" / "mcp"
 ENV_VARS = [TOKEN_ENV]   # CHG-20261102-02 決策 15:單一定義在 settings
@@ -176,7 +177,7 @@ def _notes(tool: str, ctx: dict[str, Any]) -> list[dict[str, str]]:
 async def mcp_config(request: Request, group: str, tool: str) -> dict[str, Any]:
     """見模組 docstring。"""
     if tool not in TOOL_FORMATS:
-        raise _invalid("query.tool", "不支援的工具(可用:" + "、".join(TOOL_FORMATS) + ")")
+        raise invalid("query.tool", "不支援的工具(可用:" + "、".join(TOOL_FORMATS) + ")")
     if group != MCP_ALL_GROUP:
         with request_conn(request) as conn:
             if repo.get_group(conn, group) is None:
@@ -185,3 +186,15 @@ async def mcp_config(request: Request, group: str, tool: str) -> dict[str, Any]:
     variants = render_config(tool, ctx)
     return {"group": group, "tool": tool, "variants": variants, "env": list(ENV_VARS),
             "notes": _notes(tool, ctx)}
+
+
+@router.get("/mcp/catalog", responses={404: {"description": "群組不存在"}})
+async def get_mcp_catalog(request: Request, group: str = MCP_ALL_GROUP) -> dict[str, Any]:
+    """UI-8「API 參考」的資料(CHG-20261103-01 決策 10 ⑤):回 `mcp_catalog(app, group)`(預設 `all`)。
+    群組不存在且不是 `all` → 404 `not_found`(與 `/api/mcp/config` 一致),此時不呼叫 `mcp_catalog`。
+    內容不含 token(連線資訊只以環境變數 `SPILLWAY_TOKEN` 參照)。"""
+    if group != MCP_ALL_GROUP:
+        with request_conn(request) as conn:
+            if repo.get_group(conn, group) is None:
+                raise _not_found(f"群組 {group}")
+    return mcp_catalog(request.app, group)

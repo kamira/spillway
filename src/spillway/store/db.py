@@ -44,7 +44,7 @@ from importlib import resources
 from itertools import count
 from pathlib import Path
 
-from spillway.clock import Clock, SystemClock
+from spillway.clock import Clock, SystemClock, utc_stamp
 
 BUSY_TIMEOUT_MS = 5000
 _WAL_RETRY_SLEEP_S = 0.01
@@ -310,7 +310,7 @@ def _backup_target(path: Path, version: int, clock: Clock | None) -> Path:
     base = path.with_name(path.name + BACKUP_SUFFIX.format(version=version))
     if not base.exists():
         return base
-    stamp = (clock or SystemClock()).now().strftime("%Y%m%dT%H%M%SZ")
+    stamp = utc_stamp((clock or SystemClock()).now())
     target = base.with_name(f"{base.name}.{stamp}")
     n = 1
     while target.exists():

@@ -41,6 +41,8 @@ from mcp.server.lowlevel import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
+from spillway.settings import package_version
+
 from . import sdk_compat
 from . import tools as mcp_tools
 from .auth import GROUP_SCOPE_KEY
@@ -55,19 +57,11 @@ MAX_SESSIONS = 100
 STOP_TIMEOUT = 10.0   # 停止持有 task 的等待上限(秒);逾時就取消它
 
 
-def _version() -> str:
-    try:
-        from importlib.metadata import version
-        return version("spillway")
-    except Exception:  # noqa: BLE001 — 未安裝(PYTHONPATH=src)時
-        return "0"
-
-
 class SpillwayServer(Server):
     """見模組說明。`app` 為 spillway 的 FastAPI app。"""
 
     def __init__(self, app: Any) -> None:
-        super().__init__(SERVER_NAME, version=_version(),
+        super().__init__(SERVER_NAME, version=package_version(),
                          instructions="spillway 閘道:以 ask 讓本群組的 route 處理 prompt;"
                                       "list_routes 與 quota_status 查看 route 順序與成員額度。")
         self.spillway_app = app

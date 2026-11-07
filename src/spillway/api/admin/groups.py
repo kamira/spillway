@@ -17,7 +17,7 @@ from spillway.routing.target import normalize_selector
 from spillway.store import repo
 from spillway.store.db import transaction
 
-from .common import _invalid, _not_found, router, tools_changed
+from .common import _not_found, invalid, router, tools_changed
 from .models import GroupIn, GroupUpdate, group_name_problem
 
 def _member_brief(d: Deployment) -> dict[str, Any]:
@@ -52,7 +52,7 @@ async def create_group(request: Request, body: GroupIn) -> dict[str, Any]:
     (CHG-20261102-01 決策 22:`/mcp/all` 暴露全部 route)。群組沒有改名端點(`PUT` 只取代選擇器)。"""
     problem = group_name_problem(body.name)
     if problem is not None:
-        raise _invalid("body.name", problem)
+        raise invalid("body.name", problem)
     with request_conn(request) as conn:
         with transaction(conn):
             if repo.get_group(conn, body.name) is not None:
@@ -60,6 +60,18 @@ async def create_group(request: Request, body: GroupIn) -> dict[str, Any]:
             repo.save_group(conn, repo.Group(body.name, body.selector.model_dump()))
         tools_changed(request)
         return _group_out(_load_group(conn, body.name), repo.list_deployments(conn))
+
+
+# 註記:宣告在 `/groups/{name}` 之前,防範日後新增 `POST /groups/{name}` 時吃掉 `preview`(AM-13)
+@router.post("/groups/preview")
+async def preview_group(request: Request, body: GroupUpdate) -> dict[str, Any]:
+    """選擇器預覽(CHG-20261103-01 決策 10 ①):body `{selector: {all, any, none}}`(同 `PUT` 的
+    `GroupUpdate`,未知鍵 → 422);回 `{members: [...]}`,形狀與 `GET /api/groups/{name}` 的
+    `members` 相同(含停用者,依 id 排序);空選擇器符合全部成員。不寫入。"""
+    sel = normalize_selector(body.selector.model_dump())
+    with request_conn(request) as conn:
+        deps = repo.list_deployments(conn)
+    return {"members": [_member_brief(d) for d in members_of({"tags": sel}, deps)]}
 
 
 @router.get("/groups/{name}")

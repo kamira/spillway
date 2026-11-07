@@ -1,0 +1,7 @@
+/* UI-1 總覽的頁面樣式(CHG-20261103-01 T4)。共用元件在 app.css;本檔的 class 一律以 overview- 開頭。 */
+.overview-tags .chip { padding: 1px 8px; font-size: 12px; }
+.overview-member-link { font-weight: 600; }
+.overview-table tbody td { white-space: nowrap; }
+.overview-table tbody td:first-child { white-space: normal; min-width: 160px; }
+.overview-usage { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.overview-meter { width: 120px; height: 8px; }

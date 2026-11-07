@@ -197,7 +197,7 @@ def member_quota_rows(conn: sqlite3.Connection, clock: Clock, now: datetime) -> 
     """各現存成員(依 id;孤兒帳本列不計)的額度列——`/api/dashboard` 的 `deployments` 即此清單:
     `id`、`model_name`、`kind`、`provider`、`enabled`、`budget_type`、`limit_amount`、`window`、
     `period_start`、`next_reset`、`period_spend`、`remaining`、`unlimited`、`ratio`、`cooling`、
-    `cooling_until`、`cooling_reason`、`requests_24h`、`est_days_left`(口徑見
+    `cooling_until`、`cooling_reason`、`requests_24h`、`est_days_left`、`daily_spend_7d`(口徑見
     `api.admin.dashboard.dashboard` 的說明)。
 
     `now` 需帶時區(內部換成 UTC)。查詢數與成員數無關(NFR-2):`repo.dashboard_members` 一次、每種相異
@@ -247,9 +247,10 @@ def member_quota_rows(conn: sqlite3.Connection, clock: Clock, now: datetime) -> 
         cooling_until = until if until is not None and until > to_iso(now) else None
         cooling_reason = r["cooling_reason"] if cooling_until is not None else None
         n24, spend7 = recent.get(r["id"], (0, 0.0))
+        daily = spend7 / 7   # 近 7 天日均(CHG-20261103-01 決策 10 ③);est_days_left 由它推導
         days_left = None
-        if remaining is not None and spend7 > 0:
-            days_left = max(remaining, 0.0) / (spend7 / 7)
+        if remaining is not None and daily > 0:
+            days_left = max(remaining, 0.0) / daily
         out.append({
             "id": r["id"], "model_name": r["model_name"], "kind": r["kind"],
             "provider": r["provider"], "enabled": bool(r["enabled"]),
@@ -260,6 +261,6 @@ def member_quota_rows(conn: sqlite3.Connection, clock: Clock, now: datetime) -> 
             "remaining": remaining, "unlimited": unlimited, "ratio": ratio,
             "cooling": cooling_until is not None, "cooling_until": cooling_until,
             "cooling_reason": cooling_reason,
-            "requests_24h": n24, "est_days_left": days_left,
+            "requests_24h": n24, "est_days_left": days_left, "daily_spend_7d": daily,
         })
     return out

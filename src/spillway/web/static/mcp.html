@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP 設定 · Spillway</title>
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/mcp.css">
+<script type="module" src="assets/js/mcp.js"></script>
+</head>
+<body>
+<div class="shell">
+<nav class="nav" aria-label="主選單">
+<div class="brand">Spillway <span class="brand-sub">溢流閘</span></div>
+<a href="/ui/">總覽</a>
+<a href="/ui/members.html">成員</a>
+<a href="/ui/groups.html">群組與 Tag</a>
+<a href="/ui/routes.html">Route</a>
+<a href="/ui/mcp.html" aria-current="page">MCP 設定</a>
+<a href="/ui/ledger.html">帳本</a>
+<a href="/ui/settings.html">設定</a>
+<a href="/ui/api-reference.html">API 參考</a>
+<div class="nav-host mono" id="nav-host"></div>
+</nav>
+<main class="main" id="main">
+<div class="head">
+<div>
+<h1>MCP 設定</h1>
+<p class="sub">選擇群組與 AI 工具,取得可直接貼上的設定;每個群組只暴露自己的 route。</p>
+</div>
+<div class="row">
+<label for="mcp-group" class="muted field-label">群組</label>
+<select id="mcp-group" aria-describedby="mcp-group-hint"></select>
+</div>
+</div>
+<p class="sr-only" id="mcp-group-hint">all 表示全部 route</p>
+<div class="mcp-layout">
+<section class="card mcp-main" aria-labelledby="cfg-h">
+<h2 id="cfg-h">設定內容</h2>
+<div class="tabs" role="tablist" aria-label="AI 工具" id="mcp-tools"></div>
+<div class="stack" id="mcp-variants" aria-live="polite"></div>
+<dl id="mcp-meta">
+<dt>需要的環境變數</dt><dd id="mcp-env"></dd>
+<dt>端點</dt><dd class="mono" id="mcp-endpoint"></dd>
+</dl>
+<ul class="mcp-notes" id="mcp-notes"></ul>
+</section>
+<aside class="stack">
+<section class="card" aria-labelledby="tools-h">
+<h2 id="tools-h">此端點提供的 tool</h2>
+<ul class="plain mcp-toollist" id="mcp-toollist"></ul>
+<p class="small"><a href="/ui/api-reference.html">完整說明見「API 參考」</a></p>
+</section>
+<section class="card" aria-labelledby="guard-h">
+<h2 id="guard-h">遞迴防護</h2>
+<p class="small">閘道啟動的 CLI 子行程不載入本端點;若仍收到來自子行程的呼叫,會回傳 <span class="mono">recursion_blocked</span>。</p>
+</section>
+<section class="card" aria-labelledby="token-h">
+<h2 id="token-h">存取 token</h2>
+<p class="small">設定內容只以環境變數 <span class="mono">SPILLWAY_TOKEN</span> 參照 token,不含 token 本身。token 於「設定」頁產生:<a href="/ui/settings.html#token">前往設定</a></p>
+</section>
+</aside>
+</div>
+</main>
+</div>
+</body>
+</html>

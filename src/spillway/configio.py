@@ -2,7 +2,7 @@
 
 依賴只有 `spillway.store`、`spillway.domain`、`spillway.clock`、`yaml` 與標準庫;**不可** import
 `spillway.api*`(L1 測試:`import spillway.configio` 之後 `"spillway.api" not in sys.modules`)。
-SQL 一律經 `store.repo`。HTTP 轉換、請求與檔案模型驗證屬介面層(`api/admin/config_io.py`、
+SQL 一律經 `store.repo`。HTTP 轉換、請求與檔案模型驗證屬介面層(`api/admin/config_http.py`、
 `api/admin/config_file.py`)。
 
 匯出(T3):`dump(conn) -> str`、格式常數與 `_Dumper`。匯入(T4):`load_yaml`(嚴格 loader)、
@@ -40,12 +40,13 @@ import stat
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 
+from spillway.clock import utc_strftime
 from spillway.domain import Budget, Deployment
 from spillway.store import repo
 from spillway.store.db import transaction
@@ -55,8 +56,9 @@ __all__ = [
     "SELECTOR_KEYS", "ROUTE_KEYS", "TARGET_ENTRY_KEYS", "DEFAULT_MODE", "DEFAULT_WEIGHT",
     "DUMP_KWARGS", "dump", "render", "build_document", "utc_stamp_filename",
 ]
-# 匯入(T4)的名稱(`load_yaml`、`ConfigSyntaxError`、`ConfigPlan`、`apply`、`ImportResult`、`ImportConflict`、
-# `format_path`、`privileged_view`、`MAX_DEPTH`、`BACKUP_FILENAME_FORMAT`)以 `configio.<名稱>` 取用;
+# 匯入(T4)的名稱(`load_yaml`、`ConfigSyntaxError`、`ConfigPlan`、`apply`、`ImportResult`、
+# `ImportConflict`、`format_path`、`privileged_view`、`is_privileged_change`、`MAX_DEPTH`、
+# `BACKUP_FILENAME_FORMAT`)以 `configio.<名稱>` 取用;
 # `__all__` 維持匯出部分(`tests/unit/test_configio_dump.py::test_public_surface` 釘住)。
 
 FORMAT_VERSION = 1
@@ -112,10 +114,9 @@ def _represent_str(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
 _Dumper.add_representer(str, _represent_str)
 
 
-def utc_stamp_filename(now: datetime, fmt: str) -> str:
-    """`now` 轉 UTC 後套 `fmt`(`strftime`,例 `spillway-config-%Y%m%dT%H%M%SZ.yaml`);
-    匯出檔名(介面層)與匯入備份檔名(T4)共用。"""
-    return now.astimezone(timezone.utc).strftime(fmt)
+# `now` 轉 UTC 後套 `fmt`;匯出檔名(介面層)與匯入備份檔名(T4)共用。定義在 `spillway.clock`,
+# 此處為別名(CHG-20261103-01 決策 21 ⑤;`__all__` 不變)
+utc_stamp_filename = utc_strftime
 
 
 # ---------------------------------------------------------------- 各實體 → 文件片段(純函式)
@@ -457,7 +458,7 @@ def _counts(deployments: int = 0, groups: int = 0, routes: int = 0) -> dict[str,
 class ImportResult:
     """`created`/`updated`/`deleted` 各為 `{deployments, groups, routes}` 計數;`backup` 為備份檔名
     (merge 與 dry_run 為 None);`affected_ids` = 交易前 ∪ 交易後的成員 id(呼叫端據此逐一讓健康快取
-    失效);`privileged` 見 `privileged_view`(依 id 排序,只含 id)。"""
+    失效);`privileged` 見 `is_privileged_change`(依 id 排序,只含 id)。"""
 
     mode: str
     created: dict[str, int]
@@ -511,6 +512,14 @@ def privileged_view(dep: Deployment | None) -> tuple[Any, ...]:
     urls = {k: params[k] for k in params if _is_url_key(str(k))}
     cli = {k: params[k] for k in _CLI_PRIVILEGED_PARAMS if k in params} if dep.kind == "cli" else {}
     return (dep.credential_ref, urls, cli)
+
+
+def is_privileged_change(before: Deployment | None, after: Deployment) -> bool:
+    """匯入前後的成員是否變更了 privileged 欄位:`privileged_view` 不同,或**既有**成員的 `provider`
+    改變(改變憑證送往何處;CHG-20261103-01 決策 10 ⑥,M4a 帶入)。新成員只看 `privileged_view`。"""
+    if privileged_view(after) != privileged_view(before):
+        return True
+    return before is not None and before.provider != after.provider
 
 
 # ---------------------------------------------------------------- 備份(決策 7)
@@ -711,8 +720,7 @@ def _apply_tx(
 
     before_ids = set(before_deps)
     privileged = tuple(sorted(
-        d.id for d in plan.deployments
-        if privileged_view(d) != privileged_view(before_deps.get(d.id))))
+        d.id for d in plan.deployments if is_privileged_change(before_deps.get(d.id), d)))
     return ImportResult(
         mode="replace" if replace else "merge",
         created=_counts(len(file_deps - before_ids), len(file_groups - before_groups),

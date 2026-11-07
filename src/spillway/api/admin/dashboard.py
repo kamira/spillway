@@ -24,7 +24,7 @@ async def dashboard(request: Request) -> dict[str, Any]:
     回應 `{generated_at, deployments: [...]}`,每個成員(依 id,只列現存成員;孤兒帳本列不計):
     `id`、`model_name`、`kind`、`provider`、`enabled`、`budget_type`、`limit_amount`、`window`、
     `period_start`、`next_reset`、`period_spend`、`remaining`、`unlimited`、`ratio`、`cooling`、
-    `cooling_until`、`cooling_reason`、`requests_24h`、`est_days_left`。
+    `cooling_until`、`cooling_reason`、`requests_24h`、`est_days_left`、`daily_spend_7d`。
 
     - 本期花費 = 帳本該成員 `ts` ∈ [period_start, next_reset) 的 `cost_usd` 加總(不分 status,
       NULL 不計),與 `QuotaService.remaining()` 相同;window `none` 為累計(period_start、next_reset
@@ -36,7 +36,9 @@ async def dashboard(request: Request) -> dict[str, Any]:
     - `cooling_until`、`cooling_reason`:`cooldowns` 列尚未到期時的期限與原因,否則 null;`cooling` 為其布林
       (CHG-20261101-03 決策 6)。
     - `requests_24h`:近 24 小時(`ts ≥ now − 24h`)帳本列數,不含 `skipped_precheck`(沒有送出請求)。
-    - `est_days_left`(5.4.6):`max(remaining, 0) ÷ (近 7 天實際花費 ÷ 7)`;無上限或近 7 天無花費時 null。
+    - `daily_spend_7d`(CHG-20261103-01 決策 10 ③):近 7 天實際花費 ÷ 7(float,USD,不四捨五入;
+      無活動時 0.0;沒有上限或沒有 budget 的成員也輸出)。
+    - `est_days_left`(5.4.6):`max(remaining, 0) ÷ daily_spend_7d`;無上限或近 7 天無花費時 null。
 
     效能(NFR-2):查詢數與成員數無關——成員、budgets 與 cooldowns 一次 JOIN、每種相異期間一次 GROUP BY 加總、
     近 24 小時請求數與近 7 天花費合併一次 GROUP BY(`repo.dashboard_members`、`repo.spend_by_deployment`、

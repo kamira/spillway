@@ -55,3 +55,8 @@ __all__ += [
     "Router", "RouteOutcome", "AttemptInfo", "Plan", "PlanSlot", "PlanEntry", "PlanExcluded",
     "InvalidEffort", "normalize_effort",
 ]
+
+# CHG-20261103-01 決策 10 ②:靜態順序計畫(`/api/routes/{name}/effective-order` 與 MCP `list_routes` 共用)。
+# 以 `spillway.routing.static_plan` 取用;`__all__` 由 tests/contract/test_public_imports_routing.py 寫死,
+# 不在本 CHG 允許清單內,故不加入 `__all__`。
+from spillway.routing.static_plan import static_plan  # noqa: E402,F401

@@ -29,7 +29,7 @@ from spillway.quota import QuotaService
 from spillway.store import repo
 from spillway.store.db import transaction
 
-from .common import _REDACTOR, _clock, _invalid, _iso, _not_found, router
+from .common import _REDACTOR, _clock, _iso, _not_found, invalid, router
 from .models import DeploymentIn
 
 
@@ -115,7 +115,7 @@ async def create_deployment(request: Request, body: DeploymentIn) -> dict[str, A
     """建立成員(含 tags、budget),回 201 與成員。重複 id → 409 `conflict`;
     `single` 模組的 provider 已有成員 → 409 `provider_single`(同一交易內檢查)。"""
     if body.id is None:
-        raise _invalid("body.id", "Field required")
+        raise invalid("body.id", "Field required")
     dep = body.to_deployment(body.id)
     with request_conn(request) as conn:
         with transaction(conn):
@@ -145,7 +145,7 @@ async def update_deployment(request: Request, dep_id: str, body: DeploymentIn) -
     成功後呼叫 `router.invalidate_health(dep_id)`(含 `enabled` 變更;CHG-20261101-02 決策 12)。
     """
     if body.id is not None and body.id != dep_id:
-        raise _invalid("body.id", "不可變更成員 id(必須與路徑相同)")
+        raise invalid("body.id", "不可變更成員 id(必須與路徑相同)")
     with request_conn(request) as conn:
         with transaction(conn):
             old = _load_dep(conn, dep_id)

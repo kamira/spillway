@@ -77,5 +77,16 @@ def to_iso(dt: datetime) -> str:
     return _require_aware(dt).astimezone(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def utc_strftime(now: datetime, fmt: str) -> str:
+    """`now` 轉 UTC 後套 `fmt`(`strftime`,例 `spillway-config-%Y%m%dT%H%M%SZ.yaml`);
+    匯出檔名、帳本 CSV 檔名與備份檔名共用(CHG-20261103-01 決策 21 ⑤)。"""
+    return now.astimezone(timezone.utc).strftime(fmt)
+
+
+def utc_stamp(now: datetime) -> str:
+    """檔名用的 UTC 時間戳記 `yyyymmddThhmmssZ`(例 `20261103T011320Z`)。"""
+    return utc_strftime(now, "%Y%m%dT%H%M%SZ")
+
+
 def from_iso(s: str) -> datetime:
     return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
