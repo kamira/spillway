@@ -67,6 +67,7 @@ import contextlib
 import logging
 import math
 import os
+import re
 import socket
 import sqlite3
 import sys
@@ -82,7 +83,12 @@ import platformdirs
 from spillway import settings
 from spillway.adapters.base import CLI_WORK_SUBDIRS
 from spillway.adapters.base.cli_runner import TEST_CONTROL_ENV_NAMES
-from spillway.clock import from_iso
+from spillway.api.test_control import parse_time
+
+try:   # POSIX;Windows 沒有 pwd,只比對目前環境下的預設目錄
+    import pwd
+except ImportError:   # pragma: no cover
+    pwd = None   # type: ignore[assignment]
 # 期滿取消後等被取消的請求走完 CliRunner 取消路徑的上限(單一定義在 api/drain.py;模組屬性保留)
 from spillway.api.drain import CANCELLED_DRAIN_TIMEOUT
 if TYPE_CHECKING:   # uvicorn 延遲 import(init 不需要它)
@@ -119,6 +125,9 @@ LOG_CONT_PREFIX = "SPILLWAY-LOG-CONT"
 TEST_CONTROL_WARNING = ("spillway: 警告:測試控制介面已開啟(SPILLWAY_TEST_CONTROL=1),"
                         "/__test__/* 可改寫狀態;僅供測試,正式使用請勿設定")
 TEST_KNOBS_IGNORED = "spillway: 未設 SPILLWAY_TEST_CONTROL=1,已忽略測試旋鈕: "
+_SEED_RE = re.compile(r"-?[0-9]+")                 # 施工審議 F4:ASCII 十進位整數,i64 範圍
+_POLL_RE = re.compile(r"[0-9]+(\.[0-9]+)?")        # 施工審議 F4:ASCII 十進位,不接受指數、底線、inf
+_I64_MIN, _I64_MAX = -(2**63), 2**63 - 1
 
 
 def _port(value: str) -> int:
@@ -325,28 +334,24 @@ def _read_test_control(env: Mapping[str, str]) -> _TestControl | None:
     """讀測試控制開關與旋鈕(決策 5 ①、6)。未開啟時回 None,並在 stderr 只印有設定的旋鈕名稱;
     開啟時回 `_TestControl`;值不合法丟 `_KnobError`。"""
     if env.get(TEST_CONTROL_ENV) != "1":
-        ignored = [name for name in TEST_KNOB_ENVS if name in env]
+        ignored = [name for name in TEST_KNOB_ENVS if env.get(name)]   # 空字串等同未設定(F7)
         if ignored:
             print(TEST_KNOBS_IGNORED + ", ".join(ignored), file=sys.stderr, flush=True)
         return None
     start_time = rng_seed = poll = level = None
     if raw := env.get(TEST_START_TIME_ENV, ""):
         try:
-            start_time = from_iso(raw)
+            start_time = parse_time(raw)   # 與控制端點同一文法(F4)
         except ValueError:
             raise _KnobError(f"{TEST_START_TIME_ENV} 必須是 YYYY-MM-DDTHH:MM:SSZ") from None
     if raw := env.get(TEST_RNG_SEED_ENV, ""):
-        try:
-            rng_seed = int(raw)
-        except ValueError:
-            raise _KnobError(f"{TEST_RNG_SEED_ENV} 必須是整數") from None
+        if not _SEED_RE.fullmatch(raw) or not _I64_MIN <= int(raw) <= _I64_MAX:
+            raise _KnobError(f"{TEST_RNG_SEED_ENV} 必須是 -2^63 到 2^63-1 的十進位整數")
+        rng_seed = int(raw)
     if raw := env.get(TEST_RETENTION_POLL_ENV, ""):
-        try:
-            poll = float(raw)
-        except ValueError:
-            poll = math.nan
+        poll = float(raw) if _POLL_RE.fullmatch(raw) else math.nan
         if not math.isfinite(poll) or poll <= 0:
-            raise _KnobError(f"{TEST_RETENTION_POLL_ENV} 必須是正數(秒)")
+            raise _KnobError(f"{TEST_RETENTION_POLL_ENV} 必須是正的十進位數(秒)")
     if raw := env.get(TEST_LOG_LEVEL_ENV, ""):
         if raw not in TEST_LOG_LEVELS:
             raise _KnobError(f"{TEST_LOG_LEVEL_ENV} 只接受 {'、'.join(TEST_LOG_LEVELS)}")
@@ -358,13 +363,47 @@ def _read_test_control(env: Mapping[str, str]) -> _TestControl | None:
                         no_token=_flag(env, TEST_NO_TOKEN_ENV), log_level=level)
 
 
+_CASE_INSENSITIVE_FS = sys.platform in ("darwin", "win32")
+
+
+def _default_data_dirs() -> list[Path]:
+    """施工審議 F1:可能是擁有者預設資料目錄的位置。(a) 目前環境下的 `platformdirs.user_data_dir`;
+    (b) 把 (a) 相對於 `Path.home()` 的部分接到帳號家目錄(`pwd` 的 `pw_dir`)底下——`$HOME` 被覆寫
+    時仍找得到真正的預設目錄;(c) Linux 另加 `pw_dir/.local/share/spillway`(非 XDG 的預設位置)。"""
+    current = Path(platformdirs.user_data_dir("spillway"))
+    dirs = [current]
+    if pwd is not None:
+        pw_dir = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        try:
+            dirs.append(pw_dir / current.relative_to(Path.home()))
+        except ValueError:   # (a) 不在 $HOME 底下(例如 XDG_DATA_HOME 指到別處)
+            pass
+        if sys.platform.startswith("linux"):
+            dirs.append(pw_dir / ".local" / "share" / "spillway")
+    return dirs
+
+
+def _same_dir(a: Path, b: Path) -> bool:
+    """同一目錄:兩者都存在且 `samefile`,或 `resolve()` 後字串相等(macOS、Windows 先 casefold)。"""
+    try:
+        if a.exists() and b.exists() and os.path.samefile(a, b):
+            return True
+    except OSError:
+        pass
+    sa, sb = str(a.resolve()), str(b.resolve())
+    if _CASE_INSENSITIVE_FS:
+        sa, sb = sa.casefold(), sb.casefold()
+    return sa == sb
+
+
 def _test_home_problem(env: Mapping[str, str]) -> str | None:
-    """決策 5 ②:測試模式的資料目錄必須明確設定,且不是預設(擁有者)資料目錄;符合時回 None。"""
+    """決策 5 ②:測試模式的資料目錄必須明確設定,且不與預設(擁有者)資料目錄是同一個目錄(含大小寫
+    變體、符號連結與以帳號家目錄推得的位置,F1);符合時回 None。不讀寫 `os.environ`。"""
     raw = env.get(settings.ENV_HOME, "")
     if not raw:
         return f"{TEST_CONTROL_ENV}=1 時必須明確設定 {settings.ENV_HOME}(測試模式不使用預設資料目錄)"
-    default = Path(platformdirs.user_data_dir("spillway")).resolve()
-    if Path(raw).resolve() == default:
+    home = Path(raw)
+    if any(_same_dir(home, d) for d in _default_data_dirs()):
         return f"{TEST_CONTROL_ENV}=1 時 {settings.ENV_HOME} 不可為預設資料目錄"
     return None
 

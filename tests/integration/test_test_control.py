@@ -35,6 +35,7 @@ from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 from importlib import resources
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -634,6 +635,7 @@ def test_read_test_control_invalid_value_message_has_no_value(name, value):
 def test_test_home_problem(tmp_path, monkeypatch):
     default = tmp_path / "default-data" / "spillway"
     monkeypatch.setattr(cli.platformdirs, "user_data_dir", lambda appname: str(default))
+    monkeypatch.setattr(cli.pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(tmp_path / "pw-home")))
     assert cli._test_home_problem({}) is not None
     assert cli._test_home_problem({"SPILLWAY_HOME": ""}) is not None
     assert cli._test_home_problem({"SPILLWAY_HOME": str(default)}) is not None
@@ -982,3 +984,208 @@ def test_l2_adapter_paths_conflict_is_startup_failure_exit_3(tmp_path):
     r = _run_until_exit(env)
     assert r.returncode == 3, r.stderr
     assert cli.TEST_CONTROL_WARNING in r.stderr.splitlines()
+
+
+
+# ================================================================ 施工審議修正(F1–F7)
+
+# ---------------------------------------------------------------- F1:HOME 檢查為「同一目錄」
+
+_APP_SUPPORT = Path("Library") / "Application Support" / "spillway"
+
+
+@pytest.fixture
+def fake_homes(tmp_path, monkeypatch):
+    """env 的 HOME、帳號家目錄(pw_dir)與 platformdirs 預設目錄全部指到 tmp;不碰擁有者的目錄。"""
+    env_home = tmp_path / "env-home"
+    pw_home = tmp_path / "pw-home"
+    env_home.mkdir()
+    pw_home.mkdir()
+    monkeypatch.setenv("HOME", str(env_home))
+    monkeypatch.setattr(cli.platformdirs, "user_data_dir", lambda appname: str(env_home / _APP_SUPPORT))
+    monkeypatch.setattr(cli.pwd, "getpwuid", lambda uid: SimpleNamespace(pw_dir=str(pw_home)))
+    return SimpleNamespace(env=env_home / _APP_SUPPORT, pw=pw_home / _APP_SUPPORT, tmp=tmp_path)
+
+
+@pytest.mark.skipif(sys.platform not in ("darwin", "win32"), reason="大小寫不敏感的檔案系統")
+def test_home_check_rejects_case_variant(fake_homes):
+    fake_homes.env.mkdir(parents=True)
+    variant = fake_homes.env.parent / "SPILLWAY"
+    assert cli._test_home_problem({"SPILLWAY_HOME": str(variant)}) is not None
+    upper = Path(str(fake_homes.env).upper())   # 尚未存在的路徑也以 casefold 比對
+    fake_homes.env.rmdir()
+    assert cli._test_home_problem({"SPILLWAY_HOME": str(upper)}) is not None
+
+
+def test_home_check_rejects_account_default_when_home_overridden(fake_homes):
+    assert cli._test_home_problem({"SPILLWAY_HOME": str(fake_homes.pw)}) is not None
+    assert cli._test_home_problem({"SPILLWAY_HOME": str(fake_homes.env)}) is not None
+
+
+def test_home_check_rejects_symlink_to_default(fake_homes):
+    fake_homes.pw.mkdir(parents=True)
+    link = fake_homes.tmp / "link-to-default"
+    link.symlink_to(fake_homes.pw, target_is_directory=True)
+    assert cli._test_home_problem({"SPILLWAY_HOME": str(link)}) is not None
+
+
+def test_home_check_accepts_ordinary_temp_dir(fake_homes):
+    fake_homes.env.mkdir(parents=True)
+    fake_homes.pw.mkdir(parents=True)
+    ok = fake_homes.tmp / "test-home"
+    ok.mkdir()
+    assert cli._test_home_problem({"SPILLWAY_HOME": str(ok)}) is None
+    assert cli._test_home_problem({"SPILLWAY_HOME": str(fake_homes.tmp / "not-yet")}) is None
+
+
+@pytest.mark.skipif(sys.platform not in ("darwin", "win32"), reason="大小寫不敏感的檔案系統")
+def test_l2_home_case_variant_exit_2(tmp_path):
+    env = _base_env(tmp_path)
+    default = _default_data_dir(env)
+    default.mkdir(parents=True)
+    variant = default.parent / default.name.upper()
+    env.update({"SPILLWAY_TEST_CONTROL": "1", "SPILLWAY_HOME": str(variant)})
+    r = _run_until_exit(env)
+    assert r.returncode == cli.EXIT_USAGE, r.stderr
+    assert list(default.iterdir()) == []   # 沒有建立任何檔案(含資料庫與鎖檔)
+
+
+# ---------------------------------------------------------------- F2:step() 遇到排程停止時快速失敗
+
+
+@pytest.mark.anyio
+async def test_step_fails_fast_when_scheduler_stops_while_waiting():
+    async with _open(start_time=START, retention_stepped=True) as (app, _c):
+        retention: RetentionScheduler = app.state.retention
+        retention._parked.clear()   # 模擬 _loop 尚未回到閘前
+        t = asyncio.ensure_future(retention.step())
+        await asyncio.sleep(0.05)
+        started = time.monotonic()
+        await retention.stop()
+        with pytest.raises(RuntimeError):
+            await asyncio.wait_for(t, 1)
+        assert time.monotonic() - started < 1
+
+
+@pytest.mark.anyio
+async def test_step_fails_fast_when_scheduler_vanishes_after_release():
+    async with _open(start_time=START, retention_stepped=True) as (app, _c):
+        retention: RetentionScheduler = app.state.retention
+        started = time.monotonic()
+        with pytest.raises(RuntimeError):
+            await asyncio.wait_for(retention.step(before=lambda: retention.task.cancel()), 1)
+        assert time.monotonic() - started < 1
+
+
+@pytest.mark.anyio
+async def test_tick_timeout_is_409_not_500():
+    async with _open(start_time=START, retention_stepped=True) as (app, c):
+        async def timeout_step(**kw: Any) -> tuple[bool, int | None]:
+            raise TimeoutError
+
+        app.state.retention.step = timeout_step
+        r = await c.post("/__test__/retention/tick", json={"advance_seconds": 0})
+        assert r.status_code == 409 and _err_code(r) == "retention_tick_timeout"
+
+
+# ---------------------------------------------------------------- F3:STEPPED 不會自行輪詢
+
+
+@pytest.mark.anyio
+async def test_stepped_loop_never_polls_on_its_own():
+    async with _open(start_time=START, retention_stepped=True, retention_poll_seconds=0.05) as (app, c):
+        retention: RetentionScheduler = app.state.retention
+        calls = 0
+        real_due = retention.due
+
+        def due() -> bool:
+            nonlocal calls
+            calls += 1
+            return real_due()
+
+        retention.due = due   # type: ignore[method-assign]
+        await c.post("/__test__/clock", json={"advance_seconds": 7200})   # 已到期:一旦輪詢就會清理
+        before = (await c.get("/__test__/retention")).json()
+        await asyncio.sleep(0.3)   # 6 個 poll 間隔
+        assert (await c.get("/__test__/retention")).json() == before
+        assert calls == 0
+
+
+# ---------------------------------------------------------------- F4:時間與數字文法為 ASCII
+
+
+@pytest.mark.parametrize("name,value", [
+    ("SPILLWAY_TEST_START_TIME", "2026-1-7T0:0:0Z"),
+    ("SPILLWAY_TEST_START_TIME", "２０２６-01-07T00:00:00Z"),
+    ("SPILLWAY_TEST_START_TIME", "2026-01-07T00:00:00+00:00"),
+    ("SPILLWAY_TEST_RNG_SEED", " +1_0 "),
+    ("SPILLWAY_TEST_RNG_SEED", str(2**63)),
+    ("SPILLWAY_TEST_RNG_SEED", "１２"),
+    ("SPILLWAY_TEST_RETENTION_POLL_SECONDS", "1e3"),
+    ("SPILLWAY_TEST_RETENTION_POLL_SECONDS", "1_0"),
+    ("SPILLWAY_TEST_RETENTION_POLL_SECONDS", "inf"),
+    ("SPILLWAY_TEST_RETENTION_POLL_SECONDS", "0"),
+])
+def test_knob_grammar_exit_2_without_value(tmp_path, monkeypatch, capsys, name, value):
+    monkeypatch.setattr(cli, "_preflight", lambda *a: pytest.fail("不應進到前置檢查"))
+    monkeypatch.setenv("SPILLWAY_TEST_CONTROL", "1")
+    monkeypatch.setenv("SPILLWAY_HOME", str(tmp_path / "h"))
+    monkeypatch.setenv(name, value)
+    assert cli._run_server("127.0.0.1", 1) == cli.EXIT_USAGE
+    err = capsys.readouterr().err
+    assert name in err and value.strip() not in err
+
+
+def test_knob_grammar_accepts_boundaries():
+    env = {"SPILLWAY_TEST_CONTROL": "1", "SPILLWAY_TEST_RNG_SEED": str(-(2**63)),
+           "SPILLWAY_TEST_RETENTION_POLL_SECONDS": "0.25"}
+    ctl = cli._read_test_control(env)
+    assert ctl.rng_seed == -(2**63) and ctl.retention_poll_seconds == 0.25
+    assert cli._read_test_control({**env, "SPILLWAY_TEST_RNG_SEED": str(2**63 - 1)}).rng_seed == 2**63 - 1
+
+
+@pytest.mark.anyio
+async def test_fullwidth_time_is_422():
+    async with _open(start_time=START) as (_app, c):
+        r = await c.post("/__test__/clock", json={"set": "２０２６-11-01T12:00:00Z"})
+        assert r.status_code == 422 and _err_code(r) == "validation_error"
+
+
+# ---------------------------------------------------------------- F5:數值範圍
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("path,body", [
+    ("/__test__/ledger", {"rows": [{"id": 2**70, "ts": START_ISO, "status": "ok"}]}),
+    ("/__test__/ledger", {"rows": [{"ts": START_ISO, "status": "ok", "tokens_in": -(2**70)}]}),
+    ("/__test__/ledger", {"rows": [{"ts": START_ISO, "status": "ok", "cost_usd": "1.5"}]}),
+    ("/__test__/ledger", {"rows": [{"ts": START_ISO, "status": "ok", "cost_usd": True}]}),
+    ("/__test__/ledger", {"rows": [{"ts": START_ISO, "status": "ok", "est_cost_usd_p90": "2"}]}),
+    ("/__test__/clock", {"advance_seconds": 2**70}),
+    ("/__test__/clock", {"advance_seconds": 2**62}),   # i64 內但超出 datetime 範圍
+    ("/__test__/retention/tick", {"advance_seconds": 2**70}),
+    ("/__test__/cli-slots/acquire", {"deployment": "x", "n": 2**70}),
+])
+async def test_numeric_range_422(path, body):
+    async with _open(start_time=START, retention_stepped=True) as (_app, c):
+        r = await c.post(path, json=body)
+        assert r.status_code == 422 and _err_code(r) == "validation_error", r.text
+        assert (await c.get("/__test__/clock")).json()["now"] == START_ISO
+
+
+@pytest.mark.anyio
+async def test_float_fields_accept_json_integers():
+    async with _open() as (_app, c):
+        r = await c.post("/__test__/ledger", json={"rows": [{"ts": START_ISO, "status": "ok", "cost_usd": 2,
+                                                             "est_cost_usd_p90": 0.5}]})
+        assert r.status_code == 200, r.text
+
+
+# ---------------------------------------------------------------- F7:空字串不列入「已忽略」
+
+
+def test_empty_knob_not_listed_as_ignored(capsys):
+    assert cli._read_test_control({"SPILLWAY_TEST_START_TIME": "", "SPILLWAY_TEST_NO_TOKEN": ""}) is None
+    assert capsys.readouterr().err == ""
+    assert cli._read_test_control({"SPILLWAY_TEST_START_TIME": "", "SPILLWAY_TEST_NO_TOKEN": "1"}) is None
+    assert capsys.readouterr().err == cli.TEST_KNOBS_IGNORED + "SPILLWAY_TEST_NO_TOKEN\n"

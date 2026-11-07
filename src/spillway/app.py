@@ -81,6 +81,7 @@ from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -224,22 +225,36 @@ class RetentionScheduler:
                    before: Callable[[], None] | None = None) -> tuple[bool, int | None]:
         """STEPPED 模式:放行 `_loop` 一輪並等它回到閘前;回傳該輪的 `(ran, deleted)`(`deleted` 為 None 表示
         沒有清理或清理失敗)。`before`(例如推進時鐘)在 `_loop` 停在閘前之後、放行之前於同一把鎖內呼叫,
-        它丟出的例外原樣往外丟、不放行。並行呼叫依序執行。非 STEPPED 或排程未執行時丟 `RuntimeError`;
-        逾時丟 `TimeoutError`。"""
+        它丟出的例外原樣往外丟、不放行。並行呼叫依序執行。非 STEPPED、排程未執行或等待中排程結束時丟
+        `RuntimeError`;逾時丟 `TimeoutError`。"""
         if not self.stepped:
             raise RuntimeError("RetentionScheduler 不是 STEPPED 模式")
         async with self._step_lock:
             task = self.task
             if task is None or task.done():
                 raise RuntimeError("RetentionScheduler 未執行")
-            await asyncio.wait_for(self._parked.wait(), timeout)
+            await self._wait_or_stopped(self._parked.wait(), task, timeout)
             if before is not None:
                 before()
             fut: asyncio.Future[tuple[bool, int | None]] = asyncio.get_running_loop().create_future()
             self._step_result = fut
             self._parked.clear()
             self._go.set()
-            return await asyncio.wait_for(fut, timeout)
+            return await self._wait_or_stopped(fut, task, timeout)
+
+    @staticmethod
+    async def _wait_or_stopped(aw: Any, task: asyncio.Task[None], timeout: float) -> Any:
+        """等 `aw` 完成,同時與排程 task 競速(施工審議 F2):task 先結束丟 `RuntimeError`,逾時丟
+        `TimeoutError`;兩者都會取消 `aw`。"""
+        waiter = asyncio.ensure_future(aw)
+        done, _ = await asyncio.wait({waiter, task}, timeout=timeout,
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if waiter in done:
+            return waiter.result()
+        waiter.cancel()
+        if task.done():
+            raise RuntimeError("RetentionScheduler 未執行")
+        raise TimeoutError("RetentionScheduler 未在時限內回到閘前")
 
     def start(self) -> None:
         self.run_once()

@@ -8,10 +8,12 @@
 
 共同規則:JSON;錯誤沿用 spec 9.1.2 `{"error": {"code", "message"}}`;body 不接受未知欄位(422
 `validation_error`);時間一律 `YYYY-MM-DDTHH:MM:SSZ`(其他格式 422);所有 GET 不改變資料庫狀態。
-錯誤碼:404 `not_found`(成員或帳本列不存在)、409 `clock_not_controllable`(系統時鐘模式下要推進時鐘)、
+錯誤碼:404 `not_found`(成員不存在)、409 `clock_not_controllable`(系統時鐘模式下要推進時鐘)、
 409 `retention_not_stepped`(非 STEPPED 模式呼叫 tick)、409 `retention_not_running`(排程未執行)、
+409 `retention_tick_timeout`(tick 等排程回到閘前逾時)、
 409 `cli_slots_exceeded`(acquire 超過 limit)、409 `cli_slots_underflow`(release 多於進行中數量)、
-422 `validation_error`(格式錯誤或資料庫約束違反)。
+422 `validation_error`(格式錯誤、數值超出範圍,或資料庫約束違反——例如 payloads 的 `ledger_id`
+對應的帳本列不存在)。整數欄位的範圍為 −2^63 到 2^63−1;數值欄位不接受字串與布林。
 
 端點:
 - `GET /__test__/clock` → `{controllable, now}`;`POST /__test__/clock` `{"set": t}` 或
@@ -41,7 +43,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StrictBool, StrictFloat, StrictInt
 
 from spillway.api import ApiError
 from spillway.api.deps import request_conn
@@ -56,24 +58,30 @@ from spillway.store.db import (
     transaction,
 )
 
-__all__ = ["PREFIX", "make_router"]
+__all__ = ["PREFIX", "make_router", "parse_time"]
 
 PREFIX = "/__test__"
 
-_TIME_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+# ASCII 數字(`\d` 會吃全形數字;施工審議 F4)
+_TIME_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+_I64_MIN, _I64_MAX = -(2**63), 2**63 - 1
 
 
-def _parse_time(value: Any) -> datetime:
-    """只接受 `YYYY-MM-DDTHH:MM:SSZ` 字串;其他型別、其他格式與不存在的日期(例如 13 月)都丟 ValueError → 422。"""
+def parse_time(value: Any) -> datetime:
+    """只接受 `YYYY-MM-DDTHH:MM:SSZ` 字串(ASCII 數字);其他型別、其他格式與不存在的日期(例如 13 月)都丟
+    ValueError(端點 → 422)。`cli` 解析 `SPILLWAY_TEST_START_TIME` 也用它。"""
     if not isinstance(value, str) or not _TIME_RE.fullmatch(value):
         raise ValueError("時間必須是 YYYY-MM-DDTHH:MM:SSZ")
     return from_iso(value)
 
 
 # spec 2.1.2 的時間格式
-Time = Annotated[datetime, BeforeValidator(_parse_time)]
-NonNegInt = Annotated[StrictInt, Field(ge=0)]
-PosInt = Annotated[StrictInt, Field(ge=1)]
+Time = Annotated[datetime, BeforeValidator(parse_time)]
+# 施工審議 F5:整數一律 i64 範圍;浮點只接受 JSON 數字(含整數)且必須有限
+Int64 = Annotated[StrictInt, Field(ge=_I64_MIN, le=_I64_MAX)]
+NonNegInt = Annotated[StrictInt, Field(ge=0, le=_I64_MAX)]
+PosInt = Annotated[StrictInt, Field(ge=1, le=_I64_MAX)]
+Float = Annotated[StrictFloat, Field(allow_inf_nan=False)]
 
 
 class _Body(BaseModel):
@@ -95,16 +103,16 @@ class LedgerSeed(_Body):
     route_name: str | None = None
     deployment_id: str | None = None
     effort: str | None = None
-    tokens_in: StrictInt | None = None
-    tokens_out: StrictInt | None = None
-    cost_usd: float | None = None
-    slot: StrictInt | None = None
+    tokens_in: Int64 | None = None
+    tokens_out: Int64 | None = None
+    cost_usd: Float | None = None
+    slot: Int64 | None = None
     fallback_depth: NonNegInt = 0
-    latency_ms: StrictInt | None = None
-    est_tokens_in: StrictInt | None = None
-    est_tokens_out_p50: StrictInt | None = None
-    est_tokens_out_p90: StrictInt | None = None
-    est_cost_usd_p90: float | None = None
+    latency_ms: Int64 | None = None
+    est_tokens_in: Int64 | None = None
+    est_tokens_out_p50: Int64 | None = None
+    est_tokens_out_p90: Int64 | None = None
+    est_cost_usd_p90: Float | None = None
     error: str | None = None
 
 
@@ -159,7 +167,11 @@ def _controllable(request: Request) -> FakeClock:
 
 def _advance(request: Request, seconds: int) -> None:
     if seconds:
-        _controllable(request).advance(seconds=seconds)
+        clock = _controllable(request)
+        try:
+            clock.advance(seconds=seconds)
+        except OverflowError:   # 超出 datetime 範圍:422 而不是 500
+            raise ApiError(422, "validation_error", "advance_seconds 超出時間範圍") from None
 
 
 def _row_dict(model: BaseModel) -> dict[str, Any]:
@@ -211,7 +223,7 @@ def make_router(*, rng_seed: int | None = None) -> APIRouter:
         if body.set is not None:
             clock.set(body.set)
         else:
-            clock.advance(seconds=body.advance_seconds or 0)
+            _advance(request, body.advance_seconds or 0)
         return {"now": to_iso(clock.now())}
 
     @router.get("/rng")
@@ -287,6 +299,8 @@ def make_router(*, rng_seed: int | None = None) -> APIRouter:
             ran, deleted = await retention.step(before=lambda: _advance(request, body.advance_seconds))
         except RuntimeError:
             raise ApiError(409, "retention_not_running", "保存排程未執行") from None
+        except TimeoutError:   # 施工審議 F2:不讓逾時變成 500
+            raise ApiError(409, "retention_tick_timeout", "保存排程未在時限內回到閘前") from None
         return {"ran": ran, "deleted": deleted, "runs": retention.runs,
                 "now": to_iso(request.app.state.clock.now())}
 
