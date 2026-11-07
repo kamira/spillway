@@ -20,6 +20,7 @@ from pathlib import Path
 import anyio
 import pytest
 
+from spillway.adapters.base import cli_runner as cr
 from spillway.adapters.base import (
     DEFAULT_DRAIN_TIMEOUT,
     DEFAULT_MAX_OUTPUT_BYTES,
@@ -29,6 +30,7 @@ from spillway.adapters.base import (
     CliRunner,
     layering_violations,
 )
+from spillway.adapters.base.cli_runner import _wait_exited
 
 pytestmark = pytest.mark.anyio
 
@@ -59,6 +61,19 @@ print("ready", flush=True)
 if "child_exits" in mode:
     sys.exit(0)
 time.sleep(60)
+"""
+
+
+SPAWN_GC_DEVNULL = r"""
+import os, subprocess, sys, time
+d = sys.argv[1]
+open(os.path.join(d, "child.pid"), "w").write(str(os.getpid()))
+code = "import os, sys, time\nopen(os.path.join(sys.argv[1], 'grandchild.pid'), 'w').write(str(os.getpid()))\ntime.sleep(60)\n"
+subprocess.Popen([sys.executable, "-c", code, d, sys.argv[2]],
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+while not os.path.exists(os.path.join(d, "grandchild.pid")):
+    time.sleep(0.01)
+print("ready", flush=True)
 """
 
 
@@ -586,7 +601,6 @@ def _set_later(proc: _FakeProc, rc: int, delay: float = 0.05) -> None:
 
 
 async def test_wait_exited_returns_after_returncode_set():
-    from spillway.adapters.base.cli_runner import _wait_exited
     proc = _FakeProc()
     _set_later(proc, 0)
     await _wait_exited(proc, 5.0)
@@ -595,18 +609,16 @@ async def test_wait_exited_returns_after_returncode_set():
 
 @pytest.mark.parametrize("timeout", [0.1, 0, -1, float("nan")])
 async def test_wait_exited_times_out(timeout: float):
-    from spillway.adapters.base.cli_runner import _wait_exited
+    """期限非正數或 NaN 時立即逾時;0.1 秒則等到期限。"""
     with pytest.raises(TimeoutError):
         await _wait_exited(_FakeProc(), timeout)
 
 
 async def test_wait_exited_already_exited_with_zero_timeout():
-    from spillway.adapters.base.cli_runner import _wait_exited
     await _wait_exited(_FakeProc(0), 0)
 
 
 async def test_wait_exited_none_timeout_waits():
-    from spillway.adapters.base.cli_runner import _wait_exited
     proc = _FakeProc()
     _set_later(proc, 3)
     await _wait_exited(proc, None)
@@ -614,13 +626,13 @@ async def test_wait_exited_none_timeout_waits():
 
 
 async def test_wait_exited_propagates_cancel():
-    from spillway.adapters.base.cli_runner import _wait_exited
     task = asyncio.ensure_future(_wait_exited(_FakeProc(), None))
     await asyncio.sleep(0.05)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
     assert task.cancelled()
+    assert task.cancelling() == 1
 
 
 @pytest.fixture
@@ -657,7 +669,6 @@ async def test_guard_shutdown_with_escaped_grandchild(hanging_wait, runner, pidd
 
 async def test_terminate_group_waits_on_returncode_not_wait(monkeypatch):
     """S1(`_terminate_group` 的結構測試):SIGKILL 之後以 `returncode` 判斷,不呼叫 `wait()`。"""
-    from spillway.adapters.base import cli_runner as cr
     monkeypatch.setattr(cr, "_signal_group", lambda pgid, sig: None)
     monkeypatch.setattr(cr, "_group_alive", lambda pgid: False)
     proc = _FakeProc()
@@ -666,17 +677,6 @@ async def test_terminate_group_waits_on_returncode_not_wait(monkeypatch):
     assert proc.returncode == -signal.SIGKILL
 
 
-SPAWN_GC_DEVNULL = r"""
-import os, subprocess, sys, time
-d = sys.argv[1]
-open(os.path.join(d, "child.pid"), "w").write(str(os.getpid()))
-code = "import os, sys, time\nopen(os.path.join(sys.argv[1], 'grandchild.pid'), 'w').write(str(os.getpid()))\ntime.sleep(60)\n"
-subprocess.Popen([sys.executable, "-c", code, d, sys.argv[2]],
-                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-while not os.path.exists(os.path.join(d, "grandchild.pid")):
-    time.sleep(0.01)
-print("ready", flush=True)
-"""
 
 
 async def test_same_group_grandchild_without_stdout_is_terminated(runner, piddir, marker):

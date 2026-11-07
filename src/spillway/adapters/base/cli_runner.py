@@ -16,11 +16,11 @@ max_output_bytes=8 MiB) -> CliOutput`
   `killed_reason="shutdown"`)一律 `os.killpg` 整個 group:SIGTERM,group 在 `term_grace`
   (預設 5 秒)內沒有全部結束就 SIGKILL。孫行程在同一 group,一併結束。取消被重複遞送
   (anyio/Starlette 位準觸發的 cancel scope)時改為同步立即 SIGKILL,`CancelledError` 照常往上丟。
-- 主行程結束後最多再等 `drain_timeout`(預設 2 秒)讀完管線;孫行程仍持有 stdout 時不無限等待。
-  主行程是否結束以 `returncode` 判斷,不用 `Process.wait()`:Python 3.11、3.12 的 `wait()` 會等管線
-  關閉,孫行程持有 stdout 時會等到逾時(CHG-20261107-02)。正常結束後最多等 `drain_timeout` 加
-  `term_grace`(終止殘留 group);group 的殘留行程不論是否持有 stdout 一律終止,要保留的行程須自行 `setsid`。
-  `run` 回傳前 group 若仍有殘留行程,一併終止(整個 group 屬於這一次呼叫)。
+- 主行程是否結束以 `returncode` 判斷,不用 `Process.wait()`:Python 3.11、3.12 的 `wait()` 會等管線
+  關閉,孫行程持有 stdout 時會等到逾時(CHG-20261107-02)。主行程結束後讀完管線最多 `drain_timeout`
+  (預設 2 秒),殘留行程不理 SIGTERM 時再加 `term_grace`;孫行程仍持有 stdout 時不無限等待。
+  `run` 回傳前 group 若仍有殘留行程,不論是否持有 stdout 一律終止(整個 group 屬於這一次呼叫);
+  要保留的行程須自行 `setsid`。
 - stdout、stderr 各自超過 `max_output_bytes` 時截斷(其餘照讀照丟,不讓子行程卡在滿管線),
   以 `CliOutput.stdout_truncated`/`stderr_truncated` 標記。輸出以 UTF-8(`errors="replace"`)解碼。
 - 找不到執行檔、argv 過長(E2BIG)等啟動錯誤以 `OSError` 往上丟,由模組對應成 `error`。
@@ -155,6 +155,7 @@ async def _wait_exited(proc: asyncio.subprocess.Process, timeout: float | None) 
     """
     deadline = None if timeout is None else time.monotonic() + timeout
     while proc.returncode is None:
+        # 寫成 not (<):deadline 為 NaN 時比較為 False,仍立即逾時
         if deadline is not None and not (time.monotonic() < deadline):
             raise TimeoutError
         await asyncio.sleep(_POLL)
