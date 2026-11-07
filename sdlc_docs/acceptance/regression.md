@@ -74,12 +74,12 @@ R1 與 R2 合起來就是 CHG-20261030-02 的本機閘(`python -m pytest -q && p
 | R54 | m4a 行為情境 10 個 | `tests/features/m4a_config.feature` | ACC-20261102-02 | api(admin)、安全 |
 | R55 | Web UI 畫面測試全部(10 頁、Playwright headless Chromium 1248;瀏覽器不存在時失敗不跳過;console error、pageerror、非本機請求皆判失敗;含精靈續作路徑 409 沿用警告) | `tests/ui/`(含 `tests/ui/test_wizard.py`) | ACC-20261103-01 | ui、安全 |
 | R56 | m4b 行為情境 10 個(AC-6、AC-8、AC-10、AC-20、AC-21、AC-22、NFR-4 畫面部分、拖曳、匯入確認、純文字顯示) | `tests/features/m4b_ui.feature` | ACC-20261103-01 | ui、安全 |
-| R57 | M4b Acceptance operation 自動部分 ①–⑩(精靈、連動選單、拖曳後 /v1 改由新首位處理、AC-10 經畫面往返逐位元組、預覽為 dry_run 且資料不變、AC-21、AC-22、token 一次顯示);NFR-4 對資料庫、匯出檔、CSV、備份、日誌、全部畫面 HTML 與 API 回應命中 0;產物 `artifacts/m4b/`。須前景執行 | `tests/acceptance/test_m4b_operation.py` | ACC-20261103-01 | ui、api(admin)、安全 |
-| R58 | 靜態檔提供與安全標頭(`/` 302、`/ui` 過濾點檔與副檔名與結尾斜線、CSP 含 Trusted Types、`/api` no-store)與前端靜態掃描(禁用 HTML 插入與外部網址、導覽一致、`spillway.web` 只 import 標準庫與 starlette、package-data) | `tests/integration/test_web_static.py`、`tests/unit/test_web_assets.py` | ACC-20261103-01 | ui、安全 |
-| R59 | 9.2.8 新端點與欄位:`POST /api/groups/preview`、`GET /api/routes/{name}/effective-order`(與 MCP `list_routes` 相等)、`/api/mcp/catalog`、`daily_spend_7d`、`min_depth`(含 CSV 上限)、版本字串單一來源 | `tests/integration/admin/test_admin_groups.py`、`tests/integration/admin/test_admin_routes.py`、`tests/integration/admin/test_admin_mcp_catalog.py`、`tests/integration/admin/test_admin_dashboard.py`、`tests/integration/admin/test_admin_ledger.py`、`tests/integration/admin/test_admin_ledger_csv.py`、`tests/integration/mcp/test_mcp_version.py` | ACC-20261103-01 | api(admin)、api(mcp) |
+| R57 | M4b Acceptance operation 自動部分 ①–⑩(精靈、連動選單、拖曳後 /v1 改由新首位處理、AC-10 經畫面往返逐位元組、預覽為 dry_run 且資料不變、AC-21、AC-22、token 一次顯示);NFR-4 對資料庫、匯出檔、CSV、備份、日誌、全部畫面 HTML 與 API 回應命中 0;產物 artifacts/m4b/。須前景執行 | `tests/acceptance/test_m4b_operation.py` | ACC-20261103-01 | ui、api(admin)、安全 |
+| R58 | 靜態檔提供與安全標頭(/ 302、/ui 過濾點檔與副檔名與結尾斜線、CSP 含 Trusted Types、/api no-store)與前端靜態掃描(禁用 HTML 插入與外部網址、導覽一致、spillway.web 只 import 標準庫與 starlette、package-data) | `tests/integration/test_web_static.py`、`tests/unit/test_web_assets.py` | ACC-20261103-01 | ui、安全 |
+| R59 | 9.2.8 新端點與欄位:POST /api/groups/preview、GET /api/routes/{name}/effective-order(與 MCP list_routes 相等)、/api/mcp/catalog、daily_spend_7d、min_depth(含 CSV 上限)、版本字串單一來源 | `tests/integration/admin/test_admin_groups.py`、`tests/integration/admin/test_admin_routes.py`、`tests/integration/admin/test_admin_mcp_catalog.py`、`tests/integration/admin/test_admin_dashboard.py`、`tests/integration/admin/test_admin_ledger.py`、`tests/integration/admin/test_admin_ledger_csv.py`、`tests/integration/mcp/test_mcp_version.py` | ACC-20261103-01 | api(admin)、api(mcp) |
 | R60 | 匯入 privileged 含既有成員 provider 變更 | `tests/integration/admin/test_admin_config_io.py` | ACC-20261103-01 | api(admin)、安全 |
-| R61 | 小型整理行為不變:422 建構函式、時間戳記 helper、`read_tx` 巢狀 | `tests/unit/api/test_admin_invalid.py`、`tests/unit/test_clock.py`、`tests/unit/store/test_read_tx.py` | ACC-20261103-01 | api(admin)、store |
-| R62 | 共用前端模組行為(常駐錯誤、`latest()`、`fmtUSD`、`tagInput`、`fillGroupSelect`、首次導向 replace 與上一頁) | `tests/ui/test_shell.py` | ACC-20261103-01 | ui |
+| R61 | 小型整理行為不變:422 建構函式、時間戳記 helper、read_tx 巢狀 | `tests/unit/api/test_admin_invalid.py`、`tests/unit/test_clock.py`、`tests/unit/store/test_read_tx.py` | ACC-20261103-01 | api(admin)、store |
+| R62 | 共用前端模組行為(常駐錯誤、latest()、fmtUSD、tagInput、fillGroupSelect、首次導向 replace 與上一頁) | `tests/ui/test_shell.py` | ACC-20261103-01 | ui |
 
 ## Interaction spec(M2)
 
