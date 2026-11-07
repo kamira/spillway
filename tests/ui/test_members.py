@@ -2,7 +2,7 @@
 
 L2:連動選單(類型 → 供應商 → 模型,內容與 `/api/adapters`、`models.yaml` 一致;「其他(手動輸入)」;
 能力與 `model_name` 帶入);adapters 載入中與 `models_error`;不可用模組停用並顯示原因(AC-21,
-`make_ui_gateway(extra_adapter_paths=…)`);single 模組已有成員時停用;新增、編輯(PUT 全量)、
+`make_ui_gateway(adapter_paths=…)`);single 模組已有成員時停用;新增、編輯(PUT 全量)、
 啟用切換(先 GET 再 PUT)、刪除(確認對話框)、測試呼叫;送出中按鈕停用;額度;`model_name` 必填;
 上游網址 ⇄ `params.api_base`;409 `provider_single`;連線中斷;`params` 非法 JSON;`params` 含金鑰鍵
 → 422;憑證參照 422;`autocomplete="off"`;`members.html#<id>`;`mountMemberForm` 介面(T8 精靈用)。
@@ -16,11 +16,13 @@ import pytest
 import yaml
 from playwright.sync_api import Page, Route, expect
 
-from tests.contract.fakemods import write_module
-from tests.helpers import TEST_KEY_ENV, dead_base
-from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import MakeGw, NewPage, api, guard_of, import_module
-from tests.helpers.ui_members import (
+from tests.blackbox.fakemods import write_module
+from tests.blackbox.harness import Serve
+from tests.blackbox.mask import TEST_KEY_ENV
+from tests.blackbox.ports import dead_base
+from tests.blackbox.ui import MakeGw, NewPage, api, guard_of, import_module
+from tests.blackbox.ui.members import (
+    BROKEN_MODULE,
     BROKEN_PROVIDER,
     MemberForm,
     broken_adapter_dir,
@@ -35,7 +37,7 @@ OTHER_TEXT = "其他(手動輸入)"
 
 
 @pytest.fixture
-def gw(make_ui_gateway: MakeGw) -> LiveGateway:
+def gw(make_ui_gateway: MakeGw) -> Serve:
     return make_ui_gateway()
 
 
@@ -46,11 +48,11 @@ def new_form(page: Page) -> MemberForm:
     return form
 
 
-def adapters(gw: LiveGateway) -> list[dict]:
+def adapters(gw: Serve) -> list[dict]:
     return api(gw, "GET", "/api/adapters").json()["modules"]
 
 
-def get_member(gw: LiveGateway, dep_id: str, expect_status: tuple[int, ...] = (200,)) -> dict:
+def get_member(gw: Serve, dep_id: str, expect_status: tuple[int, ...] = (200,)) -> dict:
     with gw.http() as c:
         r = c.get(f"/api/deployments/{dep_id}")
     assert r.status_code in expect_status, r.text
@@ -59,7 +61,7 @@ def get_member(gw: LiveGateway, dep_id: str, expect_status: tuple[int, ...] = (2
 
 # ---- 連動選單 -------------------------------------------------------------------------------------
 
-def test_cascade_kind_provider_model(new_page: NewPage, gw: LiveGateway) -> None:
+def test_cascade_kind_provider_model(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_members(page, gw)
     form = new_form(page)
@@ -129,7 +131,7 @@ def test_adapters_loading_and_models_error(new_page: NewPage, make_ui_gateway: M
 
 def test_unavailable_module_disabled_ac21(new_page: NewPage, make_ui_gateway: MakeGw, tmp_path: Path) -> None:
     root = broken_adapter_dir(tmp_path / "mods")
-    gw = make_ui_gateway(extra_adapter_paths=[root])
+    gw = make_ui_gateway(adapter_paths=[root], allowed_unavailable_adapters={BROKEN_MODULE})
     broken = next(m for m in adapters(gw) if m["module"] == "broken")
     assert broken["available"] is False and broken["unavailable_reason"]
     page = new_page()
@@ -143,7 +145,7 @@ def test_unavailable_module_disabled_ac21(new_page: NewPage, make_ui_gateway: Ma
         expect(opt).to_contain_text(broken["unavailable_reason"])
 
 
-def test_single_module_with_member_disabled(new_page: NewPage, gw: LiveGateway) -> None:
+def test_single_module_with_member_disabled(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "claude-sub", kind="cli", provider="claude-cli", model="claude-sonnet-5-5",
                 params={}, credential_ref=None)
     page = new_page()
@@ -165,7 +167,7 @@ def test_single_module_with_member_disabled(new_page: NewPage, gw: LiveGateway) 
 
 
 @pytest.mark.expect_http_errors(409)
-def test_provider_single_409_message(new_page: NewPage, gw: LiveGateway) -> None:
+def test_provider_single_409_message(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_members(page, gw)
     form = new_form(page)
@@ -182,7 +184,7 @@ def test_provider_single_409_message(new_page: NewPage, gw: LiveGateway) -> None
 
 # ---- 新增、編輯、測試呼叫、額度 -------------------------------------------------------------------
 
-def test_create_edit_test_call_and_budget(new_page: NewPage, gw: LiveGateway, fake_api) -> None:  # noqa: ANN001
+def test_create_edit_test_call_and_budget(new_page: NewPage, gw: Serve, fake_api) -> None:  # noqa: ANN001
     page = new_page()
     open_members(page, gw)
     form = new_form(page)
@@ -247,7 +249,7 @@ def test_create_edit_test_call_and_budget(new_page: NewPage, gw: LiveGateway, fa
     assert [r["deployment_id"] for r in ledger] == ["openai-1"]
 
 
-def test_budget_none_sends_null_and_anchor(new_page: NewPage, gw: LiveGateway) -> None:
+def test_budget_none_sends_null_and_anchor(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "m1", budget={"type": "usd", "limit_amount": 5, "window": "monthly", "reset_anchor": 3})
     page = new_page()
     open_members(page, gw, "m1")
@@ -267,7 +269,7 @@ def test_budget_none_sends_null_and_anchor(new_page: NewPage, gw: LiveGateway) -
 
 # ---- 用戶端驗證 -----------------------------------------------------------------------------------
 
-def test_model_name_required_and_params_json(new_page: NewPage, gw: LiveGateway) -> None:
+def test_model_name_required_and_params_json(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_members(page, gw)
     form = new_form(page)
@@ -288,7 +290,7 @@ def test_model_name_required_and_params_json(new_page: NewPage, gw: LiveGateway)
     get_member(gw, "x1", (404,))
 
 
-def test_upstream_params_sync(new_page: NewPage, gw: LiveGateway) -> None:
+def test_upstream_params_sync(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_members(page, gw)
     form = new_form(page)
@@ -307,7 +309,7 @@ def test_upstream_params_sync(new_page: NewPage, gw: LiveGateway) -> None:
     expect(form.field("upstream")).to_be_hidden()
 
 
-def test_autocomplete_off(new_page: NewPage, gw: LiveGateway) -> None:
+def test_autocomplete_off(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_members(page, gw)
     form = new_form(page)
@@ -321,7 +323,7 @@ def test_autocomplete_off(new_page: NewPage, gw: LiveGateway) -> None:
 
 
 @pytest.mark.expect_http_errors(422)
-def test_server_rejections_shown(new_page: NewPage, gw: LiveGateway) -> None:
+def test_server_rejections_shown(new_page: NewPage, gw: Serve) -> None:
     secret = "sk-ant-api03-ZZZZZZZZZZZZZZZZZZZZZZZZ"
     page = new_page()
     open_members(page, gw)
@@ -342,7 +344,7 @@ def test_server_rejections_shown(new_page: NewPage, gw: LiveGateway) -> None:
 
 # ---- 清單:hash、啟用切換、刪除、連線中斷 ---------------------------------------------------------
 
-def test_hash_opens_member_form(new_page: NewPage, gw: LiveGateway) -> None:
+def test_hash_opens_member_form(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "alpha")
     seed_member(gw, "beta", model_name="b-name", tags=["x", "y"])
     page = new_page()
@@ -360,7 +362,7 @@ def test_hash_opens_member_form(new_page: NewPage, gw: LiveGateway) -> None:
     expect(page.locator('tr[data-member="alpha"]')).to_have_attribute("aria-selected", "true")
 
 
-def test_hash_unknown_member_no_request(new_page: NewPage, gw: LiveGateway) -> None:
+def test_hash_unknown_member_no_request(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_members(page, gw, "nope")
     expect(page.locator("#msgbar")).to_contain_text("找不到成員:nope")
@@ -368,7 +370,7 @@ def test_hash_unknown_member_no_request(new_page: NewPage, gw: LiveGateway) -> N
     assert requests_of(guard_of(page), "GET", "/api/deployments/nope") == []
 
 
-def test_hash_stale_response_ignored(new_page: NewPage, gw: LiveGateway) -> None:
+def test_hash_stale_response_ignored(new_page: NewPage, gw: Serve) -> None:
     """終審必修 3:#m1 的回應晚於 #m2 抵達時,不覆蓋已開啟的 m2。"""
     seed_member(gw, "m1")
     seed_member(gw, "m2")
@@ -391,7 +393,7 @@ def test_hash_stale_response_ignored(new_page: NewPage, gw: LiveGateway) -> None
     expect(MemberForm(page).field("id")).to_have_value("m2")
 
 
-def test_toggle_get_then_put(new_page: NewPage, gw: LiveGateway) -> None:
+def test_toggle_get_then_put(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "t1")
     page = new_page()
     open_members(page, gw)
@@ -417,7 +419,7 @@ def test_toggle_get_then_put(new_page: NewPage, gw: LiveGateway) -> None:
     expect(page.locator('input[data-toggle="t1"]')).not_to_be_checked()
 
 
-def test_delete_with_confirm(new_page: NewPage, gw: LiveGateway) -> None:
+def test_delete_with_confirm(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "d1", tags=["coding", "cheap"])
     page = new_page()
     open_members(page, gw, "d1")
@@ -438,7 +440,7 @@ def test_delete_with_confirm(new_page: NewPage, gw: LiveGateway) -> None:
     get_member(gw, "d1", (404,))
 
 
-def test_network_error_message(new_page: NewPage, gw: LiveGateway) -> None:
+def test_network_error_message(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "n1")
     page = new_page()
     open_members(page, gw)
@@ -453,7 +455,7 @@ def test_network_error_message(new_page: NewPage, gw: LiveGateway) -> None:
 
 # ---- mountMemberForm(T8 精靈使用的介面)---------------------------------------------------------
 
-def test_mount_member_form_contract(new_page: NewPage, gw: LiveGateway, fake_api) -> None:  # noqa: ANN001
+def test_mount_member_form_contract(new_page: NewPage, gw: Serve, fake_api) -> None:  # noqa: ANN001
     page = new_page()
     open_members(page, gw)
     assert "mountMemberForm" in import_module(page, "member-form.js")
@@ -493,7 +495,7 @@ SYNC_NOTE = "params.api_base 與上游網址不同,已以上游網址為準"
 
 
 @pytest.mark.parametrize("kind", ["api", "local"])
-def test_upstream_kept_when_params_fixed(new_page: NewPage, gw: LiveGateway, kind: str) -> None:
+def test_upstream_kept_when_params_fixed(new_page: NewPage, gw: Serve, kind: str) -> None:
     up = "http://127.0.0.1:4321/v1"
     page = new_page()
     open_members(page, gw)
@@ -510,7 +512,7 @@ def test_upstream_kept_when_params_fixed(new_page: NewPage, gw: LiveGateway, kin
     assert get_member(gw, f"{kind}-up")["params"] == {"timeout": 60, "api_base": up}
 
 
-def test_upstream_conflict_upstream_wins_with_note(new_page: NewPage, gw: LiveGateway) -> None:
+def test_upstream_conflict_upstream_wins_with_note(new_page: NewPage, gw: Serve) -> None:
     a, b = "http://127.0.0.1:1111/v1", "http://127.0.0.1:2222/v1"
     page = new_page()
     open_members(page, gw)
@@ -530,7 +532,7 @@ def test_upstream_conflict_upstream_wins_with_note(new_page: NewPage, gw: LiveGa
 
 @pytest.mark.parametrize("field,error", [("limit_amount", "上限必須是 0 以上的數字"),
                                          ("ctx", "Context 上限必須是正整數")])
-def test_bad_number_input_not_sent(new_page: NewPage, gw: LiveGateway, field: str, error: str) -> None:
+def test_bad_number_input_not_sent(new_page: NewPage, gw: Serve, field: str, error: str) -> None:
     budget = {"type": "usd", "limit_amount": 5, "window": "monthly", "reset_anchor": None}
     seed_member(gw, "num1", budget=budget)
     page = new_page()
@@ -548,7 +550,7 @@ def test_bad_number_input_not_sent(new_page: NewPage, gw: LiveGateway, field: st
     assert after["budget"] == budget and after["capabilities"]["ctx"] == 1000
 
 
-def test_toggle_updates_open_editor(new_page: NewPage, gw: LiveGateway) -> None:
+def test_toggle_updates_open_editor(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "m1")
     page = new_page()
     open_members(page, gw, "m1")
@@ -563,7 +565,7 @@ def test_toggle_updates_open_editor(new_page: NewPage, gw: LiveGateway) -> None:
     assert get_member(gw, "m1")["enabled"] is False
 
 
-def test_dot_ids_rejected_on_create(new_page: NewPage, gw: LiveGateway) -> None:
+def test_dot_ids_rejected_on_create(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_members(page, gw)
     form = new_form(page)
@@ -574,7 +576,7 @@ def test_dot_ids_rejected_on_create(new_page: NewPage, gw: LiveGateway) -> None:
     assert requests_of(guard_of(page), "POST", "/api/deployments") == []
 
 
-def test_dot_id_member_not_managed(new_page: NewPage, gw: LiveGateway) -> None:
+def test_dot_id_member_not_managed(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, ".")
     seed_member(gw, "ok1")
     page = new_page()
@@ -592,7 +594,7 @@ def test_dot_id_member_not_managed(new_page: NewPage, gw: LiveGateway) -> None:
     assert [u for _, u in guard.requests if "/api/deployments/" in u] == []
 
 
-def test_litellm_member_create_and_edit(new_page: NewPage, gw: LiveGateway) -> None:
+def test_litellm_member_create_and_edit(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_members(page, gw)
     form = new_form(page)
@@ -621,7 +623,7 @@ def test_litellm_member_create_and_edit(new_page: NewPage, gw: LiveGateway) -> N
     assert get_member(gw, "ds2") == before
 
 
-def test_removed_cli_module_member(new_page: NewPage, gw: LiveGateway) -> None:
+def test_removed_cli_module_member(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "gone", kind="cli", provider="gone-cli", model="x-1", params={}, credential_ref=None)
     page = new_page()
     open_members(page, gw)
@@ -635,7 +637,7 @@ def test_removed_cli_module_member(new_page: NewPage, gw: LiveGateway) -> None:
     expect(form.field("model_manual")).to_have_value("x-1")
 
 
-def test_mount_member_form_edit_and_cancel(new_page: NewPage, gw: LiveGateway) -> None:
+def test_mount_member_form_edit_and_cancel(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "e1")
     page = new_page()
     open_members(page, gw)
@@ -669,7 +671,7 @@ def test_user_data_rendered_as_text(new_page: NewPage, make_ui_gateway: MakeGw, 
     write_module(tmp_path / "mods", "xssmod", providers=("xss-p",),
                  models_yaml=("- id: xm\n  label: '" + evil + "'\n"
                               "  capabilities: {ctx: 10, tools: false, vision: false, efforts: []}\n"))
-    gw = make_ui_gateway(extra_adapter_paths=[tmp_path / "mods"])
+    gw = make_ui_gateway(adapter_paths=[tmp_path / "mods"])
     seed_member(gw, "<i>x", tags=[evil])
     page = new_page()
     open_members(page, gw)

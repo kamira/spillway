@@ -14,11 +14,10 @@ from urllib.parse import urlsplit
 import pytest
 from playwright.sync_api import Page, Request, Response, expect
 
-from spillway.clock import FakeClock
-from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import (CLIP, MakeGw, NewPage, add_member, add_route, api, goto, guard_of, query_of,
+from tests.blackbox.harness import Serve
+from tests.blackbox.ui import (CLIP, MakeGw, NewPage, add_member, add_route, api, goto, guard_of, query_of,
                                wait_loaded)
-from tests.helpers.ui_ledger import bulk_ledger, insert_ledger, insert_payload
+from tests.blackbox.ui.ledger import bulk_ledger, insert_ledger, insert_payload
 
 
 NOW = datetime(2026, 11, 3, 12, 0, 0, tzinfo=timezone.utc)
@@ -35,8 +34,8 @@ def ids(page: Page) -> list[int]:
 
 
 @pytest.fixture
-def gw(make_ui_gateway: MakeGw) -> LiveGateway:
-    g = make_ui_gateway(clock=FakeClock(NOW))
+def gw(make_ui_gateway: MakeGw) -> Serve:
+    g = make_ui_gateway(start_time=NOW)
     add_member(g, "m1", kind="local")
     add_member(g, "m2", kind="local")
     add_route(g, "rt")
@@ -44,7 +43,7 @@ def gw(make_ui_gateway: MakeGw) -> LiveGateway:
     return g
 
 
-def open_ledger(new_page: NewPage, gw: LiveGateway, path: str = "/ui/ledger.html", **kw) -> Page:  # noqa: ANN003
+def open_ledger(new_page: NewPage, gw: Serve, path: str = "/ui/ledger.html", **kw) -> Page:  # noqa: ANN003
     page = new_page(**kw)
     goto(page, gw, path)
     wait_loaded(page, "#ledger-table")
@@ -61,7 +60,7 @@ def change(page: Page, action: Callable[[], None]) -> dict[str, str]:
     return sent
 
 
-def test_filters_sync_url_api_and_export(new_page: NewPage, gw: LiveGateway) -> None:
+def test_filters_sync_url_api_and_export(new_page: NewPage, gw: Serve) -> None:
     insert_ledger(gw, 1, NOW - timedelta(hours=1), deployment="m1", route="rt", status="ok")
     insert_ledger(gw, 2, NOW - timedelta(hours=2), deployment="m1", route="rt", status="error", fallback_depth=1)
     insert_ledger(gw, 3, NOW - timedelta(hours=3), deployment="m2", route="other", status="error", fallback_depth=2)
@@ -115,7 +114,7 @@ def test_filters_sync_url_api_and_export(new_page: NewPage, gw: LiveGateway) -> 
     assert len(lines) == 1 + len(ids(page))
 
 
-def test_date_boundaries_asia_taipei(new_page: NewPage, gw: LiveGateway) -> None:
+def test_date_boundaries_asia_taipei(new_page: NewPage, gw: Serve) -> None:
     edge = datetime(2026, 11, 2, 16, 0, 0, tzinfo=timezone.utc)      # = 2026-11-03 00:00 台北
     insert_ledger(gw, 1, edge - timedelta(seconds=1), deployment="m1")                  # 11-02 23:59:59
     insert_ledger(gw, 2, edge, deployment="m1")                                         # 11-03 00:00:00
@@ -140,7 +139,7 @@ def test_date_boundaries_asia_taipei(new_page: NewPage, gw: LiveGateway) -> None
     assert q == {"from": "2026-11-03T00:00:00Z"}
 
 
-def test_paging(new_page: NewPage, gw: LiveGateway) -> None:
+def test_paging(new_page: NewPage, gw: Serve) -> None:
     for i in range(1, 121):
         insert_ledger(gw, i, NOW - timedelta(minutes=i), deployment="m1")
     page = open_ledger(new_page, gw)
@@ -161,7 +160,7 @@ def test_paging(new_page: NewPage, gw: LiveGateway) -> None:
     expect(page.locator("#page-info")).to_have_text("第 1 / 3 頁,共 120 列")
 
 
-def test_export_disabled_over_limit(new_page: NewPage, gw: LiveGateway) -> None:
+def test_export_disabled_over_limit(new_page: NewPage, gw: Serve) -> None:
     bulk_ledger(gw, 100_001, NOW - timedelta(hours=1), deployment="m1", status="ok")
     insert_ledger(gw, 200_000, NOW - timedelta(hours=2), deployment="m2", status="error")
     page = open_ledger(new_page, gw)
@@ -181,7 +180,7 @@ def test_export_disabled_over_limit(new_page: NewPage, gw: LiveGateway) -> None:
     expect(hint).to_be_hidden()
 
 
-def test_payload_panel(new_page: NewPage, gw: LiveGateway) -> None:
+def test_payload_panel(new_page: NewPage, gw: Serve) -> None:
     ts = NOW - timedelta(hours=1)
     req_text = '{"messages": [{"role": "user", "content": "<b>hi</b> & <script>alert(3)</script>"}]}'
     resp_text = "回應 <img src=x onerror=alert(4)>"
@@ -234,7 +233,7 @@ def test_payload_panel(new_page: NewPage, gw: LiveGateway) -> None:
 
 
 @pytest.mark.expect_http_errors(404, 410)
-def test_payload_expired_and_not_recorded(new_page: NewPage, gw: LiveGateway) -> None:
+def test_payload_expired_and_not_recorded(new_page: NewPage, gw: Serve) -> None:
     api(gw, "PUT", "/api/settings/context", {"context_retention_days": 7})    # 明設:30 天前的列已過期
     old = NOW - timedelta(days=30)
     insert_ledger(gw, 1, old, deployment="m1")
@@ -255,7 +254,7 @@ def test_payload_expired_and_not_recorded(new_page: NewPage, gw: LiveGateway) ->
     expect(panel).to_be_hidden()
 
 
-def test_orphan_rows_show_original_id(new_page: NewPage, gw: LiveGateway) -> None:
+def test_orphan_rows_show_original_id(new_page: NewPage, gw: Serve) -> None:
     insert_ledger(gw, 1, NOW - timedelta(hours=1), deployment="m1")
     insert_ledger(gw, 2, NOW - timedelta(hours=2), deployment="ghost")
     add_member(gw, "gone", kind="local")
@@ -271,7 +270,7 @@ def test_orphan_rows_show_original_id(new_page: NewPage, gw: LiveGateway) -> Non
 
 
 @pytest.mark.expect_http_errors(404)
-def test_error_html_is_text(new_page: NewPage, gw: LiveGateway) -> None:
+def test_error_html_is_text(new_page: NewPage, gw: Serve) -> None:
     insert_ledger(gw, 1, NOW - timedelta(hours=1), deployment=XSS.replace(" ", ""), route=XSS, status="error",
                   error=XSS)
     page = open_ledger(new_page, gw)
@@ -287,7 +286,7 @@ def test_error_html_is_text(new_page: NewPage, gw: LiveGateway) -> None:
     assert guard_of(page).dialogs == []
 
 
-def test_double_click_next_moves_one_page(new_page: NewPage, gw: LiveGateway) -> None:
+def test_double_click_next_moves_one_page(new_page: NewPage, gw: Serve) -> None:
     for i in range(1, 121):
         insert_ledger(gw, i, NOW - timedelta(minutes=i), deployment="m1")
     page = open_ledger(new_page, gw)
@@ -303,7 +302,7 @@ def test_double_click_next_moves_one_page(new_page: NewPage, gw: LiveGateway) ->
     assert change(page, lambda: page.locator("#page-next").click()) == {"page": "3"}
 
 
-def test_page_out_of_range_clamps_to_last(new_page: NewPage, gw: LiveGateway) -> None:
+def test_page_out_of_range_clamps_to_last(new_page: NewPage, gw: Serve) -> None:
     for i in range(1, 121):
         insert_ledger(gw, i, NOW - timedelta(minutes=i), deployment="m1")
     page = new_page()
@@ -325,7 +324,7 @@ def _fail_500(route) -> None:  # noqa: ANN001
 
 
 @pytest.mark.expect_http_errors(500)
-def test_export_link_disabled_when_list_fails(new_page: NewPage, gw: LiveGateway) -> None:
+def test_export_link_disabled_when_list_fails(new_page: NewPage, gw: Serve) -> None:
     insert_ledger(gw, 1, NOW - timedelta(hours=1), deployment="m1")
     page = new_page()
     page.route(lambda url: urlsplit(url).path == "/api/ledger", _fail_500)
@@ -345,7 +344,7 @@ def test_export_link_disabled_when_list_fails(new_page: NewPage, gw: LiveGateway
 
 
 @pytest.mark.expect_http_errors(500)
-def test_member_list_failure_does_not_mark_orphans(new_page: NewPage, gw: LiveGateway) -> None:
+def test_member_list_failure_does_not_mark_orphans(new_page: NewPage, gw: Serve) -> None:
     insert_ledger(gw, 1, NOW - timedelta(hours=1), deployment="m1")
     insert_ledger(gw, 2, NOW - timedelta(hours=2), deployment="ghost")
     page = new_page()
