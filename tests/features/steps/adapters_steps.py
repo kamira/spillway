@@ -1,11 +1,14 @@
 """m2_adapters.feature 專用步驟(CHG-20261030-02 T15;AC-19、7.6.5、7.6.7)。
 
-測試模組以 `tests.contract.fakemods.write_module` 寫在情境的暫存目錄(決策 15:不寫入 src/);
-「啟動閘道」= 以 `create_app(extra_adapter_paths=[暫存目錄])` 建新 app(AC-19 的「重新啟動」)。
+測試模組以 `tests.blackbox.fakemods.write_module` 寫在情境的暫存目錄(決策 15:不寫入 src/);
+「啟動閘道」= 以 `SPILLWAY_TEST_ADAPTER_PATHS=<暫存目錄>` 啟動(或重新啟動)serve 子行程(AC-19 的「重新啟動」;
+CHG-20261107-03 T4,Python 版為模組路徑,實作相依,見 `tests/blackbox/impl_dependent.toml`)。
+「未修改任何既有檔案」:放入模組前後,repo 內所有 git 追蹤檔案(路徑與內容)的雜湊相同。
 「合約測試對該模組通過」以子行程執行 `tests/contract/test_adapter_contract.py` 與
-`tests/contract/test_call_status.py`(design 規則 3 的兩個檔案),經 `SPILLWAY_CONTRACT_EXTRA_PATHS`
-把暫存目錄納入參數化、經 `SPILLWAY_CONTRACT_HARNESS_PATHS` 提供模組資料夾外的 call 狀態 harness,
-並只選該模組的參數化項;斷言 call_status 的 5 組上游輸出全數通過。
+`tests/contract/test_call_status.py`(design 規則 3 的兩個檔案;Python 專屬的 adapter 合約測試,
+CHG-20261107-03 決策 1),經 `SPILLWAY_CONTRACT_EXTRA_PATHS` 把暫存目錄納入參數化、經
+`SPILLWAY_CONTRACT_HARNESS_PATHS` 提供模組資料夾外的 call 狀態 harness,並只選該模組的參數化項;
+斷言 call_status 的 5 組上游輸出全數通過。子行程沿用本行程的環境(含 `PYTHONPATH`),不設黑箱守門旗標。
 """
 from __future__ import annotations
 
@@ -18,20 +21,23 @@ from pathlib import Path
 
 from behave import step, use_step_matcher
 
-from tests.contract.fakemods import write_module
+from tests.blackbox.fakemods import write_module
+from tests.blackbox.guard import FORCE_ENV
+from tests.blackbox.harness import REAL_KEY_VARS
 
 use_step_matcher("re")
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-BUILTIN_ADAPTERS = REPO_ROOT / "src" / "spillway" / "adapters"
 
 
 def _tree_digest(root: Path) -> str:
+    """`root`(git 工作目錄)內所有追蹤檔案的路徑與內容的雜湊。"""
+    listed = subprocess.run(["git", "ls-files", "-z"], cwd=str(root), capture_output=True, check=True).stdout
     h = hashlib.sha256()
-    for p in sorted(root.rglob("*")):
-        if p.is_file() and "__pycache__" not in p.parts:
-            h.update(str(p.relative_to(root)).encode())
-            h.update(p.read_bytes())
+    for rel in sorted(x for x in listed.split(b"\0") if x):
+        p = root / rel.decode("utf-8", "surrogateescape")
+        h.update(rel)
+        h.update(p.read_bytes() if p.is_file() else b"<missing>")
     return h.hexdigest()
 
 
@@ -58,12 +64,12 @@ def _module_for(gw, provider: str) -> dict:
 
 @step(r'另外放入一個宣告 provider "([^"]+)" 的測試模組資料夾,未修改任何既有檔案')
 def step_put_module(context, provider):
-    before = _tree_digest(BUILTIN_ADAPTERS)
+    before = _tree_digest(REPO_ROOT)
     path = write_module(_mods_dir(context), f"{provider}_module", providers=(provider,),
                         harness_dir=_harness_dir(context))
     context.module_dir = path
     assert not path.resolve().is_relative_to(REPO_ROOT)
-    assert _tree_digest(BUILTIN_ADAPTERS) == before, "既有的 adapter 模組檔案被修改"
+    assert _tree_digest(REPO_ROOT) == before, "既有的檔案被修改"
 
 
 @step(r'另外放入一個宣告 provider "([^"]+)" 且 cardinality 為 single 的測試模組資料夾')
@@ -76,13 +82,15 @@ def step_put_single_module(context, provider):
 def step_put_broken_module(context, provider):
     context.module_dir = write_module(_mods_dir(context), f"{provider}_module", providers=(provider,),
                                       pre_import="import spillway_no_such_dependency_t15\n")
+    context.allowed_unavailable = {context.module_dir.name}    # serve 的模組載入檢查允許它不可用
 
 
 @step(r"啟動閘道")
 def step_start(context):
     gw = context.gw
     try:
-        gw.start(extra_paths=[_mods_dir(context)])
+        gw.start(extra_paths=[_mods_dir(context)],
+                 allowed_unavailable_adapters=frozenset(getattr(context, "allowed_unavailable", ())))
     except BaseException as exc:  # noqa: BLE001 — 由「閘道正常啟動」步驟判定
         gw.start_error = exc
         raise
@@ -117,11 +125,9 @@ def step_adapters_unavailable(context, provider):
 @step(r"合約測試對該模組通過")
 def step_contract(context):
     name = context.module_dir.name
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+    env = {k: v for k, v in os.environ.items() if k not in REAL_KEY_VARS and k != FORCE_ENV}
     env["SPILLWAY_CONTRACT_EXTRA_PATHS"] = str(context.module_dir.parent)
     env["SPILLWAY_CONTRACT_HARNESS_PATHS"] = str(_harness_dir(context))
-    env["PYTHONPATH"] = os.pathsep.join([str(REPO_ROOT / "src"), str(REPO_ROOT)])
     env["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
     contract = REPO_ROOT / "tests" / "contract"
     # design 規則 3:合約測試 = 形狀契約 + call 狀態,兩檔都跑(末端審查 M29)

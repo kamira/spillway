@@ -41,3 +41,8 @@ reason = "斷言 SPILLWAY_CMD 未設定時 spillway_cmd() 的預設值(決策 8 
 file = "tests/ui/test_members.py"
 literal = "src"
 reason = "讀 src/spillway/adapters/claude_cli/models.yaml 當模型下拉選單的獨立 oracle(檔案讀取,決策 9 ②;T5 回報,主 session 代 T2 擁有者補上)"
+
+[[allow]]
+file = "tests/features/steps/m4b_steps.py"
+literal = "src/spillway/adapters/claude_cli/models.yaml"
+reason = "讀 claude_cli 的 models.yaml 當「與 claude_cli 模組的 models.yaml 一致」的獨立 oracle(檔案讀取,決策 9 ②;T4 回報,主 session 代 T2 擁有者補上)"
