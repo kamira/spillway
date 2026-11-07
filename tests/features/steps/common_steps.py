@@ -1,7 +1,8 @@
 """多個 feature 共用的步驟(CHG-20261030-02 T15)。
 
 步驟一律以 `@step` 註冊(Given/When/Then/And 皆可用),regex 全句比對(behave 的 "re" matcher 自動加上首尾錨點),
-文字與 feature 檔逐字一致。驅動物件 `context.gw` 見 `tests/features/support/gateway.py`。
+文字與 feature 檔逐字一致。驅動物件 `context.gw` 見 `tests/features/support/gateway.py`(子行程 serve;
+時間經 `POST /__test__/clock`、亂數經 `GET /__test__/rng`,CHG-20261107-03 T4)。
 """
 from __future__ import annotations
 
@@ -59,9 +60,10 @@ def step_local_member(context, dep_id, provider):
 def step_fixed_seed(context):
     gw = context.gw
     gw.ensure_started()
-    # app 以 gw.rng(SystemRng(seed=FIXED_SEED))建立;Router 使用同一個物件
-    assert gw.app.state.rng is gw.rng
-    assert gw.seed is not None
+    # serve 以 SPILLWAY_TEST_RNG_SEED=gw.seed 啟動(spec 13.4.2;seed 為不透明值,只看是否設定)
+    rng = gw.control.rng()
+    assert gw.seed is not None and rng["seeded"] is True
+    assert rng["seed"] is not None
 
 
 @step(r'target 只含所列成員的 route "([^"]+)" 順序為 (.+)')

@@ -3,3 +3,5 @@
 # wave 3 的 T3、T4、T5 完成轉換時各自在下方加一行(只加自己的目錄,不改其他行):
 #   T3:tests/acceptance   T4:tests/features   T5:tests/ui
 tests/acceptance
+tests/features
+tests/ui

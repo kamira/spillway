@@ -1,8 +1,11 @@
-"""m2_context.feature 專用步驟(CHG-20261030-02 T15;AC-13、AC-14、AC-15、2.4.2、NFR-5)。"""
+"""m2_context.feature 專用步驟(CHG-20261030-02 T15;AC-13、AC-14、AC-15、2.4.2、NFR-5)。
+
+(CHG-20261107-03 T4)資料庫一律唯讀(`gw.db()`);時間推進經 `POST /__test__/clock`,清理經
+`POST /__test__/retention/run`。
+"""
 from __future__ import annotations
 
 import json
-import os
 
 from behave import step, use_step_matcher
 
@@ -92,7 +95,7 @@ def step_payload_status(context, status, code):
 def step_payload_no_secret(context, secret):
     # 守門(末端審查 M28):憑證值若等於 prompt 字串,Router 的 extra_secrets 也會遮掉它,
     # 就驗不到 spec 2.4.4 的 `sk-` 樣式規則
-    assert os.environ[TEST_KEY_ENV] != secret, "憑證值不可與受測的 prompt 金鑰相同"
+    assert context.gw.serve_env()[TEST_KEY_ENV] != secret, "憑證值不可與受測的 prompt 金鑰相同"
     gw = context.gw
     p = gw.ok(gw.get(f"/api/ledger/{gw.last_ledger_id}/payload"), 200)
     assert secret not in p["request_json"] and secret not in (p["response_text"] or ""), p

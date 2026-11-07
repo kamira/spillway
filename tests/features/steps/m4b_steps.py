@@ -1,18 +1,19 @@
 """m4b_ui.feature 專用步驟(CHG-20261103-01 T9;決策 22、23,決策審議修訂 AM-5、AM-9)。
 
-驅動方式:
-- 閘道:行程內 live gateway(`tests/helpers/live_gateway.start_live_gateway`;背景 thread 跑真的 uvicorn),
-  資料目錄為 environment.py 準備的暫存 `SPILLWAY_HOME`;存於 `context.ui_gw`(另一個空資料目錄的閘道為
-  `context.ui_gw2`)。**不使用 `context.gw`**(它以 `asyncio.Runner` 在主 thread 執行,與 Playwright sync API
-  衝突;Global Constraints)。查伺服端狀態只用同步的 `gw.http()`(經 `tests.helpers.ui.api`)與
-  `gw.call_in_loop`。
+驅動方式(CHG-20261107-03 T4 改為黑箱):
+- 閘道:serve 子行程(`tests.blackbox.harness.Serve`;系統時鐘、啟動時簽發 token,同原 live gateway 的
+  `token=True`),資料目錄為 environment.py 準備的暫存 `SPILLWAY_HOME`;存於 `context.ui_gw`(另一個空資料目錄
+  的閘道為 `context.ui_gw2`)。**不使用 `context.gw`**(本 feature 不啟動它)。查伺服端狀態只用同步的
+  `gw.http()`(經 `tests.blackbox.ui.api`)與唯讀連線;帳本與冷卻經測試控制介面種入;MCP 工具清單以官方 SDK
+  `tools/list` 取得(獨立 oracle,AM-9),SDK 用戶端在背景 thread 的事件迴圈執行(主 thread 不用 asyncio)。
 - 瀏覽器:environment.py 的 `before_feature` 只為本 feature 啟動 Playwright(`context.browser`);每個情境以
-  `tests.helpers.ui.open_context` 開一個 context(1280×800、Asia/Taipei、zh-TW、剪貼簿權限),收尾時
+  `tests.blackbox.ui.open_context` 開一個 context(1280×800、Asia/Taipei、zh-TW、剪貼簿權限),收尾時
   `close_and_collect`:console error、pageerror、非本機請求任何一筆即讓情境失敗。
-- 頁面操作與種資料匯入 `tests/helpers/ui.py` 與 `tests/helpers/ui_<area>.py`(不搬移)。少數小工具
+- 頁面操作與種資料匯入 `tests/blackbox/ui/`(T2 由 `tests/helpers/ui*.py` 複製改寫的黑箱版)。少數小工具
   (`_wait_step`、`TPE`/`_local`、匯出下載)與 tests/ui、操作驗收各有一份,留待下一輪共用模組整理。
 - 上游一律為 environment.py 的假 API 上游(`context.fake`);api 成員的憑證參照為 `env:SPILLWAY_TEST_KEY`
-  (值為 environment.py 設定的假金鑰,只是參照)。
+  (值為明確傳給 serve 的假金鑰,只是參照)。
+- 「claude_cli 模組的 models.yaml」以檔案讀取當資料(邊界守門的允許清單項目,決策 9 ②)。
 - 收尾登記到 `context.scenario_teardown`(environment.py 在關閉 `context.gw` 與刪除暫存目錄之前執行):
   先關瀏覽器 context 並檢查違規,再停本情境啟動的全部閘道。
 - 情境 2 的「不超過 10 分鐘」只是回歸護欄;AC-8 的計時以擁有者步驟為準(決策 23)。
@@ -20,7 +21,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -33,28 +33,29 @@ import yaml
 from behave import step, use_step_matcher
 from playwright.sync_api import Page, Response, expect
 
-from spillway.api.mcp import mcp_catalog
-from tests.features.support.gateway import TEST_KEY, TEST_KEY_ENV
-from tests.helpers.live_gateway import start_live_gateway
-from tests.helpers.ui import (CLIP, NAV, add_member, add_route, api, close_and_collect, confirm_dialog,
-                              db_snapshot, goto, guard_of, open_context, seed_group, wait_loaded)
-from tests.helpers.ui_ledger import insert_ledger
-from tests.helpers.ui_mcp import open_reference
-from tests.helpers.ui_members import BROKEN_PROVIDER, MemberForm, broken_adapter_dir, open_members, seed_member
-from tests.helpers.ui_overview import set_cooldown
-from tests.helpers.ui_routes import (add_members, api_body, create_route, drag_slot, editor_slots, open_editor,
-                                     put_order, route_order)
-from tests.helpers.ui_settings import (choose_import, export_yaml, import_dialog, import_requests, open_settings,
-                                       page_leaks, token_hash)
+from tests.blackbox.harness import Serve
+from tests.blackbox.mcp import LoopThread
+from tests.blackbox.ui import (CLIP, NAV, add_member, add_route, api, close_and_collect, confirm_dialog,
+                               db_snapshot, goto, guard_of, open_context, seed_group, wait_loaded)
+from tests.blackbox.ui.ledger import insert_ledger
+from tests.blackbox.ui.mcp import mcp_catalog, open_reference
+from tests.blackbox.ui.members import (BROKEN_MODULE, BROKEN_PROVIDER, MemberForm, broken_adapter_dir, open_members,
+                                       seed_member)
+from tests.blackbox.ui.overview import set_cooldown
+from tests.blackbox.ui.routes import (add_members, api_body, create_route, drag_slot, editor_slots, open_editor,
+                                      put_order, route_order)
+from tests.blackbox.ui.settings import (choose_import, export_yaml, import_dialog, import_requests, open_settings,
+                                        page_leaks, token_hash)
+from tests.features.support.gateway import RETENTION_POLL_SECONDS, TEST_KEY, TEST_KEY_ENV
 
 use_step_matcher("re")
 
 REPO = Path(__file__).resolve().parents[3]
-CLAUDE_MODELS = REPO / "src" / "spillway" / "adapters" / "claude_cli" / "models.yaml"
+CLAUDE_MODELS = REPO / "src/spillway/adapters/claude_cli/models.yaml"
 OTHER_TEXT = "其他(手動輸入)"
 TPE = ZoneInfo("Asia/Taipei")
 WIZARD_LIMIT_S = 600.0                # 情境 2:回歸護欄(AC-8 的計時以擁有者步驟為準)
-# 情境 4:`tests.contract.fakemods.write_module` 的預設 kinds 為 ("api",);無法 import 的模組在
+# 情境 4:`tests.blackbox.fakemods.write_module` 的預設 kinds 為 ("api",);無法 import 的模組在
 # /api/adapters 回 kinds: [],畫面列在所有類型,所以「宣告的類型」取其預設值。
 BROKEN_KIND = "api"
 SCREENS = {"總覽": "/ui/", "成員": "/ui/members.html", "帳本": "/ui/ledger.html", "設定": "/ui/settings.html",
@@ -71,10 +72,12 @@ def _page(context: Any) -> Page:
     return context.ui_page
 
 
-def _start_gateway(context: Any, db_path: Path | None = None, **kw: Any) -> Any:
-    gw = start_live_gateway(db_path, **kw)
+def _start_gateway(context: Any, home: Path | None = None, **kw: Any) -> Serve:
+    """serve 子行程(預設資料目錄為情境的 SPILLWAY_HOME);系統時鐘、啟動時簽發 token(同原 live gateway)。"""
+    gw = Serve(home if home is not None else context.gw.home, retention_poll_seconds=RETENTION_POLL_SECONDS,
+               extra_env={TEST_KEY_ENV: TEST_KEY}, **kw)
     context.ui_gateways.append(gw)
-    return gw
+    return gw.start()
 
 
 def _close_all(context: Any, opened: list[Any]) -> None:
@@ -195,7 +198,7 @@ def _wait_step(page: Page, n: int) -> None:
 
 @step(r'閘道行程的環境變數 "([^"]+)" 已設定為假金鑰')
 def step_env_fake_key(context: Any, var: str) -> None:
-    assert var == TEST_KEY_ENV and os.environ.get(var) == TEST_KEY       # 行程內閘道:同一個環境
+    assert var == TEST_KEY_ENV and _gw(context).env().get(var) == TEST_KEY       # serve 子行程的環境
 
 
 @step(r"畫面導向首次設定精靈")
@@ -336,8 +339,9 @@ def step_caps_filled(context: Any) -> None:
 @step(r"閘道以含一個 __init__\.py 無法 import 的 adapter 模組的 extra_adapter_paths 啟動")
 def step_gateway_with_broken(context: Any) -> None:
     root = broken_adapter_dir(context.tmp / "mods")
-    db_path = context.tmp / "spillway-home-ac21" / "spillway.db"
-    gw = _start_gateway(context, db_path, extra_adapter_paths=[root])      # 正常啟動
+    home = context.tmp / "spillway-home-ac21"
+    gw = _start_gateway(context, home, adapter_paths=[root],               # 正常啟動
+                        allowed_unavailable_adapters={BROKEN_MODULE})
     context.ui_gw = gw
     broken = next(m for m in _adapters(context) if m["module"] == "broken")
     assert broken["available"] is False and broken["unavailable_reason"]
@@ -360,8 +364,22 @@ def step_broken_disabled(context: Any) -> None:
 # ---------------------------------------------------------------- 情境 5:API 參考(AC-22)
 
 def _catalog(context: Any, group: str = "all") -> dict[str, Any]:
+    """通知與錯誤碼取 `GET /api/mcp/catalog`(UI-8 的資料來源);工具以官方 MCP SDK 的 `tools/list` 取得
+    (名稱、description、inputSchema;獨立 oracle,AM-9)。"""
     gw = _gw(context)
-    return json.loads(json.dumps(gw.call_in_loop(mcp_catalog, gw.app, group)))
+    cat = json.loads(json.dumps(mcp_catalog(gw, group)))
+
+    async def listed() -> list[Any]:
+        async with gw.mcp_session(group) as client:
+            return (await client.session.list_tools()).tools
+
+    loop = LoopThread()
+    try:
+        tools = loop.run(listed())
+    finally:
+        loop.close()
+    cat["tools"] = [{"name": t.name, "description": t.description, "inputSchema": t.inputSchema} for t in tools]
+    return cat
 
 
 def _detail(page: Page) -> Any:
@@ -502,7 +520,7 @@ def _api_base(context: Any, dep_id: str) -> str:
 
 
 def _query(url: str) -> dict[str, list[str]]:
-    """網址的 query(多值;`tests.helpers.ui.query_of` 要求單值,這裡只看 dry_run)。"""
+    """網址的 query(多值;`tests.blackbox.ui.query_of` 要求單值,這裡只看 dry_run)。"""
     return parse_qs(urlsplit(url).query)
 
 
@@ -641,7 +659,7 @@ def step_token_and_key(context: Any, dep_id: str) -> None:
     gw = _gw(context)
     assert gw.token and token_hash(gw)
     dep = add_member(gw, dep_id, params={"api_base": f"{context.fake.base_url}/v1"})
-    assert dep["credential_ref"] == f"env:{TEST_KEY_ENV}" and os.environ[TEST_KEY_ENV] == TEST_KEY
+    assert dep["credential_ref"] == f"env:{TEST_KEY_ENV}" and gw.env()[TEST_KEY_ENV] == TEST_KEY
     add_route(gw, "rt")
     seed_group(gw, "coding", {"any": ["r"]})
 
@@ -746,7 +764,7 @@ def step_export_a(context: Any) -> None:
 
 @step(r'在另一個空資料目錄的閘道開啟畫面 "設定",以 mode "replace" 預覽匯入檔案 A 並在確認對話框按下 "匯入"')
 def step_import_a_elsewhere(context: Any) -> None:
-    gw2 = _start_gateway(context, context.tmp / "spillway-home-2" / "spillway.db")
+    gw2 = _start_gateway(context, context.tmp / "spillway-home-2")
     context.ui_gw2 = gw2
     page = _page(context)
     open_settings(page, gw2)

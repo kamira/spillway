@@ -1,15 +1,16 @@
 """m3b_mcp.feature 專用步驟(CHG-20261102-01 T8;使用者故事 1、2、3–7;AC-11;spec 8.1、8.2、9.1.4;決策 14、18)。
 
-連線方式(feature 檔開頭的說明):
-- HTTP 層(401/403、設定輸出、Host/Origin):`context.gw`(create_app + lifespan + httpx ASGITransport,
-  `create_app` 預設埠 8787,所以設定輸出的 URL 為 `http://127.0.0.1:8787/mcp/coding`)。斷言 HTTP body 一律用原生 httpx。
-- MCP 工具(`tools/list`、`ask`、`list_routes`)與 `list_changed`:`tests/helpers/live_gateway.py`(背景 thread 的真實
-  uvicorn,127.0.0.1 隨機埠),與 `context.gw` 共用同一個資料庫與 FakeClock;SDK 用戶端在 `LoopThread` 上執行
-  (`tests/features/support/mcp_proc.py`)。
-- 遞迴情境的後半與停機情境:子行程 `python -m spillway serve`(`ServeProc`),stdio 以子行程 `mcp-stdio`
-  經官方 SDK 的 stdio 用戶端。子行程啟動前先停止 `context.gw` 的 lifespan(之後的步驟需要時自動重新進入)。
-- token:Background 直接在資料庫 rotate,明文只存在 `context.m3b_token`(行程記憶體)。
-- 收尾:登記到 `context.scenario_teardown`(environment.py 在關閉 gw、刪除暫存目錄之前執行)。
+連線方式(CHG-20261107-03 T4 改為黑箱):
+- 全部情境都打 `context.gw` 的 serve 子行程(`tests.blackbox.harness.Serve`;真實 HTTP,127.0.0.1 隨機埠)。
+  HTTP 層(401/403、設定輸出、Host/Origin)以原生 httpx 斷言 HTTP body。
+- MCP 工具(`tools/list`、`ask`、`list_routes`)與 `list_changed`:官方 SDK 用戶端在 `LoopThread` 上執行
+  (`tests/blackbox/mcp.py`);GET 通知串流是否就緒經 `GET /__test__/mcp/sessions/{id}`。
+- 遞迴情境的後半與停機情境:同一個 serve 以 `Serve.restart(graceful_timeout=…)` 重新啟動(寬限期是啟動期設定);
+  stdio 以子行程 `SPILLWAY_CMD mcp-stdio` 經官方 SDK 的 stdio 用戶端。
+- token:serve 以 `SPILLWAY_TEST_NO_TOKEN=1` 啟動,Background 經 `POST /api/settings/token/rotate` 產生;
+  明文只存在 `context.m3b_token`(行程記憶體);雜湊以唯讀連線讀 `settings` 的 `access_token_sha256`。
+- 設定輸出的網址:feature 文字的 `8787` 是預設埠;harness 以隨機埠啟動,步驟把它換成實際埠再比對(AM-12)。
+- 收尾:登記到 `context.scenario_teardown`(environment.py 在停止 gw、刪除暫存目錄之前執行)。
 
 Background 中與其他 feature 共用的文字(`一個空的閘道資料目錄與假 API 上游`、`假 CLI 執行檔在 PATH 最前面…`、
 `成員 … 類型 "api" …`、`route … 的 target 含 …,採預設順序`)沿用既有步驟,不在此重複註冊。
@@ -26,31 +27,29 @@ from typing import Any
 import httpx
 from behave import step, use_step_matcher
 
-from spillway import settings
-from spillway.store import repo
-from tests.fakes.cli_upstream import assert_only_fakes
-from tests.features.steps.common_steps import _parse_slots
-from tests.features.steps.m3a_steps import _cli_body, _ids
-from tests.features.support.gateway import TEST_KEY, TEST_KEY_ENV
-from tests.features.support.mcp_proc import (
+from tests.blackbox.db import ACCESS_TOKEN_KEY, setting
+from tests.blackbox.harness import Serve
+from tests.blackbox.mask import redact_tokens
+from tests.blackbox.mcp import (
     INIT_BODY,
     MCP_ACCEPT,
     HeldSession,
     LoopThread,
-    ServeProc,
     ask_route_enum,
     group_alive,
     mcp_http_session,
     pid_alive,
     stdio_session,
 )
-from tests.helpers import redact_tokens
-from tests.helpers.live_gateway import start_live_gateway
+from tests.fakes.cli_upstream import assert_only_fakes
+from tests.features.steps.common_steps import _parse_slots
+from tests.features.steps.m3a_steps import _cli_body, _ids
 
 use_step_matcher("re")
 
 TOOLS = ("claude-code", "codex", "cursor", "gemini", "stdio")
 ASK_PROMPT = "請檢查這段程式碼"
+DEFAULT_PORT = 8787          # feature 文字中設定輸出網址的埠(AM-12:步驟換成 harness 的實際埠)
 
 
 # ---------------------------------------------------------------- 驅動
@@ -68,17 +67,11 @@ def _loop(context) -> LoopThread:
     return loop
 
 
-def _live(context):
-    """同一個資料庫、同一個 FakeClock 的 live_gateway(第一次使用時啟動)。"""
-    lg = getattr(context, "m3b_live", None)
-    if lg is None:
-        gw = context.gw
-        gw.ensure_started()   # Background 的資料已寫入;migration 已完成
-        lg = start_live_gateway(gw.db_path, token=False, clock=gw.clock, rng=gw.rng)
-        lg.token = context.m3b_token
-        context.m3b_live = lg
-        _teardown(context, lg.stop)
-    return lg
+def _live(context) -> Serve:
+    """本情境的 serve 子行程(Background 已啟動;收尾由 environment.py 停止)。"""
+    gw = context.gw
+    gw.ensure_started()
+    return gw.serve
 
 
 def _with_session(context, path: str, fn, *, token: Any = None) -> Any:
@@ -105,7 +98,7 @@ def _secrets(context) -> list[str]:
 
 def _token_hash(context) -> str | None:
     with context.gw.db() as conn:
-        return settings.get_access_token_hash(conn)
+        return setting(conn, ACCESS_TOKEN_KEY)
 
 
 # ---------------------------------------------------------------- Background
@@ -114,8 +107,8 @@ def _token_hash(context) -> str | None:
 @step(r"已產生存取 token")
 def step_token(context):
     gw = context.gw
-    with gw.db() as conn:   # connect() 先 migration
-        context.m3b_token = settings.rotate_access_token(conn)
+    gw.ensure_started()   # serve 以 NO_TOKEN 啟動(未簽發),經管理 API 產生
+    context.m3b_token = gw.serve.rotate_token()
     tok = context.m3b_token
     assert tok and _token_hash(context) == hashlib.sha256(tok.encode()).hexdigest()
 
@@ -202,11 +195,11 @@ def step_ask_cost(context):
 
 @step(r'帳本最新一列的 (route_name|error) 為 "([^"]+)"')
 def step_ledger_latest(context, column, value):
-    with context.gw.db() as conn:
-        rows = repo.list_ledger(conn)
+    with context.gw.db() as conn:   # 唯讀;column 只會是 route_name 或 error(步驟 regex)
+        rows = [dict(r) for r in conn.execute(f"SELECT id, {column} FROM usage_ledger")]
     assert rows, "帳本沒有任何列"
-    latest = max(rows, key=lambda r: r.id)
-    assert getattr(latest, column) == value, latest
+    latest = max(rows, key=lambda r: r["id"])
+    assert latest[column] == value, latest
 
 
 # ---------------------------------------------------------------- list_routes
@@ -256,9 +249,8 @@ def step_bad_token(context, path):
 @step(r"以管理 API rotate 存取 token")
 def step_rotate(context):
     gw = context.gw
-    out = gw.ok(gw.post("/api/settings/token/rotate"), 200)
     context.m3b_old_token = context.m3b_token
-    context.m3b_token = out["token"]
+    context.m3b_token = gw.serve.rotate_token()      # POST /api/settings/token/rotate(斷言 200)
     assert context.m3b_token and context.m3b_token != context.m3b_old_token
     assert _token_hash(context) == hashlib.sha256(context.m3b_token.encode()).hexdigest()
 
@@ -295,17 +287,12 @@ def step_http_status_code(context, status, code):
 # ---------------------------------------------------------------- 遞迴(子行程 serve + mcp-stdio)
 
 
-def _serve(context, graceful: float) -> ServeProc:
-    """子行程 serve(同一個 SPILLWAY_HOME;先停 context.gw 的 lifespan)。"""
+def _serve(context, graceful: float) -> Serve:
+    """以寬限期 `graceful` 重新啟動同一個 serve(同一個 SPILLWAY_HOME、同一埠;收尾由 environment.py 停止)。"""
     gw = context.gw
-    gw.stop()
-    s = ServeProc(gw.home, fake_bin=context.fake_cli_bin, graceful=graceful,
-                  log_path=context.tmp / f"serve-{len(context.scenario_teardown)}.log",
-                  extra_env={TEST_KEY_ENV: TEST_KEY,
-                             "SPILLWAY_LOCAL_API_BASE": context.fake.base_url + "/v1"},
-                  secrets=_secrets(context))
-    _teardown(context, s.stop)
-    s.wait_ready()
+    gw.start(gw.extra_paths, graceful_timeout=graceful)
+    s = gw.serve
+    assert s is not None
     context.m3b_serve = s
     return s
 
@@ -343,9 +330,9 @@ def step_open_stream(context, path):
     held = HeldSession(_loop(context), lg.url(path), context.m3b_token).open()
     _teardown(context, held.close)
     context.m3b_held = held
-    # 決策 13:列過工具的 session 才登記;再輪詢到 GET 通知串流在伺服器端就緒
+    # 決策 13:列過工具的 session 才登記;再輪詢 GET /__test__/mcp/sessions/{id} 到通知串流在伺服器端就緒
     context.m3b_tools = held.call(lambda s: _tools(s))
-    context.m3b_loop.run(lg.wait_stream_open(held.session_id, timeout=10.0), timeout=15)
+    lg.control.wait_stream_open(held.session_id, timeout=10.0)
     assert held.inbox == []
 
 
@@ -356,7 +343,7 @@ async def _tools(s) -> list:
 @step(r'以管理 API 建立 task route "([^"]+)",target 為群組 "([^"]+)"')
 def step_create_route_live(context, name, group):
     lg = _live(context)
-    with lg.http() as http:   # 經 live_gateway 的 app(其 mcp_events 送出通知)
+    with lg.http() as http:   # 同一個 serve(其 mcp_events 送出通知)
         r = http.post("/api/routes", json={"name": name, "target": {"group": group}, "mode": "task"})
     assert r.status_code == 201, r.text
     context.m3b_changed_at = time.monotonic()
@@ -430,6 +417,10 @@ def step_config_no_token(context):
 
 @step(r'除 "stdio" 外每份設定的 content 含 "([^"]+)"')
 def step_config_url(context, url):
+    # AM-12:feature 文字的網址帶預設埠 8787;serve 以隨機埠啟動,換成實際埠後比對(觀察方式改變)
+    port = context.gw.serve.port
+    assert f":{DEFAULT_PORT}/" in url and port != DEFAULT_PORT, (url, port)
+    url = url.replace(f"127.0.0.1:{DEFAULT_PORT}/", f"127.0.0.1:{port}/")
     for tool, cfg in context.m3b_configs.items():
         if tool == "stdio":
             continue
@@ -453,7 +444,7 @@ def step_fake_hold(context):
 @step(r'MCP 用戶端以正確 token 連線 "([^"]+)" 並在背景以 route "([^"]+)" 呼叫 ask')
 def step_background_ask(context, path, route):
     s = context.m3b_serve
-    held = HeldSession(_loop(context), s.url + path, context.m3b_token).open()
+    held = HeldSession(_loop(context), s.url(path), context.m3b_token).open()
     _teardown(context, held.close)
     context.m3b_held = held
 
@@ -469,7 +460,7 @@ def step_sigterm(context):
     assert pid_alive(rec["pid"]), rec
     context.m3b_fake_rec = rec
     context.m3b_signalled = time.monotonic()
-    context.m3b_serve.proc.send_signal(signal.SIGTERM)
+    context.m3b_serve.signal(signal.SIGTERM)      # 送到 serve 的行程群組(假 claude 另開 session,不受影響)
 
 
 @step(r'ask 結果為錯誤且 structuredContent 的錯誤碼為 "([^"]+)"')
@@ -490,12 +481,13 @@ def step_ask_error(context, code):
 @step(r"serve 在寬限期內結束且沒有殘留的假 claude 行程")
 def step_serve_exited(context):
     s = context.m3b_serve
-    assert s.proc.returncode == -signal.SIGTERM, (s.proc.returncode, s.safe_log())
+    assert s.returncode == -signal.SIGTERM, (s.returncode, s.stderr_text()[-4000:])
     assert context.m3b_exit_elapsed <= context.m3b_grace, f"serve 未在寬限內結束({context.m3b_exit_elapsed:.2f}s)"
     rec = context.m3b_fake_rec
     assert not pid_alive(rec["pid"]) and not group_alive(rec["pid"]), "假 claude 或其孫行程仍在"
     assert len(context.fake_cli.records("claude")) == 1
-    assert "Traceback" not in s.log_text()
-    leaked = any(t in s.log_text() for t in _secrets(context))
+    log = s.stderr_bytes().decode("utf-8", errors="replace")      # 原始 stderr(未遮罩)
+    assert "Traceback" not in log
+    leaked = any(t in log for t in _secrets(context))
     assert not leaked, "serve 日誌含 token 明文"
     assert_only_fakes()

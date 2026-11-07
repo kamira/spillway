@@ -3,12 +3,13 @@
 只新增兩句:「local 成員 …,api_base 指向一個沒有服務的埠」與「客戶端以 model … 送出 1 次請求,
 系統時間不前進」。route 順序、回應狀態與 header 沿用 `common_steps.py`;「以管理 API 把成員 … 的
 api_base 改為指向假 API 上游」由 T7 的 `cleanup_admin_steps.py` 提供。
+(CHG-20261107-03 T4)時間經 `GET /__test__/clock` 確認不前進;健康快取經 `GET /__test__/health-cache`。
 """
 from __future__ import annotations
 
 from behave import step, use_step_matcher
 
-from tests.helpers import dead_base as _dead_base
+from tests.blackbox.ports import dead_base as _dead_base
 
 use_step_matcher("re")
 
@@ -34,6 +35,6 @@ def step_send_once_clock_frozen(context, model):
     gw.chat(model)
     assert gw.clock.now() == t0
     # 健康快取仍在 TTL 內:第二次請求若成功,只可能是管理 API 修改後已失效重新探測
-    cached = gw.app.state.router.health_cache
+    cached = {e["deployment"]: e["healthy"] for e in gw.control.health_cache()}
     if gw.last.status_code == 200:
         assert cached.get(gw.last.headers.get("X-Spillway-Served-By", "")) is True

@@ -11,7 +11,9 @@
 1. 集合:範圍內的 pytest node ID(`pytest --collect-only -q`)與 behave 情境(dry-run json 的 feature + 名稱)
    與基準相同;每個情境的步驟數與基準相同。
 2. 斷言數:基準中範圍內每個函式與步驟函式的 `assert` 數、`expect(` 數不低於基準(與 `generate.py` 同一套
-   AST 規則)。函式鍵以 `FILE_MOVES`、`FUNCTION_MOVES` 對應到新位置(寫死,不做模糊比對);`REMOVED` 列出有意
+   AST 規則)。函式鍵以 `FILE_MOVES`(`tests/helpers/ui*.py` → `tests/blackbox/ui/`、
+   `tests/features/support/mcp_proc.py` → `tests/blackbox/mcp.py`)、`FUNCTION_MOVES`(`ServeProc.*` →
+   `harness.Serve`、`child_env` → `harness.child_env`、`redact` → `mask.redact_tokens`)對應到新位置(寫死,不做模糊比對);`REMOVED` 列出有意
    移除的函式與理由;其餘比對不到的函式一律算錯誤。`tests/helpers/ui*.py` 的函式在 `tests/ui` 屬於範圍時檢查
    (T2 已複製到 `tests/blackbox/ui/`)。
 3. diff:`git diff <diff-base> -- <roots>` 的新增行不得含 `skip`、`skipif`、`xfail`、`except AssertionError`;
@@ -49,9 +51,23 @@ FILE_MOVES = {
     "tests/helpers/ui_overview.py": "tests/blackbox/ui/overview.py",
     "tests/helpers/ui_routes.py": "tests/blackbox/ui/routes.py",
     "tests/helpers/ui_settings.py": "tests/blackbox/ui/settings.py",
+    # T2 把 MCP 驅動複製改寫到 tests/blackbox/mcp.py(LoopThread、HeldSession、mcp_http_session、raw_get_stream、
+    # stdio_session、ask_route_enum、pid_alive、group_alive、is_list_changed);T4 刪除原檔
+    "tests/features/support/mcp_proc.py": "tests/blackbox/mcp.py",
 }
 # 個別函式的搬家:基準鍵 → 新鍵(`檔案::qualname`)
-FUNCTION_MOVES: dict[str, str] = {}
+_MP = "tests/features/support/mcp_proc.py::"
+FUNCTION_MOVES: dict[str, str] = {
+    # 子行程 serve 改由 harness.Serve 負責(決策 8 ②)
+    _MP + "ServeProc.__init__": "tests/blackbox/harness.py::Serve.__init__",
+    _MP + "ServeProc.wait_ready": "tests/blackbox/harness.py::Serve.wait_ready",
+    _MP + "ServeProc.wait_exit": "tests/blackbox/harness.py::Serve.wait_exit",
+    _MP + "ServeProc.log_text": "tests/blackbox/harness.py::Serve.stderr_bytes",
+    _MP + "ServeProc.safe_log": "tests/blackbox/harness.py::Serve.stderr_text",   # 遮 token 的 stderr
+    _MP + "ServeProc.stop": "tests/blackbox/harness.py::Serve.stop",
+    _MP + "child_env": "tests/blackbox/harness.py::child_env",
+    _MP + "redact": "tests/blackbox/mask.py::redact_tokens",
+}
 # 步驟 pattern 的改名:基準 pattern → 新 pattern(feature 文字不改,原則上不需要)
 STEP_RENAMES: dict[str, str] = {}
 # 有意移除的函式 → 理由
@@ -153,10 +169,9 @@ def scan(repo: Path, files: list[Path]) -> tuple[dict[str, dict[str, int]], dict
 
 
 def _candidates(key: str) -> list[str]:
-    if key in FUNCTION_MOVES:
-        return [FUNCTION_MOVES[key]]
+    """新位置優先;找不到時用原鍵(對基準 commit 本身或尚未刪除舊檔的樹執行時)。"""
+    out = [FUNCTION_MOVES[key]] if key in FUNCTION_MOVES else []
     file, _, rest = key.partition("::")
-    out = []
     if file in FILE_MOVES:
         out.append(f"{FILE_MOVES[file]}::{rest}")
     out.append(key)
@@ -169,6 +184,7 @@ def check_asserts(repo: Path, roots: list[str], errors: list[str], report: list[
     for d in (*ALL_ROOTS, "tests/blackbox/ui"):
         if (repo / d).is_dir():
             files += sorted(p for p in (repo / d).rglob("*.py") if "__pycache__" not in p.parts)
+    files += sorted((repo / "tests/blackbox").glob("*.py"))   # harness、mcp、mask(搬移目標)
     files += sorted((repo / "tests/helpers").glob("ui*.py"))
     functions, steps = scan(repo, files)
     helpers_in_scope = "tests/ui" in roots

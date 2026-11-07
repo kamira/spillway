@@ -10,13 +10,13 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import MakeGw, NewPage, api, guard_of, seed_group
-from tests.helpers.ui_members import MemberForm, open_groups, requests_of, seed_member, seed_route
+from tests.blackbox.harness import Serve
+from tests.blackbox.ui import MakeGw, NewPage, api, guard_of, seed_group
+from tests.blackbox.ui.members import MemberForm, open_groups, requests_of, seed_member, seed_route
 
 
 @pytest.fixture
-def gw(make_ui_gateway: MakeGw) -> LiveGateway:
+def gw(make_ui_gateway: MakeGw) -> Serve:
     g = make_ui_gateway()
     seed_member(g, "a1", tags=["coding", "cheap"])
     seed_member(g, "a2", tags=["coding", "review"])
@@ -31,7 +31,7 @@ def preview_ids(page: Page) -> list[str]:
         "(ls) => ls.map((l) => l.getAttribute('data-member'))")
 
 
-def api_preview(gw: LiveGateway, selector: dict) -> list[str]:
+def api_preview(gw: Serve, selector: dict) -> list[str]:
     return [m["id"] for m in api(gw, "POST", "/api/groups/preview", {"selector": selector}).json()["members"]]
 
 
@@ -49,7 +49,7 @@ def expect_preview(page: Page, ids: list[str]) -> None:
     expect(page.locator('#group-editor [data-role="preview-title"]')).to_have_text(f"符合的成員({len(ids)})")
 
 
-def test_selector_rows_live_preview(new_page: NewPage, gw: LiveGateway) -> None:
+def test_selector_rows_live_preview(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_groups(page, gw)
     page.locator("#new-group").click()
@@ -86,7 +86,7 @@ def test_selector_rows_live_preview(new_page: NewPage, gw: LiveGateway) -> None:
     expect(page.locator('#group-editor [data-role="preview"] li[data-member="a3"]')).to_contain_text("停用")
 
 
-def test_preview_is_debounced(new_page: NewPage, gw: LiveGateway) -> None:
+def test_preview_is_debounced(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_groups(page, gw)
     page.locator("#new-group").click()
@@ -108,7 +108,7 @@ def test_preview_is_debounced(new_page: NewPage, gw: LiveGateway) -> None:
 
 
 @pytest.mark.expect_http_errors(422)
-def test_create_group_and_422(new_page: NewPage, gw: LiveGateway) -> None:
+def test_create_group_and_422(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_groups(page, gw)
     page.locator("#new-group").click()
@@ -137,7 +137,7 @@ def test_create_group_and_422(new_page: NewPage, gw: LiveGateway) -> None:
 
 
 @pytest.mark.expect_http_errors(409)
-def test_delete_referenced_group_409(new_page: NewPage, gw: LiveGateway) -> None:
+def test_delete_referenced_group_409(new_page: NewPage, gw: Serve) -> None:
     seed_group(gw, "coding", {"all": ["coding"]})
     seed_group(gw, "spare", {"any": ["review"]})
     seed_route(gw, "review", {"group": "coding"})
@@ -161,7 +161,7 @@ def test_delete_referenced_group_409(new_page: NewPage, gw: LiveGateway) -> None
     assert [g["name"] for g in api(gw, "GET", "/api/groups").json()["groups"]] == ["coding"]
 
 
-def test_tag_list_links_to_member_editor(new_page: NewPage, gw: LiveGateway) -> None:
+def test_tag_list_links_to_member_editor(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_groups(page, gw)
     deps = api(gw, "GET", "/api/deployments").json()["deployments"]
@@ -183,7 +183,7 @@ def test_tag_list_links_to_member_editor(new_page: NewPage, gw: LiveGateway) -> 
 
 
 @pytest.mark.expect_http_errors(422)
-def test_preview_error_clears_stale_result(new_page: NewPage, gw: LiveGateway) -> None:
+def test_preview_error_clears_stale_result(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_groups(page, gw)
     page.locator("#new-group").click()
@@ -204,7 +204,7 @@ def test_preview_error_clears_stale_result(new_page: NewPage, gw: LiveGateway) -
     expect(preview).not_to_have_attribute("data-stale", "true")
 
 
-def test_preview_debounce_300ms_clock(new_page: NewPage, gw: LiveGateway) -> None:
+def test_preview_debounce_300ms_clock(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     page.clock.install()
     open_groups(page, gw)
@@ -224,7 +224,7 @@ def test_preview_debounce_300ms_clock(new_page: NewPage, gw: LiveGateway) -> Non
     assert len(requests_of(guard, "POST", "/api/groups/preview")) == before + 1
 
 
-def test_group_names_and_tags_rendered_as_text(new_page: NewPage, gw: LiveGateway) -> None:
+def test_group_names_and_tags_rendered_as_text(new_page: NewPage, gw: Serve) -> None:
     evil = '<img src=x onerror="window.__xss=1">'
     seed_member(gw, "e1", tags=[evil])
     seed_group(gw, "<b>g", {"any": [evil]})
@@ -240,7 +240,7 @@ def test_group_names_and_tags_rendered_as_text(new_page: NewPage, gw: LiveGatewa
 
 # ---- 終審修正(CHG-20261103-01 終審必修 1、2) ------------------------------------------------------
 
-def test_save_commits_pending_tag_input(new_page: NewPage, gw: LiveGateway) -> None:
+def test_save_commits_pending_tag_input(new_page: NewPage, gw: Serve) -> None:
     """輸入但沒按 Enter 的 tag,按儲存時一併送出(新群組與既有群組各一次)。"""
     page = new_page()
     open_groups(page, gw)
@@ -262,7 +262,7 @@ def test_save_commits_pending_tag_input(new_page: NewPage, gw: LiveGateway) -> N
                                                                         "none": ["x"]}
 
 
-def test_mcp_link_carries_group(new_page: NewPage, gw: LiveGateway) -> None:
+def test_mcp_link_carries_group(new_page: NewPage, gw: Serve) -> None:
     name = "a&b#c?"
     seed_group(gw, name, {"all": ["coding"]})
     page = new_page()

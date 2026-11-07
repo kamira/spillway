@@ -15,11 +15,10 @@ from zoneinfo import ZoneInfo
 import pytest
 from playwright.sync_api import Page, expect
 
-from spillway.clock import FakeClock
-from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import MakeGw, NewPage, add_member, add_route, api, goto, guard_of, wait_loaded
-from tests.helpers.ui_ledger import insert_ledger
-from tests.helpers.ui_overview import set_cooldown
+from tests.blackbox.harness import Serve
+from tests.blackbox.ui import MakeGw, NewPage, add_member, add_route, api, goto, guard_of, wait_loaded
+from tests.blackbox.ui.ledger import insert_ledger
+from tests.blackbox.ui.overview import set_cooldown
 
 
 NOW = datetime(2026, 10, 30, 12, 0, 0, tzinfo=timezone.utc)
@@ -41,12 +40,12 @@ def row(page: Page, dep_id: str):  # noqa: ANN201
 
 
 @pytest.fixture
-def gw(make_ui_gateway: MakeGw) -> LiveGateway:
-    return make_ui_gateway(clock=FakeClock(NOW))
+def gw(make_ui_gateway: MakeGw) -> Serve:
+    return make_ui_gateway(start_time=NOW)
 
 
 @pytest.fixture
-def seeded(gw: LiveGateway) -> LiveGateway:
+def seeded(gw: Serve) -> Serve:
     add_member(gw, "a-usd", budget={"type": "usd", "limit_amount": 10, "window": "monthly", "reset_anchor": 1})
     add_member(gw, "c-pool", budget={"type": "credit_pool", "limit_amount": 100, "window": "monthly",
                                      "reset_anchor": 1})
@@ -63,7 +62,7 @@ def seeded(gw: LiveGateway) -> LiveGateway:
     return gw
 
 
-def test_rows_and_summary_match_dashboard(new_page: NewPage, seeded: LiveGateway) -> None:
+def test_rows_and_summary_match_dashboard(new_page: NewPage, seeded: Serve) -> None:
     gw = seeded
     dash = {d["id"]: d for d in api(gw, "GET", "/api/dashboard").json()["deployments"]}
     page = new_page()
@@ -108,7 +107,7 @@ def test_rows_and_summary_match_dashboard(new_page: NewPage, seeded: LiveGateway
     expect(page.locator("#resume-banner")).to_be_hidden()
 
 
-def test_usage_meter_matches_dashboard(new_page: NewPage, seeded: LiveGateway) -> None:
+def test_usage_meter_matches_dashboard(new_page: NewPage, seeded: Serve) -> None:
     gw = seeded
     dash = {d["id"]: d for d in api(gw, "GET", "/api/dashboard").json()["deployments"]}
     page = new_page()
@@ -130,7 +129,7 @@ def test_usage_meter_matches_dashboard(new_page: NewPage, seeded: LiveGateway) -
     expect(row(page, "c-pool").locator("meter")).to_have_attribute("aria-label", "已使用 37%")
 
 
-def test_clear_cooldown(new_page: NewPage, seeded: LiveGateway) -> None:
+def test_clear_cooldown(new_page: NewPage, seeded: Serve) -> None:
     gw = seeded
     page = new_page()
     goto(page, gw, "/ui/")
@@ -146,7 +145,7 @@ def test_clear_cooldown(new_page: NewPage, seeded: LiveGateway) -> None:
     assert dash["d-cool"]["cooling"] is False
 
 
-def test_member_id_links_to_members_page(new_page: NewPage, gw: LiveGateway) -> None:
+def test_member_id_links_to_members_page(new_page: NewPage, gw: Serve) -> None:
     odd = "a#b?c%d&e"
     add_member(gw, odd, kind="local")
     add_member(gw, "plain", kind="local")
@@ -163,7 +162,7 @@ def test_member_id_links_to_members_page(new_page: NewPage, gw: LiveGateway) -> 
     expect(page).to_have_url(gw.url("/ui/members.html#a%23b%3Fc%25d%26e"))
 
 
-def test_first_run_redirects_to_wizard(new_page: NewPage, gw: LiveGateway) -> None:
+def test_first_run_redirects_to_wizard(new_page: NewPage, gw: Serve) -> None:
     assert api(gw, "GET", "/api/settings").json()["first_run"] is True
     page = new_page()
     page.goto(gw.url("/ui/"))
@@ -182,7 +181,7 @@ def test_first_run_redirects_to_wizard(new_page: NewPage, gw: LiveGateway) -> No
     expect(page).to_have_url(gw.url("/ui/members.html"))
 
 
-def test_skip_wizard_stays_on_overview(new_page: NewPage, gw: LiveGateway) -> None:
+def test_skip_wizard_stays_on_overview(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     goto(page, gw, "/ui/?skip_wizard=1")
     wait_loaded(page, "#members-table")
@@ -194,7 +193,7 @@ def test_skip_wizard_stays_on_overview(new_page: NewPage, gw: LiveGateway) -> No
     expect(page.locator("#stat-requests")).to_have_text("0")
 
 
-def test_resume_banner_when_members_but_no_routes(new_page: NewPage, gw: LiveGateway) -> None:
+def test_resume_banner_when_members_but_no_routes(new_page: NewPage, gw: Serve) -> None:
     add_member(gw, "only", kind="local")
     page = new_page()
     goto(page, gw, "/ui/")
@@ -212,7 +211,7 @@ def test_resume_banner_when_members_but_no_routes(new_page: NewPage, gw: LiveGat
     expect(page.locator("#resume-banner")).to_be_hidden()
 
 
-def test_html_in_user_data_is_text(new_page: NewPage, gw: LiveGateway) -> None:
+def test_html_in_user_data_is_text(new_page: NewPage, gw: Serve) -> None:
     add_member(gw, "xss", kind="local", tags=[XSS_IMG, XSS_SCRIPT])
     add_route(gw, "rt", tag=XSS_IMG)
     page = new_page()

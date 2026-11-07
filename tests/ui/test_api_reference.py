@@ -13,13 +13,13 @@ from urllib.parse import quote
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import MakeGw, NewPage, guard_of, seed_group
-from tests.helpers.ui_mcp import mcp_catalog, open_reference
+from tests.blackbox.harness import Serve
+from tests.blackbox.ui import MakeGw, NewPage, guard_of, seed_group
+from tests.blackbox.ui.mcp import mcp_catalog, open_reference
 
 
 @pytest.fixture
-def gw(make_ui_gateway: MakeGw) -> LiveGateway:
+def gw(make_ui_gateway: MakeGw) -> Serve:
     g = make_ui_gateway()
     seed_group(g, "coding")
     return g
@@ -29,7 +29,7 @@ def _detail(page: Page):  # noqa: ANN202
     return page.locator("#ref-detail")
 
 
-def test_categories_in_order_and_collapsible(new_page: NewPage, gw: LiveGateway) -> None:
+def test_categories_in_order_and_collapsible(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_reference(page, gw)
     summaries = page.locator("#ref-index details > summary")
@@ -47,7 +47,7 @@ def test_categories_in_order_and_collapsible(new_page: NewPage, gw: LiveGateway)
     guard_of(page).assert_clean()
 
 
-def test_index_items_match_catalog(new_page: NewPage, gw: LiveGateway) -> None:
+def test_index_items_match_catalog(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_reference(page, gw)
     cat = mcp_catalog(gw)
@@ -61,7 +61,7 @@ def test_index_items_match_catalog(new_page: NewPage, gw: LiveGateway) -> None:
     expect(page.locator('#ref-index details[data-category="errors"] a')).to_have_text(["HTTP", "工具", "SDK 傳輸"])
 
 
-def test_click_ask_shows_description_and_schema(new_page: NewPage, gw: LiveGateway) -> None:
+def test_click_ask_shows_description_and_schema(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_reference(page, gw)
     ask = next(t for t in mcp_catalog(gw)["tools"] if t["name"] == "ask")
@@ -80,13 +80,13 @@ def test_click_ask_shows_description_and_schema(new_page: NewPage, gw: LiveGatew
     ("#errors-sdk", "錯誤碼:SDK 傳輸"),
     ("#" + quote("notify-notifications/tools/list_changed", safe=""), "notifications/tools/list_changed"),
 ])
-def test_hash_deep_link_opens_item(new_page: NewPage, gw: LiveGateway, hash_: str, heading: str) -> None:
+def test_hash_deep_link_opens_item(new_page: NewPage, gw: Serve, hash_: str, heading: str) -> None:
     page = new_page()
     open_reference(page, gw, hash_=hash_)
     expect(_detail(page).locator("h2").first).to_have_text(heading)
 
 
-def test_hash_change_and_back_navigation(new_page: NewPage, gw: LiveGateway) -> None:
+def test_hash_change_and_back_navigation(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_reference(page, gw, hash_="#tool-list_routes")
     expect(_detail(page)).to_have_attribute("data-item", "tool-list_routes")
@@ -98,7 +98,7 @@ def test_hash_change_and_back_navigation(new_page: NewPage, gw: LiveGateway) -> 
     expect(_detail(page)).to_have_attribute("data-item", "tool-list_routes")
 
 
-def test_switch_group_shows_that_groups_catalog(new_page: NewPage, gw: LiveGateway) -> None:
+def test_switch_group_shows_that_groups_catalog(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_reference(page, gw, hash_="#tool-ask")
     expect(page.locator("#ref-group option")).to_have_text(["all(全部 route)", "coding"])
@@ -118,7 +118,7 @@ def test_switch_group_shows_that_groups_catalog(new_page: NewPage, gw: LiveGatew
                                                     *cat["connection"]["stdio"]["args"]]))
 
 
-def test_group_query_opens_that_group(new_page: NewPage, gw: LiveGateway) -> None:
+def test_group_query_opens_that_group(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_reference(page, gw, query="?group=coding", hash_="#conn-endpoint")
     expect(page.locator("#ref-group")).to_have_value("coding")
@@ -126,7 +126,7 @@ def test_group_query_opens_that_group(new_page: NewPage, gw: LiveGateway) -> Non
 
 
 @pytest.mark.expect_http_errors(404)
-def test_unknown_group_with_markup_shows_error_as_text(new_page: NewPage, gw: LiveGateway) -> None:
+def test_unknown_group_with_markup_shows_error_as_text(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     name = '<img src=x onerror="window.__xss=1">'
     open_reference(page, gw, query=f"?group={quote(name, safe='')}")
@@ -138,7 +138,7 @@ def test_unknown_group_with_markup_shows_error_as_text(new_page: NewPage, gw: Li
     expect(page.locator("#ref-index a")).to_have_count(0)
 
 
-def test_page_text_has_no_admin_or_v1_paths(new_page: NewPage, gw: LiveGateway) -> None:
+def test_page_text_has_no_admin_or_v1_paths(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     for group in ("all", "coding"):
         open_reference(page, gw, query=f"?group={group}")

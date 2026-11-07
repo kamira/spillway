@@ -1,11 +1,16 @@
-"""m2_quota.feature 專用步驟(CHG-20261030-02 T15;4.2.5、4.2.6 的 api 版,AC-16、AC-17)。"""
+"""m2_quota.feature 專用步驟(CHG-20261030-02 T15;4.2.5、4.2.6 的 api 版,AC-16、AC-17)。
+
+(CHG-20261107-03 T4)帳本經 `POST /__test__/ledger` 種入;預期花費讀 litellm 價格 JSON 檔當資料
+(`tests.blackbox.prices`,不 import litellm;AM-9)。
+"""
 from __future__ import annotations
 
 from datetime import timedelta
 
 from behave import step, use_step_matcher
 
-from spillway.store import repo
+from tests.blackbox import prices
+from tests.blackbox.control import iso
 from tests.features.support.gateway import DEFAULT_MESSAGES
 
 use_step_matcher("re")
@@ -29,7 +34,7 @@ def step_remaining_and_estimate(context, dep_id, remaining, est_cost):
     """前置條件:
     1. 經管理 API 設定額度 usd、上限 = remaining、每月 1 日重置(本期無花費,剩餘 = 上限)。
     2. 讓本次請求的 P90 花費 = est_cost:在同 route、同成員寫入 5 筆 ok 帳本(cost 0,不影響剩餘),
-       其 tokens_out 依 LiteLLM 價格表反推(5.4.3:≥ 5 筆時取帳本 P90)。
+       其 tokens_out 依 LiteLLM 價格表(價格 JSON 檔)反推(5.4.3:≥ 5 筆時取帳本 P90)。
     3. 經 `/api/estimate` 確認預估花費與剩餘。
     """
     gw = context.gw
@@ -38,18 +43,15 @@ def step_remaining_and_estimate(context, dep_id, remaining, est_cost):
                                      "reset_anchor": 1})
     route = next(iter(gw.routes))
     first = _estimate_for(gw, route, dep_id)["estimate"]
-    from spillway.adapters.base import load_litellm
-
-    cin, cout = load_litellm().cost_per_token(model=f"openai/{gw.model_of(dep_id)}",
-                                              prompt_tokens=first["tokens_in"], completion_tokens=1)
+    in_per_token, out_per_token = prices.cost_per_token(f"openai/{gw.model_of(dep_id)}")
+    cin, cout = in_per_token * first["tokens_in"], out_per_token   # prompt 全部、completion 1 個 token 的花費
     tokens_out = round((est_cost - cin) / cout)
     now = gw.clock.now()
-    with gw.db() as conn:
-        for i in range(5):
-            repo.insert_ledger(conn, repo.LedgerRow(
-                ts=now - timedelta(hours=1, minutes=i), status="ok", route_name=route,
-                deployment_id=dep_id, slot=1, tokens_in=first["tokens_in"], tokens_out=tokens_out,
-                cost_usd=0.0))
+    gw.control.ledger([
+        {"ts": iso(now - timedelta(hours=1, minutes=i)), "status": "ok", "route_name": route,
+         "deployment_id": dep_id, "slot": 1, "tokens_in": first["tokens_in"], "tokens_out": tokens_out,
+         "cost_usd": 0.0}
+        for i in range(5)])
     after = _estimate_for(gw, route, dep_id)
     cost = after["estimate"]["cost_usd_p90"]
     assert abs(cost - est_cost) < PRICE_TOLERANCE, after
