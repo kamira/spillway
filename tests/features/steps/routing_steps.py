@@ -1,4 +1,7 @@
-"""m2_routing.feature 專用步驟(CHG-20261030-02 T15;AC-3、AC-4、AC-5、4.5)。"""
+"""m2_routing.feature 專用步驟(CHG-20261030-02 T15;AC-3、AC-4、AC-5、4.5)。
+
+(CHG-20261107-03 T4)冷卻經 `POST /__test__/cooldowns` 種入(spec 13.4.4);資料庫唯讀。
+"""
 from __future__ import annotations
 
 from collections import Counter
@@ -6,23 +9,21 @@ from datetime import timedelta
 
 from behave import step, use_step_matcher
 
-from spillway.quota import QuotaService
+from tests.blackbox.control import iso
 
 use_step_matcher("re")
 
 
 @step(r'成員 "([^"]+)" 與 "([^"]+)" 在冷卻中')
 def step_two_cooling(context, a, b):
-    """前置條件:以 QuotaService 的同一寫入路徑設定冷卻(現在 + 1 小時),再經 HTTP 確認。"""
+    """前置條件:經測試控制介面設定冷卻(現在 + 1 小時),再經 HTTP 確認。"""
     gw = context.gw
     until = gw.clock.now() + timedelta(hours=1)
-    from spillway.store import repo
-
-    with gw.db() as conn:
-        for dep_id in (a, b):
-            repo.mark_cooldown(conn, dep_id, until, "quota_exhausted")
-        for dep_id in (a, b):
-            assert QuotaService(conn, gw.clock).is_cooling(repo.load_deployment(conn, dep_id))
+    for dep_id in (a, b):
+        gw.control.cooldown(dep_id, until, "quota_exhausted")
+    for dep_id in (a, b):
+        dep = gw.deployment(dep_id)
+        assert dep["cooling_until"] == iso(until) and dep["cooling_reason"] == "quota_exhausted", dep
     for dep_id in (a, b):
         assert gw.dashboard_row(dep_id)["cooling"] is True
 
