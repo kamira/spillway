@@ -6,6 +6,9 @@
 #
 # 欄位:file = 相對於 repo 根目錄的檔案;literal = 被判違規的字面值(完全相同),或 pattern = regex(re.search,
 #       用於多行的程式碼字串);reason = 理由。
+#       以 `/ "src"`、`os.path.join(…)`、`Path("src", "spillway", …)` 組出的路徑,字面值是整個路徑運算式的
+#       `ast.unparse` 輸出(`/` 鏈取最外層那一條,例如 `REPO / 'src' / 'spillway'`),不是單一 `"src"` 片段;
+#       允許一條路徑不會放行同檔的其他路徑(終審 F1)。
 
 [[allow]]
 file = "tests/blackbox/prices.py"
@@ -39,7 +42,7 @@ reason = "斷言 SPILLWAY_CMD 未設定時 spillway_cmd() 的預設值(決策 8 
 
 [[allow]]
 file = "tests/ui/test_members.py"
-literal = "src"
+literal = "REPO / 'src' / 'spillway' / 'adapters' / 'claude_cli' / 'models.yaml'"
 reason = "讀 src/spillway/adapters/claude_cli/models.yaml 當模型下拉選單的獨立 oracle(檔案讀取,決策 9 ②;T5 回報,主 session 代 T2 擁有者補上)"
 
 [[allow]]
@@ -49,15 +52,15 @@ reason = "讀 claude_cli 的 models.yaml 當「與 claude_cli 模組的 models.y
 
 [[allow]]
 file = "tests/acceptance/test_m4b_operation.py"
-literal = "src"
+literal = "REPO_ROOT / 'src' / 'spillway' / 'adapters' / 'claude_cli' / 'models.yaml'"
 reason = "CLAUDE_MODELS 讀 src/spillway/adapters/claude_cli/models.yaml 當模型清單的獨立 oracle(檔案讀取,決策 9 ②;T3 回報,主 session 代 T2 擁有者補上)"
 
 [[allow]]
 file = "tests/features/steps/adapters_steps.py"
-literal = "src"
+literal = "REPO_ROOT / 'src'"
 reason = "Python 專屬 adapter 合約測試子行程(決策 1),PYTHONPATH 設為 <repo>/src:<repo>,必須測同一棵樹(不能讓 editable .pth 解析到別的 checkout;施工審議 T4 F2,仲裁指定由 T2 補上)"
 
 [[allow]]
 file = "tests/ui/test_shell.py"
-literal = "src"
+literal = "REPO / 'src'"
 reason = "巢狀 pytest 子行程的後半是 unit 測試(決策 1,Python 專屬),和轉換前一樣把 PYTHONPATH 覆寫成 <repo>/src,必須測同一棵樹(施工審議 T5 F3,仲裁指定由 T2 補上)"

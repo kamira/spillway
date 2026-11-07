@@ -1038,6 +1038,29 @@ def test_home_check_accepts_ordinary_temp_dir(fake_homes):
     assert cli._test_home_problem({"SPILLWAY_HOME": str(fake_homes.tmp / "not-yet")}) is None
 
 
+_DATA_VOLUME = Path("/System/Volumes/Data")
+
+
+@pytest.mark.skipif(sys.platform != "darwin" or not _DATA_VOLUME.is_dir(), reason="macOS 的 firmlink 資料卷")
+def test_home_check_rejects_firmlink_spelling_when_default_missing(fake_homes):
+    """終審 F2:預設目錄尚不存在時,`/System/Volumes/Data` + 預設路徑仍判為同一目錄(假 HOME 在 tmp)。"""
+    default = fake_homes.env.resolve()
+    assert not default.exists()
+    firmlink = Path(str(_DATA_VOLUME) + str(default))
+    assert cli._test_home_problem({"SPILLWAY_HOME": str(firmlink)}) is not None
+    assert not default.exists() and not firmlink.exists()   # 純函式:不建立任何目錄
+
+
+def test_home_check_sibling_of_missing_default_is_not_default(fake_homes):
+    """終審 F2 不得誤判:預設目錄不存在時,同一上層目錄下的兄弟目錄不是預設目錄。"""
+    assert not fake_homes.env.exists() and not fake_homes.pw.exists()
+    for d in (fake_homes.env, fake_homes.pw):
+        assert cli._test_home_problem({"SPILLWAY_HOME": str(d.parent / "spillway-test")}) is None
+    fake_homes.env.parent.mkdir(parents=True)   # 上層存在、預設目錄仍不存在
+    assert cli._test_home_problem({"SPILLWAY_HOME": str(fake_homes.env.parent / "spillway-test")}) is None
+    assert cli._test_home_problem({"SPILLWAY_HOME": str(fake_homes.env)}) is not None
+
+
 @pytest.mark.skipif(sys.platform not in ("darwin", "win32"), reason="大小寫不敏感的檔案系統")
 def test_l2_home_case_variant_exit_2(tmp_path):
     env = _base_env(tmp_path)
