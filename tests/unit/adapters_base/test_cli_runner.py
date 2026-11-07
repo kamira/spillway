@@ -569,6 +569,125 @@ async def test_shutdown_during_spawn_window_kills_new_child(runner, tmp_path, ma
     assert runner.active_pids == ()
 
 
+# ---- CHG-20261107-02:以 returncode 判斷主行程結束(Python 3.11、3.12 的 wait() 會等管線) ----------
+
+class _FakeProc:
+    """只有 `returncode` 的假 proc;`wait()` 一律失敗(`_wait_exited` 不可呼叫它)。"""
+
+    def __init__(self, returncode: int | None = None) -> None:
+        self.returncode = returncode
+
+    async def wait(self) -> int:
+        raise AssertionError("_wait_exited 不可呼叫 Process.wait()")
+
+
+def _set_later(proc: _FakeProc, rc: int, delay: float = 0.05) -> None:
+    asyncio.get_running_loop().call_later(delay, setattr, proc, "returncode", rc)
+
+
+async def test_wait_exited_returns_after_returncode_set():
+    from spillway.adapters.base.cli_runner import _wait_exited
+    proc = _FakeProc()
+    _set_later(proc, 0)
+    await _wait_exited(proc, 5.0)
+    assert proc.returncode == 0
+
+
+@pytest.mark.parametrize("timeout", [0.1, 0, -1, float("nan")])
+async def test_wait_exited_times_out(timeout: float):
+    from spillway.adapters.base.cli_runner import _wait_exited
+    with pytest.raises(TimeoutError):
+        await _wait_exited(_FakeProc(), timeout)
+
+
+async def test_wait_exited_already_exited_with_zero_timeout():
+    from spillway.adapters.base.cli_runner import _wait_exited
+    await _wait_exited(_FakeProc(0), 0)
+
+
+async def test_wait_exited_none_timeout_waits():
+    from spillway.adapters.base.cli_runner import _wait_exited
+    proc = _FakeProc()
+    _set_later(proc, 3)
+    await _wait_exited(proc, None)
+    assert proc.returncode == 3
+
+
+async def test_wait_exited_propagates_cancel():
+    from spillway.adapters.base.cli_runner import _wait_exited
+    task = asyncio.ensure_future(_wait_exited(_FakeProc(), None))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task.cancelled()
+
+
+@pytest.fixture
+def hanging_wait(monkeypatch):
+    """模擬 3.11/3.12:`Process.wait()` 不返回(版本無關的守衛)。"""
+    async def never(self):
+        await asyncio.Event().wait()
+    monkeypatch.setattr(asyncio.subprocess.Process, "wait", never)
+
+
+async def test_guard_normal_exit_does_not_wait_for_pipes(hanging_wait, runner, piddir, marker):
+    """G1:子行程正常結束、孫行程持有 stdout,`wait()` 不返回時 run 仍以正常結束回傳。"""
+    out = await asyncio.wait_for(
+        runner.run([PY, "-c", SPAWN_GRANDCHILD, str(piddir), marker, "child_exits"], cwd=None, timeout=30), 10)
+    assert out.exit_code == 0 and not out.timed_out and out.killed_reason is None
+    _assert_no_leftovers(piddir, marker)
+
+
+async def test_guard_shutdown_with_escaped_grandchild(hanging_wait, runner, piddir, marker):
+    """G2:停機時逃出 group 的孫行程持有 stdout,`wait()` 不返回時 run 仍記為 shutdown、不記為逾時。"""
+    task = asyncio.ensure_future(
+        runner.run([PY, "-c", SPAWN_GRANDCHILD, str(piddir), marker, "gc_escape"], cwd=None, timeout=30))
+    try:
+        await _wait_files(piddir)
+        await runner.terminate_all(grace=GRACE)
+        out = await asyncio.wait_for(task, 10)
+    finally:
+        gc = piddir / "grandchild.pid"
+        if gc.exists() and _alive(int(gc.read_text())):
+            os.kill(int(gc.read_text()), signal.SIGKILL)
+    assert out.killed_reason == "shutdown" and not out.timed_out
+    _assert_no_leftovers(piddir, marker)
+
+
+async def test_terminate_group_waits_on_returncode_not_wait(monkeypatch):
+    """S1(`_terminate_group` 的結構測試):SIGKILL 之後以 `returncode` 判斷,不呼叫 `wait()`。"""
+    from spillway.adapters.base import cli_runner as cr
+    monkeypatch.setattr(cr, "_signal_group", lambda pgid, sig: None)
+    monkeypatch.setattr(cr, "_group_alive", lambda pgid: False)
+    proc = _FakeProc()
+    _set_later(proc, -signal.SIGKILL)
+    await asyncio.wait_for(CliRunner(term_grace=0.1)._terminate_group(12345, proc, 5.0), 3)
+    assert proc.returncode == -signal.SIGKILL
+
+
+SPAWN_GC_DEVNULL = r"""
+import os, subprocess, sys, time
+d = sys.argv[1]
+open(os.path.join(d, "child.pid"), "w").write(str(os.getpid()))
+code = "import os, sys, time\nopen(os.path.join(sys.argv[1], 'grandchild.pid'), 'w').write(str(os.getpid()))\ntime.sleep(60)\n"
+subprocess.Popen([sys.executable, "-c", code, d, sys.argv[2]],
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+while not os.path.exists(os.path.join(d, "grandchild.pid")):
+    time.sleep(0.01)
+print("ready", flush=True)
+"""
+
+
+async def test_same_group_grandchild_without_stdout_is_terminated(runner, piddir, marker):
+    """同 group 的孫行程不持有 stdout:子行程正常結束後,殘留的孫行程仍被收掉(design D29)。"""
+    out = await asyncio.wait_for(
+        runner.run([PY, "-c", SPAWN_GC_DEVNULL, str(piddir), marker], cwd=None, timeout=30), 10)
+    assert out.exit_code == 0 and not out.timed_out and out.killed_reason is None
+    assert "ready" in out.stdout
+    _assert_no_leftovers(piddir, marker)
+
+
 # ---- 終審 I1a:CLI 模組共用的 params.timeout 驗證 ----------------------------------------------
 
 @pytest.mark.parametrize("v", [0, -1, -0.5, True, False, float("nan"), float("inf"),
