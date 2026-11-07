@@ -73,6 +73,8 @@ STEP_RENAMES: dict[str, str] = {}
 # 有意移除的函式 → 理由
 REMOVED = {
     "tests/helpers/ui.py::db_execute": "任意 SQL 寫入;黑箱版改經 /__test__/*(CHG-20261107-03 決策 3;T2)",
+    "tests/acceptance/test_nfr5_payload_expiry.py::_AppAsyncio.__init__": "spillway.app.asyncio 的 monkeypatch 代理(0 斷言);改由 STEPPED retention/tick 取代(決策 7 ⑥;T3)",
+    "tests/acceptance/test_nfr5_payload_expiry.py::_AppAsyncio.__getattr__": "同上(0 斷言;T3)",
 }
 _DIFF_BANNED = re.compile(r"(?<![\w])skip(if)?(?![\w])|xfail|except\s+AssertionError")
 

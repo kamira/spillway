@@ -46,3 +46,8 @@ reason = "讀 src/spillway/adapters/claude_cli/models.yaml 當模型下拉選單
 file = "tests/features/steps/m4b_steps.py"
 literal = "src/spillway/adapters/claude_cli/models.yaml"
 reason = "讀 claude_cli 的 models.yaml 當「與 claude_cli 模組的 models.yaml 一致」的獨立 oracle(檔案讀取,決策 9 ②;T4 回報,主 session 代 T2 擁有者補上)"
+
+[[allow]]
+file = "tests/acceptance/test_m4b_operation.py"
+literal = "src"
+reason = "CLAUDE_MODELS 讀 src/spillway/adapters/claude_cli/models.yaml 當模型清單的獨立 oracle(檔案讀取,決策 9 ②;T3 回報,主 session 代 T2 擁有者補上)"
