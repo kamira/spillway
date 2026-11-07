@@ -57,6 +57,12 @@ reason = "以 Python 測試模組宣告與內建模組相同的 provider 觸發 
 
 [[entry]]
 kind = "pytest"
+id = "tests/blackbox/test_control_contract.py::test_cli_subprocess_does_not_inherit_knobs"
+reason = "以 SPILLWAY_TEST_ADAPTER_PATHS 載入 Python 測試模組(harness 斷言它確實載入),證明這個旋鈕也從 CLI 子行程環境移除"
+scope = "SPILLWAY_TEST_ADAPTER_PATHS 那一個旋鈕"
+
+[[entry]]
+kind = "pytest"
 id = "tests/blackbox/test_harness.py::test_adapter_paths_are_verified_loaded"
 reason = "以 Python 測試模組驗證 harness 的 adapter 載入斷言"
 

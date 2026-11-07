@@ -11,6 +11,7 @@ L2:harness 以假上游完成一次 `/v1/chat/completions` 往返;基準清單�
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import json
@@ -27,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.blackbox import guard, plugin
+from tests.blackbox import guard, harness, plugin
 from tests.blackbox.control import iso
 from tests.blackbox.db import read_db, snapshot
 from tests.blackbox.fakemods import write_module
@@ -69,16 +70,24 @@ def test_spillway_cmd_default_and_override(monkeypatch):
     assert spillway_cmd() == ["/opt/x/spillway-rs", "--flag", "a b"]
 
 
-def _recording_cmd(tmp_path: Path) -> tuple[str, Path]:
-    """`SPILLWAY_CMD` 用的包裝程式:把子命令參數記到檔案,再 exec 預設的 Python 實作。"""
-    log = tmp_path / "cmd-log.jsonl"
-    script = tmp_path / "rec.py"
+def _py_wrapper(tmp_path: Path, name: str, body: str) -> str:
+    """`SPILLWAY_CMD` 用的 Python 包裝程式:`IMPL` 為**目前的** `spillway_cmd()`(換實作時包的是該實作,
+    施工審議 T2 F6),`ARGS` 為子命令參數;回傳可設給 `SPILLWAY_CMD` 的字串。必須在設定 `SPILLWAY_CMD` 前呼叫。"""
+    script = tmp_path / f"{name}.py"
     script.write_text(
-        "import json, os, sys\n"
-        f"with open({str(log)!r}, 'a', encoding='utf-8') as f:\n"
-        "    f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
-        "os.execv(sys.executable, [sys.executable, '-m', 'spillway', *sys.argv[1:]])\n", encoding="utf-8")
-    return f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}", log
+        "import json, os, signal, subprocess, sys, time\n"
+        f"IMPL = json.loads({json.dumps(json.dumps(spillway_cmd()))})\n"
+        "ARGS = sys.argv[1:]\n" + body, encoding="utf-8")
+    return f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}"
+
+
+def _recording_cmd(tmp_path: Path) -> tuple[str, Path]:
+    """把子命令參數記到檔案,再 exec 實作。"""
+    log = tmp_path / "cmd-log.jsonl"
+    cmd = _py_wrapper(tmp_path, "rec", f"with open({str(log)!r}, 'a', encoding='utf-8') as f:\n"
+                                       "    f.write(json.dumps(ARGS) + '\\n')\n"
+                                       "os.execvp(IMPL[0], IMPL + ARGS)\n")
+    return cmd, log
 
 
 def test_serve_init_and_mcp_stdio_all_go_through_spillway_cmd(tmp_path, monkeypatch):
@@ -186,19 +195,123 @@ def test_stop_sigint_is_130(serve_factory):
 
 def test_stop_asserts_timeout(tmp_path, monkeypatch):
     """包裝程式忽略 SIGTERM 且在實作結束後不退出:stop() 逾時 → SIGKILL 並失敗。"""
-    script = tmp_path / "stubborn.py"
-    script.write_text(
-        "import signal, subprocess, sys, time\n"
-        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        "p = subprocess.Popen([sys.executable, '-m', 'spillway', *sys.argv[1:]],\n"
-        "                     preexec_fn=lambda: signal.signal(signal.SIGTERM, signal.SIG_DFL))\n"
-        "p.wait()\n"
-        "time.sleep(600)\n", encoding="utf-8")
-    monkeypatch.setenv("SPILLWAY_CMD", f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}")
+    cmd = _py_wrapper(tmp_path, "stubborn",
+                      "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                      "p = subprocess.Popen(IMPL + ARGS, preexec_fn=lambda: signal.signal(signal.SIGTERM, signal.SIG_DFL))\n"
+                      "p.wait()\n"
+                      "time.sleep(600)\n")
+    monkeypatch.setenv("SPILLWAY_CMD", cmd)
     s = Serve(tmp_path / "home").start()
     with pytest.raises(AssertionError, match="未在 3.0 秒內結束"):
         s.stop(timeout=3.0)
     assert s.returncode == -signal.SIGKILL
+    assert not harness._group_alive(s.proc.pid)
+
+
+# 施工審議 T2 F4:stop() 檢查 stderr EOF 與行程群組;包裝程式的轉送與結束狀態(harness docstring 的要求)
+# 孫行程忽略 SIGTERM/SIGINT(送到群組的停機訊號殺不掉它),模擬實作或包裝程式留下的孤兒
+_IGNORE = "def _ign():\n    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n    signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
+_GRANDCHILD_HOLDS_STDERR = (_IGNORE + "subprocess.Popen(['sleep', '60'], stdin=subprocess.DEVNULL, "
+                            "stdout=subprocess.DEVNULL, preexec_fn=_ign)\n"
+                            "os.execvp(IMPL[0], IMPL + ARGS)\n")
+_GRANDCHILD_CLOSES_STDERR = (_IGNORE + "subprocess.Popen(['sleep', '60'], stdin=subprocess.DEVNULL, "
+                             "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=_ign)\n"
+                             "os.execvp(IMPL[0], IMPL + ARGS)\n")
+_FORWARD = ("child = subprocess.Popen(IMPL + ARGS, start_new_session=True)\n"
+            "def fwd(sig, frame):\n"
+            "    try:\n"
+            "        os.killpg(child.pid, sig)\n"
+            "    except ProcessLookupError:\n"
+            "        pass\n"
+            "signal.signal(signal.SIGTERM, fwd)\n"
+            "signal.signal(signal.SIGINT, fwd)\n"
+            "rc = child.wait()\n")
+_REEMIT = ("if rc < 0:\n"
+           "    signal.signal(-rc, signal.SIG_DFL)\n"
+           "    os.kill(os.getpid(), -rc)\n"
+           "    time.sleep(5)\n"
+           "sys.exit(rc)\n")
+
+
+def test_stop_fails_when_grandchild_holds_stderr(tmp_path, monkeypatch):
+    monkeypatch.setenv("SPILLWAY_CMD", _py_wrapper(tmp_path, "holds", _GRANDCHILD_HOLDS_STDERR))
+    s = Serve(tmp_path / "home").start()
+    with pytest.raises(AssertionError, match="stderr 未關閉"):
+        s.stop()
+    assert not harness._group_alive(s.proc.pid)   # 殘留已被 SIGKILL
+
+
+def test_stop_fails_when_process_group_not_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("SPILLWAY_CMD", _py_wrapper(tmp_path, "lingers", _GRANDCHILD_CLOSES_STDERR))
+    s = Serve(tmp_path / "home").start()
+    with pytest.raises(AssertionError, match="行程群組仍有行程殘留"):
+        s.stop()
+    assert not harness._group_alive(s.proc.pid)
+
+
+@pytest.mark.parametrize("sig,code", [(signal.SIGTERM, -15), (signal.SIGINT, 130)])
+def test_stop_accepts_forwarding_wrapper_that_reemits_signal(tmp_path, monkeypatch, sig, code):
+    monkeypatch.setenv("SPILLWAY_CMD", _py_wrapper(tmp_path, "fwd", _FORWARD + _REEMIT))
+    s = Serve(tmp_path / "home").start()
+    assert s.stop(sig) == code
+
+
+def test_stop_rejects_forwarding_wrapper_that_exits_143(tmp_path, monkeypatch):
+    monkeypatch.setenv("SPILLWAY_CMD", _py_wrapper(tmp_path, "fwd143",
+                                                   _FORWARD + "sys.exit(128 - rc if rc < 0 else rc)\n"))
+    s = Serve(tmp_path / "home").start()
+    with pytest.raises(AssertionError, match="結束碼 143,預期 -15"):
+        s.stop()
+
+
+def test_relative_spillway_cmd_resolved_from_invocation_dir(tmp_path, monkeypatch):
+    """`SPILLWAY_CMD=./wrap.sh`:以測試行程啟動時的目錄解析(子行程的 cwd 是暫存目錄;F5)。"""
+    rel = tmp_path / "proj"
+    rel.mkdir()
+    wrap = rel / "wrap.sh"
+    wrap.write_text("#!/bin/sh\nexec " + " ".join(shlex.quote(a) for a in spillway_cmd()) + ' "$@"\n',
+                    encoding="utf-8")
+    wrap.chmod(0o755)
+    monkeypatch.chdir(rel)
+    monkeypatch.setattr(harness, "INVOCATION_DIR", rel)
+    monkeypatch.setenv("SPILLWAY_CMD", "./wrap.sh")
+    assert spillway_cmd() == [str(wrap.resolve())]
+    home = tmp_path / "home"
+    assert run_cli("init", home=home).returncode == 0
+    with Serve(home) as s:
+        assert s.request("GET", "/api/settings/context").status_code == 200
+    monkeypatch.setenv("SPILLWAY_CMD", "spillway-rs --x")   # 不含路徑分隔字元:照 PATH 查找,不解析
+    assert spillway_cmd() == ["spillway-rs", "--x"]
+
+
+def test_kill_live_registry(tmp_path):
+    s = Serve(tmp_path / "home").start()
+    assert s in harness._LIVE
+    harness._kill_live()
+    s.proc.wait(15)
+    assert s.returncode == -signal.SIGKILL and s not in harness._LIVE
+    s.kill()
+
+
+def test_ready_waits_for_control_warning_line(tmp_path, monkeypatch):
+    """開啟控制介面時,埠上的伺服器回 200 也不算就緒:必須先看到 14.3.3 的警告行(F8)。
+    `SPILLWAY_CMD` 換成一個只會在指定埠回 200、不印警告行的程式。"""
+    monkeypatch.setenv("SPILLWAY_CMD", _py_wrapper(tmp_path, "imposter", (
+        "import http.server\n"
+        "class H(http.server.BaseHTTPRequestHandler):\n"
+        "    def do_GET(self):\n"
+        "        self.send_response(200)\n"
+        "        self.end_headers()\n"
+        "    def log_message(self, *a):\n"
+        "        pass\n"
+        "http.server.HTTPServer(('127.0.0.1', int(ARGS[ARGS.index('--port') + 1])), H).serve_forever()\n")))
+    s = Serve(tmp_path / "home")
+    with pytest.raises(RuntimeError, match="未在 3 秒內就緒"):
+        s.start(timeout=3)
+    assert s.returncode == -signal.SIGKILL
+    s_off = Serve(tmp_path / "home2", control=False)   # 未開啟控制介面時不要求警告行
+    s_off.start(timeout=10)
+    s_off.kill()
 
 
 def test_stderr_problems():
@@ -374,24 +487,34 @@ def test_runtime_guard_detects_spillway_modules():
         guard.assert_no_spillway_modules("test", modules=mods)
 
 
-@pytest.mark.parametrize("imports_spillway", [False, True])
-def test_blackbox_guard_fixture_fails_session_that_imports_spillway(tmp_path, imports_spillway):
-    """以子行程 pytest 執行一個啟用 `blackbox_guard` 的測試檔(`SPILLWAY_BLACKBOX_GUARD=1` 強制生效)。"""
-    test = tmp_path / "test_guarded.py"
-    test.write_text(
-        "import pytest\n\n"
-        "@pytest.fixture(scope='session', autouse=True)\n"
-        "def _g(blackbox_guard):\n    yield\n\n"
-        "def test_x():\n"
-        + ("    __import__('spillway')\n" if imports_spillway else "    pass\n"), encoding="utf-8")
-    env = {**os.environ, "SPILLWAY_BLACKBOX_GUARD": "1",
+GUARD_CASES = {
+    "clean": ("def test_x():\n    pass\n", None),
+    "import": ("def test_x():\n    import spillway  # noqa\n", "黑箱邊界"),
+    "runpy": ("import runpy\n\ndef test_x():\n    runpy.run_module('spillway.cli')\n", "黑箱邊界"),
+    "import_module_var": ("import importlib\nNAME = 'spill' + 'way.app'\n\n"
+                          "def test_x():\n    importlib.import_module(NAME)\n", "黑箱邊界"),
+    "root_clock_fixture": ("def test_x(clock):\n    pass\n", "黑箱邊界"),
+    # litellm 不經阻擋器:只有 autouse 的 session 守門會發現(F1 的變異「拿掉 autouse」必須讓這裡轉紅)
+    "litellm": ("def test_x():\n    import litellm  # noqa\n", "行程內載入了 litellm"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(GUARD_CASES))
+def test_runtime_guard_in_forced_session(tmp_path, case):
+    """子行程 pytest(只載入根 conftest 與 plugin,測試檔所在目錄**沒有** conftest),`SPILLWAY_BLACKBOX_GUARD=1`:
+    autouse 的 session 守門與 import 阻擋器自動生效(施工審議 T2 F1、F2)。"""
+    body, expect = GUARD_CASES[case]
+    root = tmp_path / "converted"
+    root.mkdir()
+    (root / "test_guarded.py").write_text(body, encoding="utf-8")
+    env = {**os.environ, "SPILLWAY_BLACKBOX_GUARD": "1", "LITELLM_LOCAL_MODEL_COST_MAP": "True",
            "PYTHONPATH": os.pathsep.join([str(REPO_ROOT), os.environ.get("PYTHONPATH", "")])}
-    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "tests.blackbox.plugin", "-p", "no:cacheprovider",
-                        str(test)], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
-    if imports_spillway:
-        assert r.returncode != 0 and "行程內載入了 spillway" in r.stdout, r.stdout[-2000:]
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "tests.conftest", "-p", "no:cacheprovider",
+                        str(root)], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=180)
+    if expect is None:
+        assert r.returncode == 0, r.stdout[-3000:]
     else:
-        assert r.returncode == 0, r.stdout[-2000:]
+        assert r.returncode != 0 and expect in r.stdout, r.stdout[-3000:]
 
 
 def test_guard_roots_and_purity(tmp_path):
@@ -439,3 +562,83 @@ def test_impl_dependent_ids_exist():
             assert f"def {func}(" in (REPO_ROOT / path).read_text(encoding="utf-8"), e["id"]
         else:
             assert e["id"] in nodeids, e["id"]
+
+
+# ================================================================ AM-10 對照腳本(施工審議 T2 F13)
+
+COMPARE = BASELINE / "compare.py"
+
+
+def _load_compare():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("bb_compare", COMPARE)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture(scope="module")
+def baseline_snapshot(tmp_path_factory) -> Path:
+    """7fadd84 的檔案快照(`git archive`,不動本 repo 的工作樹與 worktree 清單)。"""
+    snap = tmp_path_factory.mktemp("snap-7fadd84")
+    arch = subprocess.run(["git", "archive", "--format=tar", "7fadd84"], cwd=REPO_ROOT, capture_output=True)
+    if arch.returncode != 0:
+        pytest.skip(f"無法取得 7fadd84 的快照(git archive 失敗:{arch.stderr.decode(errors='replace')[:200]})")
+    subprocess.run(["tar", "-x", "-C", str(snap)], input=arch.stdout, check=True)
+    return snap
+
+
+def _compare(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    return subprocess.run([sys.executable, str(COMPARE), *args], env=env, capture_output=True, text=True,
+                          timeout=600)
+
+
+def test_compare_passes_on_baseline_commit(baseline_snapshot, tmp_path):
+    js = tmp_path / "behave.json"
+    # 7fadd84 的 environment.py 自己把快照的 src 與根目錄放到 sys.path 最前面(轉換前的行程內 behave)
+    env = {**{k: v for k, v in os.environ.items() if k != "PYTHONPATH"}, "LITELLM_LOCAL_MODEL_COST_MAP": "True"}
+    b = subprocess.run([sys.executable, "-m", "behave", "-f", "json", "-o", str(js), "tests/features"],
+                       cwd=baseline_snapshot, env=env, capture_output=True, text=True, timeout=600)
+    assert b.returncode == 0, b.stdout[-2000:]
+    r = _compare("--repo", str(baseline_snapshot), "--no-diff", "--behave-json", str(js))
+    assert r.returncode == 0, r.stdout[-4000:] + r.stderr[-2000:]
+    assert "結果:通過" in r.stdout
+
+
+def test_compare_fails_when_an_assert_is_removed(baseline_snapshot, tmp_path):
+    import shutil
+
+    snap = tmp_path / "reduced"
+    shutil.copytree(baseline_snapshot, snap, symlinks=True)
+    target = snap / "tests/acceptance/test_nfr3_bind.py"
+    lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    node = next(n for n in ast.walk(ast.parse("".join(lines)))
+                if isinstance(n, ast.Assert) and n.lineno == n.end_lineno)
+    indent = lines[node.lineno - 1][: len(lines[node.lineno - 1]) - len(lines[node.lineno - 1].lstrip())]
+    lines[node.lineno - 1] = indent + "pass\n"
+    target.write_text("".join(lines), encoding="utf-8")
+    r = _compare("--repo", str(snap), "--roots", "tests/acceptance", "--no-diff")
+    assert r.returncode == 1, r.stdout[-4000:]
+    assert "[asserts] tests/acceptance/test_nfr3_bind.py::" in r.stdout and "< 基準" in r.stdout
+
+
+def test_compare_diff_and_behave_result_checks(tmp_path):
+    mod = _load_compare()
+    diff = "\n".join([
+        "+++ b/tests/ui/test_x.py", "+    pytest.skip('x')", "+@pytest.mark.xfail", "+    except AssertionError:",
+        "+    assert '0 skipped' in out", "-    pytest.skip('removed line')", " context skip",
+        "+@pytest.mark.skipif(True, reason='x')",
+    ])
+    assert mod.banned_added_lines(diff) == ["+    pytest.skip('x')", "+@pytest.mark.xfail", "+    except AssertionError:",
+                                            "+@pytest.mark.skipif(True, reason='x')"]
+    js = tmp_path / "b.json"
+    js.write_text(json.dumps([{"location": "f.feature:1", "elements": [
+        {"type": "scenario", "status": "passed", "steps": [{"result": {"status": "passed"}}]},
+        {"type": "scenario", "status": "skipped", "steps": [{"result": {"status": "skipped"}}, {}]},
+    ]}]), encoding="utf-8")
+    errors: list[str] = []
+    mod.check_behave_json(js, errors, [])
+    assert any("skipped" in e for e in errors) and any("untested" in e for e in errors)

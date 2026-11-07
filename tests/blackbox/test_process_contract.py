@@ -18,7 +18,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from tests.blackbox.db import db_path, read_db
+from tests.blackbox.db import DB_NAME, build_db, db_path, read_db
 from tests.blackbox.fakemods import write_module
 from tests.blackbox.harness import (
     EXIT_PREFLIGHT, EXIT_SIGINT, EXIT_SIGTERM, EXIT_STARTUP, EXIT_USAGE, KNOB_ENVS, KNOBS_IGNORED_PREFIX,
@@ -130,6 +130,9 @@ def test_log_level_lines_format(serve_factory, fake_api, level):
     for ln in log:
         assert first.fullmatch(ln) or ln.startswith("SPILLWAY-LOG-CONT "), ln
     levels = {m.group(1) for ln in log if (m := first.fullmatch(ln))}
+    assert s.token and not [ln for ln in log if s.token in ln]   # 14.2.2:token 不經日誌輸出
+    raw_log = [ln for ln in s.stderr_bytes().decode("utf-8", "replace").splitlines() if ln.startswith("SPILLWAY-LOG")]
+    assert not [ln for ln in raw_log if s.token in ln]
     if level == "DEBUG":
         assert "DEBUG" in levels
     else:
@@ -147,12 +150,24 @@ def test_exit_2_usage_errors_without_database(tmp_path, args):
     assert not db_path(home).exists()
 
 
-def test_exit_2_invalid_knob_value_without_database(tmp_path):
+@pytest.mark.parametrize("name,value", [
+    ("SPILLWAY_TEST_RNG_SEED", "12x34"),
+    ("SPILLWAY_TEST_START_TIME", "2026-11-01 12:00:00"),
+    ("SPILLWAY_TEST_RETENTION_POLL_SECONDS", "1e3"),
+    ("SPILLWAY_TEST_RETENTION_POLL_SECONDS", "inf"),
+    ("SPILLWAY_TEST_RETENTION_POLL_SECONDS", "0"),
+    ("SPILLWAY_TEST_RETENTION_POLL_SECONDS", "-1"),
+    ("SPILLWAY_TEST_LOG_LEVEL", "debug"),
+    ("SPILLWAY_TEST_RETENTION_STEPPED", "true"),
+    ("SPILLWAY_TEST_NO_TOKEN", "true"),
+])
+def test_exit_2_invalid_knob_value_without_database(tmp_path, name, value):
+    """13.2:值不合法 → stderr 只含變數名與原因(不含值)、結束碼 2、不開啟資料庫。"""
     home = tmp_path / "home"
-    r = _serve_once(home, "--port", str(free_port()),
-                    extra={"SPILLWAY_TEST_CONTROL": "1", "SPILLWAY_TEST_RNG_SEED": "12x34"})
-    assert r.returncode == EXIT_USAGE
-    assert "SPILLWAY_TEST_RNG_SEED" in r.stderr and "12x34" not in r.stderr
+    r = _serve_once(home, "--port", str(free_port()), extra={"SPILLWAY_TEST_CONTROL": "1", name: value})
+    assert r.returncode == EXIT_USAGE, r.stderr
+    assert name in r.stderr
+    assert value not in r.stderr.replace(name, "")   # 變數名本身可能含該字樣
     assert not db_path(home).exists()
 
 
@@ -180,6 +195,16 @@ def test_exit_3_on_adapter_conflict(tmp_path):
     r = _serve_once(tmp_path / "home", "--port", str(free_port()),
                     extra={"SPILLWAY_TEST_CONTROL": "1", "SPILLWAY_TEST_ADAPTER_PATHS": str(mods)})
     assert r.returncode == EXIT_STARTUP, r.stderr[-2000:]
+
+
+def test_exit_3_on_newer_schema_version(tmp_path):
+    """data.md「Schema 版本與 migration」:`user_version > 2` 不開啟;spec 14.1:啟動失敗 → 3。與實作無關。"""
+    home = tmp_path / "home"
+    build_db(home / DB_NAME, "CREATE TABLE t (x INTEGER);", user_version=99)
+    r = _serve_once(home, "--port", str(free_port()))
+    assert r.returncode == EXIT_STARTUP, r.stderr[-2000:]
+    with read_db(home) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 99
 
 
 def test_sigterm_ends_by_signal(serve_factory):

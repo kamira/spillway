@@ -4,9 +4,35 @@
 # 為參數的 import_module / __import__ / find_spec / files 呼叫。列在這裡的(檔案, 字面值)例外,必須寫明理由。
 # 本檔由 T2 擁有;wave 3 需要新例外時回報主 session,由 T2 擁有者補上。
 #
-# 欄位:file = 相對於 repo 根目錄的檔案;literal = 被判違規的字面值(完全相同);reason = 理由。
+# 欄位:file = 相對於 repo 根目錄的檔案;literal = 被判違規的字面值(完全相同),或 pattern = regex(re.search,
+#       用於多行的程式碼字串);reason = 理由。
 
 [[allow]]
 file = "tests/blackbox/prices.py"
 literal = "litellm"
 reason = "以 importlib.util.find_spec 找 litellm 套件目錄,讀其中的價格 JSON 當資料(檔案讀取,不 import litellm;決策 9 ③、AM-9)"
+
+[[allow]]
+file = "tests/blackbox/harness.py"
+literal = "-m spillway"
+reason = "SPILLWAY_CMD 未設定時的預設命令 [sys.executable, '-m', 'spillway'](決策 8 ①);其他檔案一律經 spillway_cmd()"
+
+[[allow]]
+file = "tests/blackbox/test_harness.py"
+literal = "def test_x():\n    import spillway  # noqa\n"
+reason = "執行期守門的負面樣本:寫進暫存目錄、以子行程 pytest 執行,斷言阻擋器攔下它(施工審議 T2 F2)"
+
+[[allow]]
+file = "tests/blackbox/test_harness.py"
+literal = "def test_x():\n    import litellm  # noqa\n"
+reason = "執行期守門的負面樣本:斷言 session 守門發現 litellm(施工審議 T2 F1、F2)"
+
+[[allow]]
+file = "tests/blackbox/fakemods.py"
+pattern = '(?m)^from spillway\.adapters\.base import '
+reason = "寫到暫存目錄的假 adapter 模組原始碼(文字),由 serve 子行程經 SPILLWAY_TEST_ADAPTER_PATHS 載入;測試行程不執行(實作相依,見 impl_dependent.toml)"
+
+[[allow]]
+file = "tests/blackbox/test_harness.py"
+literal = "-m spillway"
+reason = "斷言 SPILLWAY_CMD 未設定時 spillway_cmd() 的預設值(決策 8 ①);不用來啟動行程"

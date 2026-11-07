@@ -20,7 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.blackbox.db import snapshot
+from tests.blackbox.control import ENDPOINTS
+from tests.blackbox.db import DB_NAME, snapshot
 from tests.blackbox.fakemods import write_module
 from tests.blackbox.harness import (
     CONTROL_ENV, EXIT_USAGE, KNOB_ENVS, TEST_CONTROL_WARNING, child_env, spillway_cmd,
@@ -76,6 +77,31 @@ def test_off_every_method_and_variant_is_404_like_unknown_path(serve_factory):
     assert TEST_CONTROL_WARNING not in s.stderr_text().splitlines()
 
 
+@pytest.mark.parametrize("value", ["true", "0", ""])
+def test_control_values_other_than_1_do_not_enable(serve_factory, value):
+    """13.1.1:只有字面 `1` 開啟;`true`、`0`、空字串都視為未開啟。"""
+    s = serve_factory(control=False, extra_env={CONTROL_ENV: value})
+    assert s.request("GET", "/__test__/clock").status_code == 404
+    assert TEST_CONTROL_WARNING not in s.stderr_text().splitlines()
+
+
+@pytest.mark.parametrize("method,path", ENDPOINTS)
+def test_every_endpoint_carries_no_store_and_nosniff(serve_factory, method, path):
+    s = serve_factory(start_time=START)
+    r = s.control.request(method, path, json={} if method == "POST" else None)
+    assert r.headers["cache-control"] == "no-store", (method, path, r.status_code)
+    assert r.headers["x-content-type-options"] == "nosniff", (method, path)
+
+
+@pytest.mark.parametrize("path", sorted({p for _m, p in ENDPOINTS}))
+def test_unsupported_method_is_405(serve_factory, path):
+    s = serve_factory(start_time=START)
+    for method in ("PUT", "PATCH", "DELETE"):
+        r = s.control.request(method, path)
+        assert r.status_code == 405, (method, path, r.status_code)
+        assert set(r.json()["error"]) >= {"code", "message"}, (method, path)
+
+
 def test_on_not_in_openapi_and_headers_and_host_origin(serve_factory):
     s = serve_factory(start_time=START)
     with s.http() as c:
@@ -123,6 +149,43 @@ def test_home_check_exit_2_without_creating_database(tmp_path, case):
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == EXIT_USAGE, r.stderr
     assert "Traceback" not in r.stderr and TEST_CONTROL_WARNING not in r.stderr
+    assert not default.exists()
+
+
+def _run_control_serve(env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([*spillway_cmd(), "serve", "--port", str(free_port())], env=env, cwd=str(cwd),
+                          capture_output=True, text=True, timeout=60)
+
+
+def test_home_check_rejects_symlink_to_default(tmp_path):
+    env, default = _home_env(tmp_path)
+    default.mkdir(parents=True)   # 在暫存的假帳號 home 底下
+    link = tmp_path / "link-to-default"
+    link.symlink_to(default, target_is_directory=True)
+    env.update({CONTROL_ENV: "1", "SPILLWAY_HOME": str(link)})
+    r = _run_control_serve(env, tmp_path)
+    assert r.returncode == EXIT_USAGE, r.stderr
+    assert not (default / DB_NAME).exists() and list(default.iterdir()) == []
+
+
+def _case_insensitive_fs(d: Path) -> bool:
+    probe = d / "CaseProbe"
+    probe.write_text("x", encoding="utf-8")
+    try:
+        return (d / "caseprobe").exists()
+    finally:
+        probe.unlink()
+
+
+def test_home_check_rejects_case_variant_of_default(tmp_path):
+    if not _case_insensitive_fs(tmp_path):
+        pytest.skip("檔案系統區分大小寫:大小寫不同的路徑是不同目錄(13.1.2 只在同一目錄時拒絕)")
+    env, default = _home_env(tmp_path)
+    variant = default.parent / default.name.swapcase()
+    assert str(variant) != str(default)
+    env.update({CONTROL_ENV: "1", "SPILLWAY_HOME": str(variant)})
+    r = _run_control_serve(env, tmp_path)
+    assert r.returncode == EXIT_USAGE, r.stderr
     assert not default.exists()
 
 
@@ -187,6 +250,13 @@ def test_clock_post_422(serve_factory, body):
     r = s.control.request("POST", "/clock", json=body)
     assert r.status_code == 422 and _code(r) == "validation_error", (body, r.text)
     assert s.control.clock()["now"] == START_ISO
+
+
+def test_clock_null_field_means_not_given(serve_factory):
+    """13.3.4:值為 null 的欄位等同未給。"""
+    s = serve_factory(start_time=START)
+    r = s.control.request("POST", "/clock", json={"set": None, "advance_seconds": 1})
+    assert r.status_code == 200 and r.json() == {"now": "2026-11-01T12:00:01Z"}, r.text
 
 
 def test_system_clock_mode(serve_factory):
@@ -335,6 +405,18 @@ def test_stepped_tick_goes_through_due_check(serve_factory):
     for bad in ({"advance_seconds": -1}, {}, {"advance_seconds": "1"}):
         r = s.control.request("POST", "/retention/tick", json=bad)
         assert r.status_code == 422 and _code(r) == "validation_error", bad
+
+
+def test_stepped_loop_does_not_run_without_tick(serve_factory):
+    """STEPPED 的閘(13.4.6):poll 0.2 秒、時鐘已推過到期門檻,真實時間經過約 7 個輪詢週期也不清理;
+    `tick(0)` 才放行一輪(到期 → 清理)。"""
+    s = serve_factory(start_time=START, retention_stepped=True, retention_poll_seconds=0.2)
+    assert s.control.retention()["runs"] == 1
+    s.control.advance(7200)   # 遠超過 next_due − 2×poll
+    time.sleep(1.5)
+    assert s.control.retention()["runs"] == 1
+    assert s.control.tick(0) == {"ran": True, "deleted": 0, "runs": 2, "now": "2026-11-01T14:00:00Z"}
+    assert s.control.retention()["runs"] == 2
 
 
 def test_stepped_tick_with_system_clock(serve_factory):

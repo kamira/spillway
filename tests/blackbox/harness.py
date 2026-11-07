@@ -46,8 +46,20 @@
 - stderr:`stderr_bytes()`、`stderr_text()`(token 已換成 `***`)、`stderr_offset()`、
   `stderr_since(offset) -> bytes`、`drain_stderr(quiet=0.3, timeout=5.0)`(等到一段時間沒有新輸出)。
 
-訊號送到整個行程群組(AM-6)。以包裝程式作為 `SPILLWAY_CMD` 時,包裝程式與實作若在同一個群組,包裝程式
-不可再轉送訊號(否則實作會收到兩次;第二個 SIGINT 為強制結束);要轉送就讓實作另開群組。
+訊號送到整個行程群組(AM-6)。`SPILLWAY_CMD` 指向的程式必須擇一(施工審議 T2 F4):① 以 exec 取代自己
+成為實作;② 讓實作另開行程群組、轉送 SIGINT/SIGTERM,在實作結束後以相同結束狀態結束——實作以訊號結束時,
+重設該訊號為預設處置後對自己重送同一訊號(不可改成 `exit 128+n`)。包裝程式與實作若在同一個群組,包裝程式
+不可再轉送訊號(否則實作會收到兩次;第二個 SIGINT 為強制結束)。停機後包裝程式與實作的所有子孫行程不得殘留,
+也不得繼續持有 stderr:`stop()` 在行程結束後斷言 stderr 已到 EOF、行程群組已清空(否則 SIGKILL 該群組並失敗)。
+`SPILLWAY_CMD` 的第一個字是含路徑分隔字元的相對路徑(例如 `./wrap.sh`、`target/debug/spillway`)時,
+以測試行程啟動時的工作目錄解析(`INVOCATION_DIR`;子行程的 cwd 是暫存目錄)。
+
+就緒:開啟控制介面時,先在 stderr 看到 14.3.3 的警告行(spec 規定在開始監聽前寫出)才開始輪詢
+`/api/settings/context`,避免連到恰好佔用同一埠的其他伺服器。存活中的 `Serve` 登記在模組層的 `_LIVE`,
+行程結束時(atexit)對其行程群組 SIGKILL;測試行程本身被 SIGKILL 時無法處理(已知限制)。
+
+stderr 問題掃描(`stderr_problems`):`SPILLWAY-LOG` 行以外的字樣(Python 的 `Traceback`、uvicorn 的
+`ERROR:`、Rust 的 `panicked at`)是盡力而為,不是契約(spec 14.3.1)。
 
 常數(spec 14):`TOKEN_NOTICE`、`TEST_CONTROL_WARNING`、`KNOBS_IGNORED_PREFIX`、`CONTROL_ENV`、
 `KNOB_ENVS`(依 spec 13.2 表格順序)、`GRACEFUL_ENV`、`MCP_MAX_SESSIONS_ENV`、`EXIT_USAGE`(2)、
@@ -58,6 +70,7 @@
 """
 from __future__ import annotations
 
+import atexit
 import contextlib
 import os
 import re
@@ -68,6 +81,7 @@ import sys
 import tempfile
 import threading
 import time
+import weakref
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -127,7 +141,10 @@ EXIT_SIGTERM = -_signal.SIGTERM
 
 _DROP_ENV = frozenset({*REAL_KEY_VARS, "SPILLWAY_TOKEN", "SPILLWAY_DEPTH", CMD_ENV, CONTROL_ENV, *KNOB_ENVS,
                        GRACEFUL_ENV, MCP_MAX_SESSIONS_ENV})
-_PROBLEM_RE = re.compile(r"Traceback|^ERROR\b|^CRITICAL\b|^SPILLWAY-LOG (ERROR|CRITICAL) ")
+_PROBLEM_RE = re.compile(r"Traceback|^ERROR\b|^CRITICAL\b|^SPILLWAY-LOG (ERROR|CRITICAL) |panicked at|"
+                         r"^thread '.*' panicked")
+# 測試行程啟動時的工作目錄(相對路徑的 SPILLWAY_CMD 以它解析;F5)
+INVOCATION_DIR = Path(os.getcwd())
 _DEFAULT = object()
 
 
@@ -137,7 +154,13 @@ def drain_expire_delay(grace: float) -> float:
 
 def spillway_cmd() -> list[str]:
     raw = os.environ.get(CMD_ENV, "")
-    return shlex.split(raw) if raw.strip() else [sys.executable, "-m", "spillway"]
+    if not raw.strip():
+        return [sys.executable, "-m", "spillway"]
+    cmd = shlex.split(raw)
+    first = cmd[0]
+    if (os.sep in first or (os.altsep and os.altsep in first)) and not os.path.isabs(first):
+        cmd[0] = str((INVOCATION_DIR / first).resolve())
+    return cmd
 
 
 def _require_tmp(home: Path) -> Path:
@@ -231,10 +254,39 @@ class _StderrPump:
                 data = data.replace(s, b"***")
         return data.decode("utf-8", errors="replace")
 
-    def join(self, timeout: float = 10.0) -> None:
+    def join(self, timeout: float = 10.0) -> bool:
+        """等讀取執行緒結束(stderr 到 EOF);回傳是否已結束。已結束時關閉日誌檔。"""
         self._thread.join(timeout)
+        if self._thread.is_alive():
+            return False
         with contextlib.suppress(Exception):
             self._log.close()
+        return True
+
+
+# 存活中的 serve(F8):測試行程結束時對其行程群組 SIGKILL,避免直接使用 `Serve` 的測試失敗後殘留
+_LIVE: weakref.WeakSet[Serve] = weakref.WeakSet()
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _kill_live() -> None:
+    for s in list(_LIVE):
+        if s.proc is not None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(s.proc.pid, _signal.SIGKILL)
+    _LIVE.clear()
+
+
+atexit.register(_kill_live)
 
 
 class Serve:
@@ -323,6 +375,7 @@ class Serve:
         for s in self._secrets:
             self._pump.add_secret(s)
         self._stopped = False
+        _LIVE.add(self)
         if wait_ready:
             try:
                 self.wait_ready(timeout)
@@ -348,10 +401,14 @@ class Serve:
     def wait_ready(self, timeout: float = 60.0) -> None:
         assert self.proc is not None
         deadline = time.monotonic() + timeout
+        warning = TEST_CONTROL_WARNING.encode("utf-8") + b"\n"
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 time.sleep(0.1)   # 讓 stderr 讀完
                 raise RuntimeError(f"serve 提前結束 rc={self.proc.returncode}\n{self.stderr_text()[-4000:]}")
+            if self.control_enabled and warning not in self.stderr_bytes():
+                time.sleep(0.02)   # 14.3.3:警告行在開始監聽前寫出;還沒看到就不是這個 serve 在聽
+                continue
             try:
                 r = httpx.get(self.url("/api/settings/context"), timeout=2, trust_env=False)
                 if r.status_code == 200 and self.proc.poll() is None:
@@ -391,17 +448,35 @@ class Serve:
         self.proc.wait(timeout)
         return time.monotonic() - start
 
-    def _finish(self) -> None:
-        if self._pump is not None:
-            self._pump.join()
+    def _finish(self, pump_timeout: float = 10.0) -> bool:
+        """收尾;回傳 stderr 是否已到 EOF。"""
+        eof = True if self._pump is None else self._pump.join(pump_timeout)
         if self._control is not None:
             self._control.close()
             self._control = None
         self._stopped = True
+        _LIVE.discard(self)
+        return eof
+
+    def _reap_group(self, wait: float = 2.0) -> bool:
+        """行程結束後輪詢行程群組至多 `wait` 秒;仍有成員時 SIGKILL 該群組並回傳 True(有殘留)。"""
+        assert self.proc is not None
+        deadline = time.monotonic() + wait
+        while _group_alive(self.proc.pid):
+            if time.monotonic() >= deadline:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(self.proc.pid, _signal.SIGKILL)
+                gone = time.monotonic() + 5.0   # 等孤兒被回收,呼叫端之後看到的是已清空的群組
+                while _group_alive(self.proc.pid) and time.monotonic() < gone:
+                    time.sleep(0.05)
+                return True
+            time.sleep(0.05)
+        return False
 
     def kill(self) -> None:
-        if self.proc is not None and self.proc.poll() is None:
-            self.signal(_signal.SIGKILL)
+        if self.proc is not None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(self.proc.pid, _signal.SIGKILL)   # 群組內的子孫行程一併
             with contextlib.suppress(Exception):
                 self.proc.wait(15)
         self._finish()
@@ -423,10 +498,16 @@ class Serve:
                 timed_out = True
                 self.signal(_signal.SIGKILL)
                 self.proc.wait(15)
+        eof = self._pump.join(5.0) if self._pump is not None else True
+        leftover = self._reap_group()
+        if not eof:   # 殘留的子孫行程已被 SIGKILL,讓讀取執行緒收尾
+            self._finish(5.0)
         self._finish()
         rc = self.proc.returncode
         text = self.stderr_text()
         assert not timed_out, f"serve 未在 {limit} 秒內結束(已 SIGKILL)\n{text[-4000:]}"
+        assert eof, "stderr 未關閉:可能有子行程殘留(已 SIGKILL 行程群組)"
+        assert not leftover, "serve 結束後行程群組仍有行程殘留(已 SIGKILL)"
         assert rc == expect_code, f"serve 結束碼 {rc},預期 {expect_code}\n{text[-4000:]}"
         problems = stderr_problems(text, (*self.allow_stderr, *allow_stderr))
         assert not problems, "serve stderr 有 Traceback 或 ERROR:\n" + "\n".join(problems[:20])
