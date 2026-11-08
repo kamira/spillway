@@ -10,6 +10,7 @@
 - `json_body`:`$.choices[0].message.content` 換值。
 - `key_in_response`:JSON body 多一個帶語料金鑰的欄位(`SPILLWAY_PARITY_KEY_OPENAI` 的值)。
 - `db_row`:回應送出前把最新一列 `usage_ledger.tokens_in` 加 1。
+- `log_key`:向 stderr 寫一行帶語料金鑰的 `SPILLWAY-LOG` 行。
 - `none`:不改動(驗證 wrapper 本身不造成差異)。
 
 內部埠一律在 JSON 回應中換回外部埠(`$.port` 與 MCP URL 因此仍等於本次埠)。訊號處理為 harness 的 ② 型:實作在另一個行程群組,
@@ -30,7 +31,7 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-MUTATIONS = ("status", "header", "json_body", "key_in_response", "db_row", "none")
+MUTATIONS = ("status", "header", "json_body", "key_in_response", "db_row", "log_key", "none")
 CHAT_PATH = "/v1/chat/completions"
 KEY_ENV = "SPILLWAY_PARITY_KEY_OPENAI"
 HOP_BY_HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "content-length"}
@@ -87,6 +88,9 @@ def make_handler(mutation: str, inner_port: int, outer_port: int) -> type[BaseHT
                 body = _mutate_body(mutation, body)
             if chat_ok and mutation == "db_row":
                 _db_row_mutation()
+            if chat_ok and mutation == "log_key":
+                sys.stderr.write(f"SPILLWAY-LOG INFO mutant {os.environ[KEY_ENV]}\n")
+                sys.stderr.flush()
             self.send_response(status)
             for name, value in out_headers:
                 if name.lower() in HOP_BY_HOP:

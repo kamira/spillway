@@ -5,7 +5,7 @@ import pytest
 
 from tests.parity.corpus import SCENARIOS
 from tests.parity.normalize import PATH_RULES, DB_SURFACE, route_of, _parse_body, _tokens, _visit
-from tests.parity.runner import run_corpus, run_pair
+from tests.parity.runner import run_corpus, run_pair, run_scenario
 
 
 @pytest.mark.parametrize("round_no", [1, 2], ids=["round1", "round2"])
@@ -14,6 +14,13 @@ def test_self_compare_has_zero_differences(scenario, round_no):
     result = run_pair(scenario)
     assert not result.empty_a and not result.empty_b, (result.empty_a, result.empty_b)
     assert result.report.ok, result.report.text()
+
+
+def test_origin_rejection_reaches_the_corpus():
+    """15.4 的 403 例外要有語料走到(`host_not_allowed` 維持 comparator 層:突變 wrapper 會改寫 Host)。"""
+    capture = run_scenario(next(s for s in SCENARIOS if s.name == "errors"))
+    bodies = [body for ex in capture.exchanges if ex.status == 403 for kind, body in [_parse_body(ex)] if kind == "json"]
+    assert any(b.get("error", {}).get("code") == "origin_not_allowed" for b in bodies)
 
 
 def test_every_path_rule_is_reached_by_the_corpus():

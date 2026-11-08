@@ -201,7 +201,8 @@ async def _capture_fields(request: Request) -> dict[str, Any]:
     }
 
 
-async def _handle(request: Request, protocol: str) -> JSONResponse:
+async def _record(request: Request) -> tuple[dict[str, Any] | None, Any, str | None]:
+    """記錄一筆請求;回傳 `(body, model, 驗證值)` 供路由使用。"""
     state: FakeState = request.app.state.fake
     body = await _read_json(request)
     model = body.get("model") if body else None
@@ -217,6 +218,12 @@ async def _handle(request: Request, protocol: str) -> JSONResponse:
             **await _capture_fields(request),
         )
     )
+    return body, model, auth
+
+
+async def _handle(request: Request, protocol: str) -> JSONResponse:
+    state: FakeState = request.app.state.fake
+    body, model, auth = await _record(request)
     if body is None or not isinstance(model, str):
         msg = "request body must be JSON with a 'model' field"
         if protocol == "anthropic":
@@ -295,7 +302,15 @@ async def list_models(request: Request) -> JSONResponse:
 
 
 async def health(request: Request) -> JSONResponse:
+    await _record(request)
     return JSONResponse({"status": "ok"})
+
+
+async def unmatched(request: Request) -> JSONResponse:
+    """未列路由的請求也算上游請求(spec 15.3.1 比筆數);`/_fake/` 是控制面,不記錄。"""
+    if not request.url.path.startswith("/_fake/"):
+        await _record(request)
+    return JSONResponse({"error": "not found"}, status_code=404)
 
 
 # 控制端點:供子行程(驗收操作)從外部設定模式;pytest 內請直接用 fixture。
@@ -331,6 +346,7 @@ def create_app(state: FakeState | None = None) -> Starlette:
             Route("/_fake/mode", control_mode, methods=["POST"]),
             Route("/_fake/reset", control_reset, methods=["POST"]),
             Route("/_fake/requests", control_requests, methods=["GET"]),
+            Route("/{rest:path}", unmatched, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]),
         ]
     )
     app.state.fake = state or FakeState()

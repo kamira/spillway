@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from tests.parity import normalize, test_mutation
 from tests.parity.corpus import SCENARIOS
@@ -183,3 +186,74 @@ def test_path_rules_match_spec():
             for p in _paths(paths, surface):
                 want.add((s, p, shape, treatment))
     assert want == {(r.surface, r.path, r.shape, r.treatment) for r in normalize.PATH_RULES}
+
+
+# (spec「形狀或型別」欄, 「處理」欄) → 程式實際採用的 kind;`_apply_kind` 只讀 kind,shape 與 treatment 只是說明字串
+_KIND_BY_SPEC = {
+    ("`^chatcmpl-[0-9a-f]{32}$`", "`<id-n>`"): "chat_id",
+    ("整數", "不替換"): "int",
+    ("整數或 null", "不替換"): "int_or_null",
+    ("遮罩前 `^[A-Za-z0-9_-]{43}$`;遮罩後必須為 `[REDACTED]`", "不另替換"): "token",
+    ("整數,等於本次埠", "`<port>`"): "port",
+    ("等於本次 `SPILLWAY_HOME`", "`<home>`"): "home",
+    (r"`^[0-9]+\.[0-9]+\.[0-9]+`", "`<version>`"): "version",
+    ("見 DB 列", "同 DB 列"): "api_base",
+    ("15.6.2", "不替換"): "latency",
+    ("15.7.4", "不替換"): "presence",
+    ("待定義期間只比 null 或數值", "不替換"): "number_only",
+    ("待定義期間只比 null 或整數", "不替換"): "int_only",
+    (r"`^http://127\.0\.0\.1:<本次埠>/mcp/`", "只把埠換成 `<port>`"): "mcp_url",
+    ("等於本次埠", "`<port>`"): "stdio_port",
+    ("`^spillway(-rs)?$`", "`<cmd>`(15.11)"): "stdio_command",
+    ("值以本次 fake `base_url` 開頭時替換;其他值不替換,依 literal 比對", "把該字首換成 `<fake-base-url>`"): "api_base",
+}
+_PAYLOAD_SHAPE = ("同 15.8.3 同名欄位", "不替換")
+_PAYLOAD_KIND = {"$.request_json": "payload_request", "$.response_text": "verbatim"}
+
+
+def _expected_kind(shape: str, treatment: str, path: str) -> str:
+    if (shape, treatment) == _PAYLOAD_SHAPE:
+        assert path in _PAYLOAD_KIND, f"未知的 payload 路徑:{path}"
+        return _PAYLOAD_KIND[path]
+    assert (shape, treatment) in _KIND_BY_SPEC, f"未知的 spec 組合:{shape} / {treatment}"
+    return _KIND_BY_SPEC[(shape, treatment)]
+
+
+def _assert_path_rule_kinds_match_spec() -> None:
+    want: dict[tuple[str, str], str] = {}
+    surface: list[str] = []
+    for cell, paths, shape, treatment in _tables(_section("### 15.9"))[0]:
+        surface = _surfaces(cell, surface)
+        for s in surface:
+            for p in _paths(paths, surface):
+                want[(s, p)] = _expected_kind(shape, treatment, p)
+    assert want == {(r.surface, r.path): r.kind for r in normalize.PATH_RULES}
+
+
+def test_path_rule_kinds_match_spec():
+    _assert_path_rule_kinds_match_spec()
+
+
+def test_kind_binding_detects_widened_rule(monkeypatch):
+    widened = tuple(replace(r, kind="latency") if r.path == "$.created" and r.surface == normalize.CHAT else r for r in normalize.PATH_RULES)
+    monkeypatch.setattr(normalize, "PATH_RULES", widened)
+    with pytest.raises(AssertionError):
+        _assert_path_rule_kinds_match_spec()
+
+
+def _shape_tick(path: str) -> str:
+    row = next(r for r in _tables(_section("### 15.9"))[0] if f"`{path}`" in r[1])
+    return next(t for t in _ticks(row[2]) if t.startswith("^"))
+
+
+def test_shape_regexes_match_spec():
+    assert normalize.CHAT_ID_RE.pattern == _shape_tick("$.id")
+    assert normalize.TOKEN_RE.pattern == _shape_tick("$.token")
+    assert normalize.VERSION_RE.pattern == _shape_tick("$.version")
+    assert normalize.STDIO_COMMAND_RE.pattern == _shape_tick("$.connection.stdio.command")
+    est_cost = next(r for r in _tables(_section("### 15.4"))[0] if "X-Spillway-Est-Cost" in r[0])
+    assert normalize.EST_COST_RE.pattern == next(t for t in _ticks(est_cost[2]) if t.startswith("^"))
+    sha256 = next(r for r in _tables(_section("### 15.8"))[0] if "access_token_sha256" in r[0])
+    assert normalize.SHA256_RE.pattern == next(t for t in _ticks(sha256[1]) if t.startswith("^"))
+    para = next(ln for ln in _section("### 15.7").splitlines() if ln.startswith("15.7.3"))
+    assert normalize.FIELD_PATH_RE.pattern == next(t for t in _ticks(para) if t.startswith("^"))

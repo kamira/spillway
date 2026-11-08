@@ -7,10 +7,10 @@ from dataclasses import replace
 import pytest
 
 from tests.blackbox.mask import MASK
-from tests.parity.corpus import CORPUS_KEYS, SAMPLE_TOKEN, sample_capture
+from tests.parity.corpus import CORPUS_KEYS, SAMPLE_TOKEN, SEEDED_PARAMS_KEY, sample_capture
 from tests.parity.normalize import (
     DB_ROWS, ERRORS, JSON_BODY, MODE_MALFORMED, UPSTREAM, Capture, Exchange, ParsedJson, Report, compare_captures, diff_values,
-    mask_capture, normalize_capture, parse_strict, route_of, scan_capture,
+    mask_capture, normalize_capture, parse_strict, presence_of, route_of, scan_capture,
 )
 
 KEY = CORPUS_KEYS[0]
@@ -62,7 +62,7 @@ def test_diff_reports_nested_paths():
 # ---------------------------------------------------------------- 嚴格 JSON
 
 
-@pytest.mark.parametrize("text", ['{"a": NaN}', '{"a": Infinity}', '{"a": -Infinity}', "NaN", "{bad"])
+@pytest.mark.parametrize("text", ['{"a": NaN}', '{"a": Infinity}', '{"a": -Infinity}', "NaN", "{bad", '{"a": 1e999}', "-1e999"])
 def test_strict_parser_rejects_nan_infinity_and_garbage(text):
     with pytest.raises(ValueError):
         parse_strict(text)
@@ -369,3 +369,120 @@ def test_scan_exempts_rotated_token_and_prompt_forwarding():
     assert scan_capture(a, "a") == []      # rotate 的 $.token 不掃描;上游 body 不在掃描範圍
     a.upstream[0].json_body = {"messages": [{"role": "user", "content": KEY}]}
     assert scan_capture(a, "a") == []
+
+
+# ---------------------------------------------------------------- 13.4.5 種入金鑰(15.10.3)與存在性記錄(15.10.5)
+
+
+_JSON = (("content-type", "application/json"),)
+
+
+def _seed_positions(capture: Capture, value: str) -> None:
+    """把值放在 15.10.3 豁免的三個位置:DB、單一成員 API 回顯、清單 API 回顯。"""
+    capture.db["deployments"][0]["params"] = ("text", json.dumps({"api_key": value}))
+    capture.exchanges[:] = [
+        Exchange("GET", "/api/deployments/alpha", 200, _JSON, json.dumps({"id": "alpha", "params": {"api_key": value}}).encode()),
+        Exchange("GET", "/api/deployments", 200, _JSON,
+                 json.dumps({"deployments": [{"id": "alpha", "params": {"api_key": value}}]}).encode()),
+    ]
+
+
+def _put_seeded_in_log(b: Capture) -> None:
+    b.log_lines.append(f"SPILLWAY-LOG INFO mod {SEEDED_PARAMS_KEY}")
+
+
+def _put_seeded_in_ledger_error(b: Capture) -> None:
+    b.db["usage_ledger"][0]["error"] = ("text", SEEDED_PARAMS_KEY)
+
+
+def _put_seeded_in_response(b: Capture) -> None:
+    body = _body(b, 0)
+    body["leak"] = SEEDED_PARAMS_KEY
+    _with_body(b, 0, body)
+
+
+@pytest.mark.parametrize("place", [_put_seeded_in_log, _put_seeded_in_ledger_error, _put_seeded_in_response],
+                         ids=["log", "ledger_error", "response_field"])
+def test_seeded_key_outside_exempt_positions_is_sentinel(place):
+    a, b = sample_capture("a"), sample_capture("b")
+    for cap in (a, b):
+        cap.seeded_param_ids = frozenset({"alpha"})
+    place(b)
+    report = compare_captures(a, b)
+    assert any(d.kind == "sentinel" and d.side == "b" for d in report.differences), report.text()
+    assert SEEDED_PARAMS_KEY not in report.text()
+
+
+def test_seeded_key_in_exempt_positions_not_flagged():
+    a = sample_capture("a")
+    a.seeded_param_ids = frozenset({"alpha"})
+    _seed_positions(a, SEEDED_PARAMS_KEY)
+    assert scan_capture(a, "a") == []
+
+
+def test_seeded_exemption_is_limited_to_seeded_members():
+    a = sample_capture("a")
+    a.seeded_param_ids = frozenset({"other"})
+    _seed_positions(a, SEEDED_PARAMS_KEY)
+    assert {(d.surface, d.kind) for d in scan_capture(a, "a")} == {(DB_ROWS, "sentinel"), (JSON_BODY, "sentinel")}
+    assert len(scan_capture(a, "a")) == 3
+
+
+PROMPT_PATH = "$.messages[0].content"
+
+
+def _prompt(capture: Capture, text: str) -> None:
+    capture.upstream[0].json_body = {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": text}]}
+
+
+def test_upstream_prompt_masked_on_one_side_differs():
+    a, b = sample_capture("a"), sample_capture("b")
+    _prompt(a, f"my key is {KEY}")
+    _prompt(b, f"my key is {MASK}")
+    report = compare_captures(a, b)
+    assert (UPSTREAM, PROMPT_PATH, "sentinel_presence") in {(d.surface, d.path, d.kind) for d in report.differences}, report.text()
+    assert KEY not in report.text()
+
+
+def test_upstream_prompt_same_on_both_sides_is_equal():
+    a, b = sample_capture("a"), sample_capture("b")
+    _prompt(a, f"my key is {KEY}")
+    _prompt(b, f"my key is {KEY}")
+    report = compare_captures(a, b)
+    assert report.ok, report.text()
+
+
+def _seeded_pair(value_a: str, value_b: str) -> tuple[Capture, Capture]:
+    a, b = sample_capture("a"), sample_capture("b")
+    for cap, value in ((a, value_a), (b, value_b)):
+        cap.seeded_param_ids = frozenset({"alpha"})
+        _seed_positions(cap, value)
+    return a, b
+
+
+def test_seeded_echo_masked_on_one_side_differs_in_db():
+    a, b = _seeded_pair(SEEDED_PARAMS_KEY, SEEDED_PARAMS_KEY)
+    b.db["deployments"][0]["params"] = ("text", json.dumps({"api_key": MASK}))
+    report = compare_captures(a, b)
+    assert [(d.surface, d.location, d.path, d.kind) for d in report.differences] == \
+        [(DB_ROWS, "deployments[0]", "params", "sentinel_presence")], report.text()
+    assert SEEDED_PARAMS_KEY not in report.text()
+
+
+def test_seeded_echo_masked_on_one_side_differs_in_api():
+    a, b = _seeded_pair(SEEDED_PARAMS_KEY, SEEDED_PARAMS_KEY)
+    b.exchanges[0] = replace(b.exchanges[0], body=json.dumps({"id": "alpha", "params": {"api_key": MASK}}).encode())
+    report = compare_captures(a, b)
+    assert [(d.surface, d.path, d.kind) for d in report.differences] == [(JSON_BODY, "$.params.api_key", "sentinel_presence")], report.text()
+    assert SEEDED_PARAMS_KEY not in report.text()
+
+
+def test_rotated_token_is_not_in_the_presence_record():
+    """15.10.5 末句:rotate 的 `$.token` 依 15.9.5,不適用存在性記錄。"""
+    assert not any(path == "$.token" for _, _, path in presence_of(sample_capture("a")))
+
+
+def test_seeded_echo_plain_on_both_sides_is_equal():
+    a, b = _seeded_pair(SEEDED_PARAMS_KEY, SEEDED_PARAMS_KEY)
+    report = compare_captures(a, b)
+    assert report.ok, report.text()

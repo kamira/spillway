@@ -395,6 +395,7 @@ class Serve:
         allowed_unavailable_adapters: Iterable[str] = (),
         allow_stderr: Iterable[str] = (),
         cmd: Sequence[str] | None = None,
+        log_secrets: Iterable[str] = (),
     ) -> None:
         if cmd is not None and not cmd:
             raise ValueError("cmd 不可為空序列")
@@ -424,7 +425,7 @@ class Serve:
         self._out_pump: _StderrPump | None = None
         self._control: Control | None = None
         self._stopped = True
-        self._secrets: list[str] = []
+        self._secrets: list[str] = list(log_secrets)
 
     # ------------------------------------------------------------------ 環境與啟動
     def env(self) -> dict[str, str]:

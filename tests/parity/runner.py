@@ -20,7 +20,7 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,7 @@ from tests.blackbox.mask import mask_secrets
 from tests.fakes.api_upstream.server import FakeApiServer
 from tests.parity.corpus import CORPUS_KEY_ENVS, CORPUS_KEYS, FAKE_BASE, SCENARIOS, START_TIME, FakeMode, Scenario, Step
 from tests.parity.normalize import (
-    DB_ROWS, DB_TABLES, ERRORS, HEADERS, JSON_BODY, LOG_CONT_PREFIX, LOG_PREFIX, STATUS, UPSTREAM, Capture, Exchange, Report,
+    DB_ROWS, DB_TABLES, ERRORS, HEADERS, JSON_BODY, LOG_BARE, LOG_CONT_PREFIX, LOG_PREFIX, STATUS, UPSTREAM, Capture, Exchange, Report,
     _is_error_shape, _parse_body, compare_captures, sentinels_of,
 )
 
@@ -50,12 +50,12 @@ class RunnerError(RuntimeError):
 
 @dataclass
 class PairResult:
-    scenario: Scenario
+    scenario: Scenario = field(repr=False)
     report: Report
     empty_a: list[str]
     empty_b: list[str]
-    capture_a: Capture
-    capture_b: Capture
+    capture_a: Capture = field(repr=False)
+    capture_b: Capture = field(repr=False)
 
     @property
     def ok(self) -> bool:
@@ -103,7 +103,7 @@ def _snapshot_db(conn: sqlite3.Connection) -> tuple[dict[str, list[dict[str, tup
 
 def _log_lines(stderr: bytes) -> list[str]:
     text = stderr.decode("utf-8", errors="replace")
-    return [ln for ln in text.split("\n") if ln.startswith((LOG_PREFIX, LOG_CONT_PREFIX))]
+    return [ln for ln in text.split("\n") if ln.startswith((LOG_PREFIX, LOG_CONT_PREFIX)) or ln == LOG_BARE]
 
 
 def _model_credentials(scenario: Scenario) -> dict[str, bool]:
@@ -119,7 +119,7 @@ def _seeded_ids(scenario: Scenario) -> frozenset[str]:
     return frozenset(s.json["id"] for s in scenario.steps if isinstance(s, Step) and s.path == RAW_PARAMS_PATH)
 
 
-def _do_step(step: Step, client: Any, fake_base: str, capture: Capture, tokens: list[str]) -> None:
+def _do_step(step: Step, client: Any, fake_base: str, capture: Capture) -> None:
     kw: dict[str, Any] = {}
     if step.json is not None:
         kw["json"] = _substitute(step.json, fake_base)
@@ -133,11 +133,11 @@ def _do_step(step: Step, client: Any, fake_base: str, capture: Capture, tokens: 
     if step.path == ROTATE_PATH and r.status_code == 200:
         kind, body = _parse_body(ex)
         if kind == "json" and isinstance(body, dict) and isinstance(body.get("token"), str):
-            tokens.append(body["token"])
+            capture.tokens += (body["token"],)
 
 
-def _scrub(message: str, capture: Capture, tokens: Sequence[str]) -> str:
-    return mask_secrets(message, (*sentinels_of(capture), *tokens))
+def _scrub(message: str, capture: Capture) -> str:
+    return mask_secrets(message, sentinels_of(capture))
 
 
 def run_scenario(scenario: Scenario, cmd: Sequence[str] | None = None, *, keep_root: Path | None = None) -> Capture:
@@ -149,24 +149,23 @@ def run_scenario(scenario: Scenario, cmd: Sequence[str] | None = None, *, keep_r
     fake = FakeApiServer().start()
     try:
         serve = Serve(root / "home", cmd=cmd, start_time=START_TIME, log_level="INFO", extra_env=dict(CORPUS_KEY_ENVS),
-                      log_path=root / "serve.log", allow_stderr=ALLOW_STDERR)
+                      log_path=root / "serve.log", allow_stderr=ALLOW_STDERR, log_secrets=CORPUS_KEYS)
         capture = Capture(scenario=scenario.name, port=serve.port, home=str(serve.home), fake_base_url=fake.base_url,
                           corpus_keys=CORPUS_KEYS, model_credentials=_model_credentials(scenario),
                           seeded_param_ids=_seeded_ids(scenario))
-        tokens: list[str] = []
         try:
             serve.start()
         except BaseException as exc:
-            raise RunnerError(_scrub(f"{scenario.name}: serve 無法啟動:{type(exc).__name__}", capture, tokens)) from None
+            raise RunnerError(_scrub(f"{scenario.name}: serve 無法啟動:{type(exc).__name__}", capture)) from None
         try:
             if serve.token:
-                tokens.append(serve.token)
+                capture.tokens += (serve.token,)
             with serve.http(timeout=60.0) as client:
                 for step in scenario.steps:
                     if isinstance(step, FakeMode):
                         fake.set_mode(step.model, step.mode, **dict(step.options))
                     else:
-                        _do_step(step, client, fake.base_url, capture, tokens)
+                        _do_step(step, client, fake.base_url, capture)
             with serve.db() as conn:
                 capture.db, capture.user_version = _snapshot_db(conn)
             capture.upstream = list(fake.requests)
@@ -178,7 +177,6 @@ def run_scenario(scenario: Scenario, cmd: Sequence[str] | None = None, *, keep_r
         except AssertionError as exc:
             raise RunnerError(f"{scenario.name}: serve 未正常結束:{type(exc).__name__}") from None
         capture.log_lines = _log_lines(serve.stderr_bytes())
-        capture.tokens = tuple(tokens)
         return capture
     finally:
         fake.stop()

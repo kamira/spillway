@@ -20,17 +20,17 @@ from tests.parity.normalize import (
     DB_ROWS, ERRORS, HEADERS, JSON_BODY, MODE_MALFORMED, MODE_UNKNOWN_PATH, STATUS, UPSTREAM, Capture, Exchange,
 )
 
-__all__ = ["CORPUS_KEYS", "CORPUS_KEY_ENVS", "FAKE_BASE", "SCENARIOS", "START_TIME", "UNREACHABLE_BASE", "FakeMode", "Scenario", "Step",
-           "sample_capture"]
+__all__ = ["CORPUS_KEYS", "CORPUS_KEY_ENVS", "FAKE_BASE", "SAMPLE_TOKEN", "SCENARIOS", "SEEDED_PARAMS_KEY", "START_TIME", "UNREACHABLE_BASE",
+           "FakeMode", "Scenario", "Step", "sample_capture"]
 
 START_TIME = "2026-11-08T00:00:00Z"
 FAKE_BASE = "$FAKE_BASE"
 UNREACHABLE_BASE = "http://127.0.0.1:9/v1"
 KEY_OPENAI_ENV, KEY_ANTHROPIC_ENV = "SPILLWAY_PARITY_KEY_OPENAI", "SPILLWAY_PARITY_KEY_ANTHROPIC"
 KEY_OPENAI, KEY_ANTHROPIC = "sk-test-parity-corpus-0001", "sk-fake-parity-corpus-0002"
-CORPUS_KEYS = (KEY_OPENAI, KEY_ANTHROPIC)
-CORPUS_KEY_ENVS = {KEY_OPENAI_ENV: KEY_OPENAI, KEY_ANTHROPIC_ENV: KEY_ANTHROPIC}
 SEEDED_PARAMS_KEY = "sk-fake-parity-seeded-0003"
+CORPUS_KEYS = (KEY_OPENAI, KEY_ANTHROPIC, SEEDED_PARAMS_KEY)
+CORPUS_KEY_ENVS = {KEY_OPENAI_ENV: KEY_OPENAI, KEY_ANTHROPIC_ENV: KEY_ANTHROPIC}
 
 CAPS = {"ctx": 128000, "tools": True, "vision": False, "efforts": []}
 HELLO = [{"role": "user", "content": "hello"}]
@@ -40,9 +40,9 @@ HELLO = [{"role": "user", "content": "hello"}]
 class Step:
     method: str
     path: str
-    json: Any = None
-    content: bytes | None = None
-    headers: tuple[tuple[str, str], ...] = ()
+    json: Any = field(default=None, repr=False)
+    content: bytes | None = field(default=None, repr=False)
+    headers: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     error_mode: str = ""
 
 
@@ -60,7 +60,7 @@ class Scenario:
     name: str
     module: str
     surfaces: tuple[str, ...]
-    steps: tuple[Any, ...] = field(default_factory=tuple)
+    steps: tuple[Any, ...] = field(default_factory=tuple, repr=False)
 
 
 def api_member(dep_id: str, model: str, *, provider: str = "openai", credential: str | None = KEY_OPENAI_ENV,
@@ -146,6 +146,7 @@ SCENARIOS: tuple[Scenario, ...] = (
         Step("DELETE", "/v1/models"),
         Step("POST", "/__test__/clock", json={}),                            # 422:沒有任何欄位對應
         Step("POST", "/__test__/cooldowns", json={"deployment": "ghost", "until": START_TIME, "reason": "rate_limited"}),
+        Step("GET", "/api/settings", headers=(("Origin", "http://evil.example"),)),      # 403 origin_not_allowed(15.4 例外)
     )),
     Scenario("db_rows", "store", (STATUS, DB_ROWS), (
         create({**api_member("alpha", "gpt-4o-mini", tags=("gold", "paid")),
@@ -246,7 +247,8 @@ def sample_capture(side: str = "a") -> Capture:
     chat_headers = (_JSON, ("X-Spillway-Served-By", "alpha"), ("X-Spillway-Slot", "1"), ("X-Spillway-Est-Cost", "0.00000123"),
                     ("cache-control", "no-store"), ("x-content-type-options", "nosniff"))
     chat = {"id": chat_id, "object": "chat.completion", "created": 1794096000, "model": "main",
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"},
+                        {"index": 1, "message": {"role": "assistant", "content": "second"}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}}
     exchanges = [
         _ex("POST", "/v1/chat/completions", 200, chat, *chat_headers),

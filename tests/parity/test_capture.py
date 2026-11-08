@@ -81,6 +81,27 @@ def test_get_models_has_the_capture_shape(fake):
     assert rec.has_json is False and rec.body_length == 0
 
 
+@pytest.mark.parametrize("method,path,status", [("POST", "/v1/responses", 404), ("GET", "/v1/chat/completions", 404),
+                                                  ("DELETE", "/v1/models", 404), ("GET", "/", 200)])
+def test_unrouted_requests_are_recorded(fake, method, path, status):
+    with _client(fake) as c:
+        r = c.request(method, f"{path}?q={QUERY_VALUE}", headers={"Authorization": f"Bearer {KEY}", "X-Custom-Thing": "header-value"})
+    assert r.status_code == status
+    rec = fake.requests[0]
+    assert (rec.method, rec.path, rec.query_names, rec.auth_headers) == (method, path, ("q",), ("authorization",))
+    assert "x-custom-thing" in rec.header_names
+    dumped = json.dumps(rec.as_dict())
+    assert KEY not in dumped and QUERY_VALUE not in dumped and "header-value" not in dumped
+
+
+def test_fake_control_paths_are_not_recorded(fake):
+    with _client(fake) as c:
+        assert c.post("/_fake/mode", json={"model": "m", "mode": "ok"}).status_code == 200
+        assert c.get("/_fake/requests").status_code == 200
+        assert c.get("/_fake/nope").status_code == 404
+    assert fake.requests == []
+
+
 def test_existing_fields_unchanged(fake):
     with _client(fake) as c:
         c.post("/v1/chat/completions", json={"model": "m"}, headers={"Authorization": f"Bearer {KEY}"})

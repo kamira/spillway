@@ -1296,13 +1296,15 @@ Gemini 協定隨設定檔驅動 adapter 補入本表。
 
 ### 15.10 秘密
 
-15.10.1 每個擷取面依序處理:① 原始擷取只留在記憶體;② sentinel 掃描與 15.9.5 標「遮罩前」的形狀驗證;③ 金鑰遮罩(黑箱測試工具 `tests.blackbox.mask.mask_secrets`,`extra` 為語料金鑰值與本次 token 明文);④ 15.9 正規化;⑤ 比對。比較的是遮罩後的值。
+15.10.1 每個擷取面依序處理:① 原始擷取只留在記憶體;② sentinel 掃描、15.10.5 的存在性記錄與 15.9.5 標「遮罩前」的形狀驗證;③ 金鑰遮罩(黑箱測試工具 `tests.blackbox.mask.mask_secrets`,`extra` 為語料金鑰值與本次 token 明文);④ 15.9 正規化;⑤ 比對。除 15.10.5 的布林值外,比較的是遮罩後的值。
 
 15.10.2 語料金鑰只使用 `sk-test-`、`sk-fake` 開頭的假值。fakeapi 的 `echo_auth` 模式不得進語料。13.4.3 的種入內容不得含 sentinel。
 
 15.10.3 sentinel 為語料金鑰值與本次 token 明文。掃描範圍:HTTP 回應的 header 與 body、DB 全部 TEXT 欄位、`SPILLWAY-LOG` 與 `SPILLWAY-LOG-CONT ` 行。命中判定不一致,報告只寫比對面與路徑,不寫值。下列位置不掃描:送往上游的請求 JSON body(使用者 prompt 依設計轉發)、`POST /api/settings/token/rotate` 的 `$.token`、13.4.5 故意種入的 `deployments.params` 及其 API 回顯。
 
 15.10.4 差異報告、junit、`artifacts/` 與 runner 自己的記錄檔不得含金鑰或 token 值。
+
+15.10.5 15.10.3 列為不掃描的位置中,送往上游的請求 JSON body 與 13.4.5 故意種入的 `deployments.params` 及其 API 回顯,在 15.10.1 ② 依遮罩前的內容,逐一記錄每個字串值是否含該側的 sentinel,只保留路徑與布林值,不保留值。資料庫欄位以整格為一個字串值。比對時,兩側同一路徑的布林值不同判定不一致,報告只寫比對面與路徑;路徑只出現在一側時依 15.5 判定,不另報。`POST /api/settings/token/rotate` 的 `$.token` 依 15.9.5,不適用本條。
 
 ### 15.11 允許差異與語料範圍
 

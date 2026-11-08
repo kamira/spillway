@@ -3,16 +3,18 @@ from __future__ import annotations
 
 import json
 import shlex
+import sys
 from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from tests.blackbox.mask import MASK
+from tests.parity import test_normalize
 from tests.parity.corpus import CORPUS_KEYS, SCENARIOS, sample_capture
 from tests.parity.normalize import (
-    CONTRACT_HEADERS, DB_ROWS, DB_SURFACE, ERRORS, HEADERS, JSON_BODY, PATH_RULES, STATUS, UPSTREAM, Capture, Exchange, PathRule,
-    Report, compare_captures,
+    CONTRACT_HEADERS, DB_COLUMN_RULES, DB_ROWS, DB_SURFACE, ERRORS, HEADERS, JSON_BODY, PATH_RULES, STATUS, UPSTREAM, Capture, Exchange,
+    PathRule, Report, compare_captures, scan_capture,
 )
 from tests.parity.runner import CMD_B_ENV, mutant_cmd, run_pair
 
@@ -54,9 +56,11 @@ def _missing_key(b: Capture) -> None:
 
 
 def _array_order(b: Capture) -> None:
-    def fn(d: dict) -> None:
-        d["choices"] = [d["choices"][0], {"index": 1}]
-    _edit_body(b, 0, fn)
+    _edit_body(b, 0, lambda d: d["choices"].reverse())
+
+
+def _array_item_added(b: Capture) -> None:
+    _edit_body(b, 0, lambda d: d["choices"].append({"index": 2}))
 
 
 def _one_second(b: Capture) -> None:
@@ -125,7 +129,8 @@ SURFACE_CASES: dict[str, list[tuple[str, Any, str, str]]] = {
         ("content_changed", _content, JSON_BODY, "$.choices[0].message.content"),
         ("type_changed", _type, JSON_BODY, "$.object"),
         ("key_missing", _missing_key, JSON_BODY, "$.object"),
-        ("array_item_added", _array_order, JSON_BODY, "$.choices[1]"),
+        ("array_order_changed", _array_order, JSON_BODY, "$.choices[0]"),
+        ("array_item_added", _array_item_added, JSON_BODY, "$.choices[2]"),
     ],
     ERRORS: [
         ("error_code_changed", _error_code, ERRORS, "$.error.code"),
@@ -227,6 +232,37 @@ def test_rule_equal_when_shape_valid_and_differs_when_not(rule):
     assert any(d.kind == "shape" and d.side == "b" for d in report.differences), report.text()
 
 
+@pytest.mark.parametrize("kind", ["chat_id", "stdio_command"])
+def test_trailing_newline_breaks_response_shapes(kind):
+    rule = next(r for r in _VALUE_RULES if r.kind == kind)
+    cap_a, cap_b = _env("a"), _env("b")
+    good, _, _ = _samples(kind, cap_a, cap_b)
+    cap_a.exchanges, cap_b.exchanges = [_exchange(rule, _build(rule, good))], [_exchange(rule, _build(rule, good + "\n"))]
+    report = compare_captures(cap_a, cap_b)
+    assert any(d.kind == "shape" and d.side == "b" for d in report.differences), report.text()
+
+
+def test_trailing_newline_breaks_token_shape_before_masking():
+    rule = next(r for r in _VALUE_RULES if r.kind == "token")
+    cap = _env("b")
+    cap.exchanges = [_exchange(rule, _build(rule, "T" * 43 + "\n"))]
+    assert ("$.token", "shape") in {(d.path, d.kind) for d in scan_capture(cap, "b")}
+
+
+def test_trailing_newline_breaks_est_cost_shape():
+    a, b = _pair()
+    _set_header(b, "X-Spillway-Est-Cost", "0.00000123\n")
+    report = compare_captures(a, b)
+    assert any(d.surface == HEADERS and d.kind == "shape" and d.side == "b" for d in report.differences), report.text()
+
+
+def test_trailing_newline_breaks_sha256_shape():
+    a, b = _pair()
+    b.db["settings"][0]["value"] = ("text", "b" * 64 + "\n")
+    report = compare_captures(a, b)
+    assert any(d.surface == DB_ROWS and d.kind == "shape" and d.side == "b" for d in report.differences), report.text()
+
+
 @pytest.mark.parametrize("rule", [r for r in _VALUE_RULES if r.kind in ("int", "int_or_null")], ids=_rule_id)
 def test_integer_rules_still_compare_value(rule):
     cap_a, cap_b = _env("a"), _env("b")
@@ -265,6 +301,77 @@ def test_db_api_base_rule():
     b.db["deployments"][0]["params"] = ("text", json.dumps({"api_base": "http://other/v1", "x": 1}, sort_keys=True))
     report = compare_captures(a, b)
     assert any(d.surface == DB_ROWS and "params" in d.path for d in report.differences), report.text()
+
+
+# ---------------------------------------------------------------- 每條 15.8.3 規則(AM-10)
+
+
+INT_1, INT_2 = ("integer", 1), ("integer", 2)
+NULL = ("null", None)
+# 既有測試已涵蓋的方式:(模組, 測試名)
+DB_RULE_EXISTING_CASES = {
+    "settings.access_token_sha256": (test_normalize, "test_db_settings_hash_shape_checked_not_reported_by_value"),
+    "usage_payloads.request_json": (test_normalize, "test_db_request_json_verbatim_when_truncated"),
+    "deployments.params": (sys.modules[__name__], "test_db_api_base_rule"),
+}
+
+
+def _db_rule_cases() -> list[tuple[str, str, Any, Any, Any, str, str]]:
+    """(鍵, 案例名, a 的值, b 的合法值, b 的變動值, 預期 kind, 預期 side)"""
+    how_to_cases: dict[str, list[tuple[str, Any, Any, Any, str, str]]] = {
+        "literal": [("one_char", ("text", "abc"), ("text", "abc"), ("text", "abd"), "value", "")],
+        "integer": [("value", INT_1, INT_1, INT_2, "value", ""), ("text_type", INT_1, INT_1, ("text", "1"), "shape", "b")],
+        "latency": [("negative", ("integer", 5), ("integer", 99), ("integer", -1), "shape", "b"),
+                    ("real", ("integer", 5), ("integer", 99), ("real", 1.5), "shape", "b"),
+                    ("null", ("integer", 5), ("integer", 99), NULL, "typeof", "")],
+        "presence": [("empty", ("text", "a"), ("text", "b"), ("text", ""), "shape", "b"),
+                     ("null", ("text", "a"), ("text", "b"), NULL, "typeof", "")],
+        "type_only": [("type", ("real", 0.5), ("real", 1.5), ("text", "x"), "typeof", "")],
+    }
+    return [(key, *case) for key, how in DB_COLUMN_RULES.items() if key not in DB_RULE_EXISTING_CASES for case in how_to_cases[how]]
+
+
+_DB_CASES = _db_rule_cases()
+
+
+def _put_cell(cap: Capture, key: str, cell: Any) -> None:
+    """把欄位設到第一列;sample 沒有的表(`groups`、`routes`)一併建立。"""
+    table, col = key.split(".", 1)
+    if table == "settings":
+        name = "other_setting" if col == "*" else col
+        cap.db["settings"].append({"key": ("text", name), "value": cell})
+        return
+    cap.db.setdefault(table, [{}])[0][col] = cell
+
+
+@pytest.mark.parametrize("key,name,value_a,good_b,bad_b,want_kind,want_side", _DB_CASES, ids=[f"{c[0]}:{c[1]}" for c in _DB_CASES])
+def test_db_column_rule_mutations(key, name, value_a, good_b, bad_b, want_kind, want_side):
+    a, b = _pair()
+    for cap in (a, b):      # sample 兩側的 request_json 只有在 truncated = 0 時才相等
+        cap.db["usage_payloads"][0]["request_json"] = ("text", '{"a": 1}')
+    _put_cell(a, key, value_a)
+    _put_cell(b, key, good_b)
+    report = compare_captures(a, b)
+    assert report.ok, report.text()
+    if key.startswith("settings."):
+        b.db["settings"].pop()
+    _put_cell(b, key, bad_b)
+    report = compare_captures(a, b)
+    col = "value" if key.startswith("settings.") else key.split(".", 1)[1]
+    assert (DB_ROWS, col, want_kind, want_side) in {(d.surface, d.path, d.kind, d.side) for d in report.differences}, report.text()
+
+
+def test_every_db_rule_has_a_case():
+    assert {c[0] for c in _DB_CASES} | set(DB_RULE_EXISTING_CASES) == set(DB_COLUMN_RULES)
+    for module, name in DB_RULE_EXISTING_CASES.values():
+        assert callable(getattr(module, name))
+
+
+def test_upstream_has_json_on_one_side_differs():
+    a, b = _pair()
+    b.upstream[0].has_json, b.upstream[0].json_body = False, None
+    report = compare_captures(a, b)
+    assert (UPSTREAM, "$", "type") in {(d.surface, d.path, d.kind) for d in report.differences}, report.text()
 
 
 def test_stdio_port_rule():

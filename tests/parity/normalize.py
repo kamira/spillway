@@ -1,17 +1,20 @@
 """跨實作比對的擷取型別、遮罩、正規化與比較(CHG-20261108-01 T3;spec 15;AM-6、AM-7、AM-8)。不 import spillway。
 
-處理順序(spec 15.10.1):① 原始擷取留在記憶體(`Capture`);② sentinel 掃描與「遮罩前」形狀驗證(`scan_capture`);③ 遮罩
-(`mask_capture`);④ 15.9 正規化(`normalize_capture`);⑤ 比較(`compare_views`)。`compare_captures` 依序跑完五步,回傳 `Report`。
+處理順序(spec 15.10.1):① 原始擷取留在記憶體(`Capture`);② sentinel 掃描與「遮罩前」形狀驗證(`scan_capture`)、15.10.5 的存在性記錄
+(`presence_of`);③ 遮罩(`mask_capture`);④ 15.9 正規化(`normalize_capture`);⑤ 比較(`compare_views` 與存在性布林值)。
+`compare_captures` 依序跑完五步,回傳 `Report`。
 
 規則只依欄位路徑(`PATH_RULES`),不依值的樣式。本檔的表格常數由 `tests/parity/test_spec_table.py` 與 `docs/spec.md` 第 15 節比對:
 `SURFACES`(15.2)、`REQUIRED_UPSTREAM_HEADERS` 與 `IGNORED_UPSTREAM_HEADERS`(15.3)、`CONTRACT_HEADERS`(15.4)、`DB_TABLES`
 與 `DB_COLUMN_RULES`(15.8)、`PATH_RULES`(15.9.5)。shape 與 treatment 欄位是 spec 表格的原文。
 
-`Report` 只含比對面、位置與路徑,不含任何值(15.10.4);路徑本身也再遮罩一次(JSON 鍵可能帶秘密)。
+`Report` 只含比對面、位置與路徑,不含任何值(15.10.4);路徑本身也再遮罩一次(JSON 鍵可能帶秘密)。帶秘密的 dataclass 欄位 `repr=False`,
+秘密值的序列用 `SecretTuple`:pytest 的 `-vv` 與 funcargs 會印出 repr。
 """
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -22,8 +25,8 @@ from tests.blackbox.mask import MASK, mask_secrets
 __all__ = [
     "CONTRACT_HEADERS", "DB_COLUMN_RULES", "DB_TABLES", "IGNORED_UPSTREAM_HEADERS", "PATH_RULES",
     "REQUIRED_UPSTREAM_HEADERS", "SURFACES", "UNDEFINED_SURFACES", "Capture", "Difference", "Exchange", "ParsedJson",
-    "PathRule", "Report", "compare_captures", "compare_views", "diff_values", "mask_capture", "normalize_capture",
-    "parse_strict", "route_of", "scan_capture", "sentinels_of",
+    "PathRule", "Report", "SecretTuple", "compare_captures", "compare_views", "diff_values", "mask_capture", "normalize_capture",
+    "parse_strict", "presence_of", "route_of", "scan_capture", "sentinels_of",
 ]
 
 # ---------------------------------------------------------------- 15.2 比對面
@@ -178,6 +181,7 @@ VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+")
 STDIO_COMMAND_RE = re.compile(r"^spillway(-rs)?$")
 LOG_LINE_RE = re.compile(r"^SPILLWAY-LOG (DEBUG|INFO|WARNING|ERROR|CRITICAL) \S+( |$)")
 LOG_PREFIX, LOG_CONT_PREFIX = "SPILLWAY-LOG ", "SPILLWAY-LOG-CONT "
+LOG_BARE = "SPILLWAY-LOG"    # 裸標記行:等級格式不合法,不能當成一般 stderr 濾掉
 
 _ROUTE_TABLE: list[tuple[str, re.Pattern[str]]] = []
 for _surface in sorted({r.surface for r in PATH_RULES if r.surface != DB_SURFACE}):
@@ -202,10 +206,17 @@ def _reject_constant(name: str) -> None:
     raise StrictJsonError(f"非標準 JSON 數值:{name}")
 
 
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):      # `1e999` 解析成 inf
+        raise StrictJsonError("數值超出範圍")
+    return value
+
+
 def parse_strict(data: bytes | str) -> Any:
-    """解析 JSON;`NaN`、`Infinity`、`-Infinity` 視為不合法(`StrictJsonError`)。"""
+    """解析 JSON;`NaN`、`Infinity`、`-Infinity` 與溢位成無限大的數值(`1e999`)視為不合法(`StrictJsonError`)。"""
     try:
-        return json.loads(data, parse_constant=_reject_constant)
+        return json.loads(data, parse_constant=_reject_constant, parse_float=_finite_float)
     except StrictJsonError:
         raise
     except ValueError as exc:   # JSONDecodeError、UnicodeDecodeError
@@ -219,8 +230,8 @@ class Exchange:
     method: str
     path: str
     status: int
-    headers: tuple[tuple[str, str], ...]
-    body: bytes
+    headers: tuple[tuple[str, str], ...] = field(repr=False)
+    body: bytes = field(repr=False)
     error_mode: str = ""
 
     @property
@@ -236,13 +247,13 @@ class Capture:
     port: int
     home: str
     fake_base_url: str
-    corpus_keys: tuple[str, ...] = ()
-    tokens: tuple[str, ...] = ()
-    exchanges: list[Exchange] = field(default_factory=list)
-    upstream: list[Any] = field(default_factory=list)   # tests.fakes.api_upstream.RecordedRequest
-    db: dict[str, list[dict[str, tuple[str, Any]]]] = field(default_factory=dict)   # 表 → 列(欄 → (typeof, 值))
+    corpus_keys: tuple[str, ...] = field(default=(), repr=False)
+    tokens: tuple[str, ...] = field(default=(), repr=False)
+    exchanges: list[Exchange] = field(default_factory=list, repr=False)
+    upstream: list[Any] = field(default_factory=list, repr=False)   # tests.fakes.api_upstream.RecordedRequest
+    db: dict[str, list[dict[str, tuple[str, Any]]]] = field(default_factory=dict, repr=False)   # 表 → 列(欄 → (typeof, 值))
     user_version: int | None = None
-    log_lines: list[str] = field(default_factory=list)
+    log_lines: list[str] = field(default_factory=list, repr=False)
     model_credentials: dict[str, bool] = field(default_factory=dict)   # 上游 model → 成員是否有 credential_ref
     seeded_param_ids: frozenset[str] = frozenset()   # 以 13.4.5 種入 params 的成員
 
@@ -354,9 +365,16 @@ def _visit(node: Any, tokens: Sequence[str], prefix: str, parent: Any, key: Any)
 # ---------------------------------------------------------------- ② 掃描
 
 
-def sentinels_of(capture: Capture) -> tuple[str, ...]:
+class SecretTuple(tuple):
+    """秘密值的序列;repr 只有筆數(pytest 的 funcargs 會印出參數)。"""
+
+    def __repr__(self) -> str:
+        return f"<{len(self)} 個秘密值>"
+
+
+def sentinels_of(capture: Capture) -> SecretTuple:
     """15.10.3:語料金鑰值與本次 token 明文。"""
-    return tuple(s for s in (*capture.corpus_keys, *capture.tokens) if s)
+    return SecretTuple(s for s in (*capture.corpus_keys, *capture.tokens) if s)
 
 
 def _contains(text: str, sentinels: Sequence[str]) -> bool:
@@ -447,7 +465,7 @@ def scan_capture(capture: Capture, side: str) -> list[Difference]:
                 out.append(Difference(_body_surface(body), loc, path, "sentinel", side))
             for rule in (r for r in PATH_RULES if r.kind == "token" and r.surface == route_of(ex.method, ex.path)):
                 for parent, key, actual in _visit(body, _tokens(rule.path), "$", None, None):
-                    if not (isinstance(parent[key], str) and TOKEN_RE.match(parent[key])):
+                    if not (isinstance(parent[key], str) and TOKEN_RE.fullmatch(parent[key])):
                         out.append(Difference(JSON_BODY, loc, actual, "shape", side))
         elif any(s in ex.body for s in raw_sentinels):
             out.append(Difference(JSON_BODY, loc, "$", "sentinel", side))
@@ -455,19 +473,57 @@ def scan_capture(capture: Capture, side: str) -> list[Difference]:
         for r, row in enumerate(rows):
             for col, (typeof, value) in row.items():
                 if typeof == "text" and isinstance(value, str) and _contains(value, sentinels):
-                    if table == "deployments" and col == "params" and row.get("id", ("", None))[1] in capture.seeded_param_ids:
+                    if col == "params" and _is_seeded_row(table, row, capture):
                         continue
                     out.append(Difference(DB_ROWS, f"{table}[{r}]", col, "sentinel", side))
     for i, line in enumerate(capture.log_lines):
         if line.startswith(LOG_CONT_PREFIX):
             pass
-        elif line.startswith(LOG_PREFIX):
+        elif line.startswith(LOG_PREFIX) or line == LOG_BARE:
             if not LOG_LINE_RE.match(line):
                 out.append(Difference(LOG, f"stderr[{i}]", "$", "log_format", side))
         else:
             continue
         if _contains(line, sentinels):
             out.append(Difference(LOG, f"stderr[{i}]", "$", "sentinel", side))
+    return out
+
+
+def _presence_json(value: Any, path: str, sentinels: Sequence[str]) -> Iterator[tuple[str, bool]]:
+    if isinstance(value, str):
+        yield path, _contains(value, sentinels)
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            yield from _presence_json(item, f"{path}[{i}]", sentinels)
+    elif isinstance(value, dict):
+        for k in sorted(value):
+            yield from _presence_json(value[k], f"{path}.{mask_secrets(k, sentinels)}", sentinels)
+
+
+def _is_seeded_row(table: str, row: dict[str, tuple[str, Any]], capture: Capture) -> bool:
+    return table == "deployments" and row.get("id", ("", None))[1] in capture.seeded_param_ids
+
+
+def presence_of(capture: Capture) -> dict[tuple[str, str, str], bool]:
+    """15.10.5(在遮罩前執行):不掃描的位置中每個字串值是否含該側 sentinel。鍵為 `(比對面, 位置, 路徑)`,只有路徑與布林值,不含值。"""
+    sentinels = sentinels_of(capture)
+    out: dict[tuple[str, str, str], bool] = {}
+    for i, rec in enumerate(capture.upstream):
+        if rec.has_json:
+            for path, hit in _presence_json(rec.json_body, "$", sentinels):
+                out[(UPSTREAM, f"upstream[{i}]", path)] = hit
+    for i, ex in enumerate(capture.exchanges):
+        kind, body = _parse_body(ex)
+        if kind != "json":
+            continue
+        exempt = tuple(p for p in _exempt_paths(ex, body, capture) if p != "$.token")     # rotate 的 token 依 15.9.5
+        for path, hit in _presence_json(body, "$", sentinels):
+            if _is_exempt(path, exempt):
+                out[(JSON_BODY, f"response[{i}] {ex.location}", path)] = hit
+    for r, row in enumerate(capture.db.get("deployments", [])):
+        typeof, value = row.get("params", ("", None))
+        if typeof == "text" and isinstance(value, str) and _is_seeded_row("deployments", row, capture):
+            out[(DB_ROWS, f"deployments[{r}]", "params")] = _contains(value, sentinels)
     return out
 
 
@@ -588,7 +644,7 @@ _MCP_URL_TAIL = "/mcp/"
 def _apply_kind(kind: str, value: Any, parent: Any, key: Any, ctx: _Ctx) -> tuple[bool, Any]:
     """回傳 `(形狀是否符合, 新值)`;不符合時新值就是原值(15.9.2:形狀不符不替換)。"""
     if kind == "chat_id":
-        return (True, ctx.number(value)) if isinstance(value, str) and CHAT_ID_RE.match(value) else (False, value)
+        return (True, ctx.number(value)) if isinstance(value, str) and CHAT_ID_RE.fullmatch(value) else (False, value)
     if kind == "int":
         return _is_int(value), value
     if kind == "int_or_null":
@@ -633,7 +689,7 @@ def _apply_kind(kind: str, value: Any, parent: Any, key: Any, ctx: _Ctx) -> tupl
             return (True, "<port>") if value == str(ctx.port) else (False, value)
         return True, value
     if kind == "stdio_command":
-        return (True, "<cmd>") if isinstance(value, str) and STDIO_COMMAND_RE.match(value) else (False, value)
+        return (True, "<cmd>") if isinstance(value, str) and STDIO_COMMAND_RE.fullmatch(value) else (False, value)
     raise AssertionError(f"未知的 kind:{kind}")
 
 
@@ -669,7 +725,7 @@ def _normalize_headers(ex: MaskedExchange, ctx: _Ctx) -> dict[str, str]:
             continue
         value = ex.headers[low]
         if method == "est_cost":
-            if EST_COST_RE.match(value):
+            if EST_COST_RE.fullmatch(value):
                 value = "<est-cost>"
             else:
                 ctx.shape(HEADERS, ex.location, low)
@@ -724,7 +780,7 @@ def _normalize_cell(table: str, col: str, row: dict[str, tuple[str, Any]], locat
     if table == "settings" and col == "value":
         key = row["key"][1]
         if f"settings.{key}" in DB_COLUMN_RULES:
-            if not (isinstance(value, str) and SHA256_RE.match(value)):
+            if not (isinstance(value, str) and SHA256_RE.fullmatch(value)):
                 ctx.shape(DB_ROWS, location, col)
                 return typeof, value
             return typeof, "<sha256>"
@@ -881,11 +937,14 @@ def _dedupe(diffs: Iterable[Difference]) -> list[Difference]:
 
 def compare_captures(a: Capture, b: Capture) -> Report:
     """15.10.1 依序五步。報告中的位置與路徑再遮罩一次(`mask_secrets` + 兩側 sentinel)。"""
-    extra = (*sentinels_of(a), *sentinels_of(b))
+    sentinels = {*sentinels_of(a), *sentinels_of(b)}
+    extra = SecretTuple({*sentinels, *(s.lower() for s in sentinels)})     # header 名稱在報告中是小寫
     diffs = scan_capture(a, "a") + scan_capture(b, "b")
+    presence_a, presence_b = presence_of(a), presence_of(b)
     view_a, shape_a = normalize_capture(mask_capture(a), "a")
     view_b, shape_b = normalize_capture(mask_capture(b), "b")
     diffs += shape_a + shape_b + compare_views(view_a, view_b, a.model_credentials, b.model_credentials)
+    diffs += [Difference(*key, "sentinel_presence") for key in presence_a.keys() & presence_b.keys() if presence_a[key] != presence_b[key]]
     safe = [Difference(d.surface, mask_secrets(d.location, extra), mask_secrets(d.path, extra), d.kind, d.side)
             for d in _dedupe(diffs)]
     return Report(a.scenario, sorted(safe))
