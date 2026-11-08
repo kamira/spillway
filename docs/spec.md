@@ -16,6 +16,8 @@
 
 修訂：2026-11-07 CHG-20261107-03（第 12 節註明黑箱驗收方式；新增第 13 節「測試控制介面（僅測試模式）」：開啟條件與資料目錄條件、啟動期旋鈕、`/__test__/*` 端點、形狀與錯誤碼、保存排程 STEPPED 與到期判斷式、seed 為不透明值；新增第 14 節「行程契約」：`serve`／`init` 結束碼、SIGINT／SIGTERM、`TOKEN_NOTICE` 單行的位元組格式、stderr 承諾的行、就緒判定）
 
+修訂：2026-11-08 CHG-20261108-01（新增第 15 節「跨實作一致性契約」；4.5.3 補 `no_candidate` 訊息形狀與字面值；9.1.2 補 HTTP 422 訊息形狀；5.2.1、5.4.2、5.4.4、7.1、7.2、NFR-7、13.2、14.3.5 標註 Python 版專屬或與第 15 節的關係）
+
 ## 1 範圍與名詞定義
 
 本規格定義單人使用的 LLM 路由閘道之資料模型、路由規則、介面與驗收標準；目的、選型與風險見企劃書。
@@ -374,7 +376,7 @@ routes:
 
 冷卻寫入 `cooldowns`（每個成員至多一列）；已有較晚的冷卻期限時保留原列。設定冷卻不可建立或修改 `budgets` 列。
 
-4.5.3 全部 slot 皆失敗時必須回傳 HTTP 503，錯誤碼 `no_candidate`，body 列出每次嘗試的成員與狀態。
+4.5.3 全部 slot 皆失敗時必須回傳 HTTP 503，錯誤碼 `no_candidate`，body 列出每次嘗試的成員與狀態，`error.message` 形狀為 `沒有可用的候選成員;嘗試:<成員>:<狀態>, …;被篩:<成員>:<原因>, …`（分號、冒號與逗號為 ASCII 字元；無嘗試時為 `嘗試:無`；無被篩項時省略該段）。`<狀態>` 為 `usage_ledger.status` 的值、`disabled` 或 `adapter_unavailable`；`<原因>` 為 `disabled`、`mode_chat_excludes_cli`、`ctx_exceeded`、`tools_unsupported`、`vision_unsupported`、`adapter_unavailable`、`cooling`、`concurrency_full`、`quota_exhausted`、`unhealthy`、`skipped_precheck`、`shutting_down` 之一。
 
 ## 5 額度計算與上游訊號
 
@@ -391,7 +393,7 @@ routes:
 
 ### 5.2 各類型的花費來源
 
-5.2.1 `api`：必須使用 LiteLLM `completion_cost()` 的結果寫入 `cost_usd`；無定價的模型寫入 NULL 並於 UI 標示「未計價」。
+5.2.1 `api`：必須使用 LiteLLM `completion_cost()` 的結果寫入 `cost_usd`；無定價的模型寫入 NULL 並於 UI 標示「未計價」。（LiteLLM 為 Python 版專屬，Rust 版依 15.2 「花費與 token 估算」，該列定義前依 15.8.3 只比型別）
 
 5.2.2 `cli`（claude-cli）：必須使用 `claude -p --output-format json` 回應中的 `total_cost_usd` 寫入 `cost_usd`，扣抵 `credit_pool` 類型的額度。
 
@@ -418,11 +420,11 @@ routes:
 
 5.4.1 每次嘗試呼叫前，系統必須計算並寫入 `est_tokens_in`、`est_tokens_out_p50`、`est_tokens_out_p90`、`est_cost_usd_p90`。
 
-5.4.2 輸入 token：以 `litellm.token_counter()` 依成員模型計算；CLI 成員另加 `params.cli_overhead_tokens`（初始 0，依帳本的預估與實際差異調整）。
+5.4.2 輸入 token：以 `litellm.token_counter()` 依成員模型計算；CLI 成員另加 `params.cli_overhead_tokens`（初始 0，依帳本的預估與實際差異調整）。（`litellm.token_counter()` 為 Python 版專屬，Rust 版依 15.2 「花費與 token 估算」，該列定義前依 15.8.3 只比型別）
 
 5.4.3 輸出 token：請求帶 `max_tokens` 時，P50 與 P90 皆取 `max_tokens`；否則取同一 route 與成員最近 50 筆 `ok` 紀錄之 `tokens_out` 的 P50 與 P90；不足 5 筆時 P50 取 500、P90 取 2,000。
 
-5.4.4 花費：以 LiteLLM 價格表計算；無定價的模型與 codex-cli 寫入 NULL，且不參與 4.2.5 的檢查。
+5.4.4 花費：以 LiteLLM 價格表計算；無定價的模型與 codex-cli 寫入 NULL，且不參與 4.2.5 的檢查。（LiteLLM 的計算方式為 Python 版專屬，Rust 版依 15.2 「花費與 token 估算」，該列定義前依 15.8.3 只比型別）
 
 5.4.5 預估值必須出現於：dry-run 結果、帳本、`/v1/chat/completions` 回應 header `X-Spillway-Est-Cost`、MCP `ask` 與 `quota_status` 的輸出。
 
@@ -464,6 +466,8 @@ routes:
 
 ### 7.1 介面
 
+下列 Python 介面為 Python 版專屬；Rust 版不必實作相同的語言介面，對外行為依第 15 節，送往上游的請求依 15.3。
+
 ```python
 class Adapter(Protocol):
     async def call(self, dep: Deployment, req: ChatRequest, effort: str | None) -> CallResult: ...
@@ -488,7 +492,7 @@ class CallResult:
 
 ### 7.2 LiteLLM 呼叫（anthropic_api、openai_api、litellm 模組）
 
-LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1–7.2.3 適用於使用它的模組。
+LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1–7.2.3 適用於使用它的模組。本節的 LiteLLM 呼叫方式為 Python 版專屬，Rust 版依 15.3；LiteLLM 升版依 15.1.3。
 
 7.2.1 模型字串必須為 `<provider>/<model>`；`params.api_base` 存在時傳入。
 
@@ -781,7 +785,7 @@ env_vars = ["SPILLWAY_TOKEN"]
 
 9.1.1 預設只綁 127.0.0.1；綁定其他位址時，所有端點必須驗證 Bearer token。
 
-9.1.2 錯誤回應格式：`{"error": {"code": "<錯誤碼>", "message": "<說明>"}}`。
+9.1.2 錯誤回應格式：`{"error": {"code": "<錯誤碼>", "message": "<說明>"}}`。請求驗證失敗（HTTP 422）的 `message` 為 `<欄位路徑>: <原因>`，多個錯誤以 `; ` 串接；欄位路徑以 `.` 連接各層（例如 `body.messages.0.role`）。
 
 9.1.3 `/v1/chat/completions` 回應必須帶 header `X-Spillway-Served-By`（成員 id）與 `X-Spillway-Slot`。
 
@@ -919,7 +923,7 @@ Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>
 | NFR-4 | 憑證 | 資料庫、匯出檔、日誌不含任何金鑰或 token 明文 | 以已知金鑰字串搜尋三者的內容，命中數必須為 0 |
 | NFR-5 | 帳本內容 | `usage_ledger` 不存 prompt 與回應；內容只存於 `usage_payloads`，過期後 1 小時內刪除 | 檢查 `usage_ledger` 欄位；保存天數設為 1 並推進系統時間 2 天，確認過期列已刪除 |
 | NFR-6 | 並行 | CLI 成員同時執行數上限預設 1，可由 `params.max_concurrency` 調整；超過時視為不可用、不排隊 | 同時送出 2 個 task 請求，第 2 個必須由下一個成員處理 |
-| NFR-7 | 執行環境 | Python 3.11 以上；macOS、Linux、Windows | 三平台各執行驗收測試一次（雜湊 lock 只在 macOS 驗證，CHG-20261107-01） |
+| NFR-7 | 執行環境 | Python 3.11 以上（Python 版專屬；Rust 版的工具鏈版本由 Rust 骨架 CHG 指定）；macOS、Linux、Windows | 三平台各執行驗收測試一次（雜湊 lock 只在 macOS 驗證，CHG-20261107-01） |
 
 ## 12 驗收標準
 
@@ -991,7 +995,7 @@ Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>
 | --- | --- | --- |
 | `SPILLWAY_TEST_START_TIME` | `YYYY-MM-DDTHH:MM:SSZ`（與 13.3.2 同一文法） | 以可控時鐘從該時刻開始（13.4.1）；未設定時用系統時鐘 |
 | `SPILLWAY_TEST_RNG_SEED` | 完全符合 `-?[0-9]+` 的十進位整數，範圍 −2^63 到 2^63−1 | 路由抽選（4.4）的亂數種子（13.4.2） |
-| `SPILLWAY_TEST_ADAPTER_PATHS` | 以作業系統路徑分隔字元（POSIX 為 `:`）分隔的路徑 | 額外載入的 adapter 模組所在目錄（Python 版為內含 7.6.1 模組資料夾的目錄；實作相依） |
+| `SPILLWAY_TEST_ADAPTER_PATHS` | 以作業系統路徑分隔字元（POSIX 為 `:`）分隔的路徑 | 額外載入的 adapter 模組所在目錄（Python 版為內含 7.6.1 模組資料夾的目錄，屬 Python 版專屬，見 15.11；實作相依） |
 | `SPILLWAY_TEST_RETENTION_POLL_SECONDS` | 完全符合 `[0-9]+(\.[0-9]+)?` 且大於 0（秒；不接受指數、底線、`inf`） | 保存排程的輪詢間隔 `poll`（預設 30） |
 | `SPILLWAY_TEST_RETENTION_STEPPED` | `1` | 保存排程改為 STEPPED 模式（13.4.6） |
 | `SPILLWAY_TEST_NO_TOKEN` | `1` | 不簽發存取 token：不印 `TOKEN_NOTICE`，`token_issued` 為 false，`/mcp/*` 回 401 |
@@ -1112,8 +1116,206 @@ ad 98 e9 9b 9c e6 b9 8a 29 3a 20
 
 14.3.4 13.2.1 的「已忽略測試旋鈕」行（前綴 `spillway: 未設 SPILLWAY_TEST_CONTROL=1,已忽略測試旋鈕: `，後接名稱）。
 
-14.3.5 `SPILLWAY_TEST_LOG_LEVEL` 的日誌行：每筆紀錄的第一行為 `SPILLWAY-LOG <等級> <logger 名稱> <訊息>`（等級為 `DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`；訊息已代入參數；以單一 ASCII 空白分隔），訊息、例外 traceback 與 stack 的其餘每一行各自以 `SPILLWAY-LOG-CONT ` 開頭續行。低於設定等級的紀錄不寫出。這些行不經遮罩；logger 名稱與訊息內容屬於實作相依。
+14.3.5 `SPILLWAY_TEST_LOG_LEVEL` 的日誌行：每筆紀錄的第一行為 `SPILLWAY-LOG <等級> <logger 名稱> <訊息>`（等級為 `DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`；訊息已代入參數；以單一 ASCII 空白分隔），訊息、例外 traceback 與 stack 的其餘每一行各自以 `SPILLWAY-LOG-CONT ` 開頭續行。低於設定等級的紀錄不寫出。這些行不經遮罩；logger 名稱與訊息內容屬於實作相依（跨實作比對只檢查等級格式合法且不含秘密，見 15.2）。
 
 ### 14.4 就緒與綁定
 
 serve 就緒的判定為 `GET /api/settings/context` 回傳 HTTP 200 且行程仍在執行；只在 127.0.0.1 監聽（NFR-3）。
+
+## 15 跨實作一致性契約
+
+適用於 Python 版與 Rust 版(`spillway-rs`)。本節規定兩個實作對同一輸入必須產生語意相同的輸出。
+
+本節用語:parity 指差分比對,即以相同輸入分別操作兩個實作,依本節規則比對輸出;語料為 parity 使用的固定輸入集合;情境為語料中的一組請求序列;runner 為執行 parity 的測試程式;fakeapi 為 parity 使用的假上游 API,扮演 AI 供應商並記錄收到的請求。
+
+### 15.1 裁決順序
+
+15.1.1 本規格為準。本規格未規定的行為,以 Python 版為參考實作。本規格明定為實作相依或不屬於契約者,不適用本條。
+
+15.1.2 發現差異時,先判斷是規格缺漏(補規格)或任一側缺陷(修該側)。不得以修改測試迎合任一側結案。
+
+15.1.3 litellm 升版的 CHG 必須重跑 parity 並處理差異。
+
+### 15.2 比對面狀態表
+
+| 比對面 | 比對單位 | 方式 | 狀態 | 對應 parity 情境 |
+|--------|----------|------|------|------------------|
+| HTTP 狀態碼 | 單一回應 | 整數相等 | 已定義 | `status` |
+| 契約 header | 單一回應 | 15.4 | 已定義 | `headers` |
+| JSON body | 單一回應 | 15.5、15.9 | 已定義 | `json_body` |
+| 錯誤物件 | 單一回應 | 15.7 | 已定義 | `errors` |
+| DB 資料列 | 情境結束時整庫 | 15.8 | 已定義 | `db_rows` |
+| API 上游請求 | 單一上游請求 | 15.3 | 已定義 | `upstream_chat` |
+| CLI 呼叫 | — | — | 待定義(CLI adapter 移植) | — |
+| MCP 訊息序列與 `mcp-stdio` | — | — | 待定義(MCP 移植) | — |
+| CSV 與 YAML 匯出 | — | — | 待定義(設定與資料目錄移植、Web UI API 移植) | — |
+| 花費與 token 估算 | — | — | 待定義(路由與額度移植) | — |
+
+Streaming 依 1.1.3 不涵蓋;`stream: true` 的 400 回應由「錯誤物件」比對。
+
+log 不列入比對面。parity 以 `SPILLWAY_TEST_LOG_LEVEL=INFO` 啟動;輸出的 `SPILLWAY-LOG` 與 `SPILLWAY-LOG-CONT ` 行只檢查 14.3.5 的等級格式合法且不含 sentinel(15.10.3);logger 名稱與訊息內容依 14.3.5 為實作相依,兩側行數也不比較。
+
+### 15.3 上游請求
+
+15.3.1 比對單位為單一上游請求。同一情境內,兩側依 fakeapi 收到的順序逐筆配對,筆數必須相等。
+
+15.3.2 比對 method、path、query 參數名稱集合、JSON body(15.5)。query 值不記錄、不比對。
+
+15.3.3 header 只比名稱,不記錄值。名稱不分大小寫。
+
+下表的 header 兩側都必須存在;缺少時判定不一致,兩側都缺亦同。
+
+| 上游請求 | 必須存在 |
+|----------|----------|
+| `POST /v1/chat/completions`,成員有 `credential_ref` | `authorization`、`content-type` |
+| `POST /v1/messages`,成員有 `credential_ref` | `x-api-key`、`content-type` |
+| `POST`,成員沒有 `credential_ref` | `content-type` |
+| `GET` | 無 |
+
+Gemini 協定隨設定檔驅動 adapter 補入本表。
+
+下表的 header 不比對。
+
+| 條件 | 忽略 |
+|------|------|
+| 一律 | `user-agent`、`x-stainless-*`、`accept`、`accept-encoding`、`connection`、`content-length`、`host` |
+| 成員沒有 `credential_ref` | `authorization`、`x-api-key` |
+
+其餘名稱只出現在一側時判定不一致。
+
+15.3.4 非 dict 的 JSON body 也納入比對;非 JSON body 只比長度。
+
+### 15.4 契約 header
+
+只比對下表的 header,其他 header 不比。名稱不分大小寫。兩側都缺時相等,一側缺判定不一致。
+
+| header | 適用 | 值的比對 |
+|--------|------|----------|
+| `X-Spillway-Served-By`、`X-Spillway-Slot`(9.1.3) | `/v1/chat/completions` | 字串逐字(`local/` 直呼的 slot 為 `direct`) |
+| `X-Spillway-Est-Cost`(5.4.5) | `/v1/chat/completions` | 「花費與 token 估算」待定義期間只比形狀 `^([0-9]+\.[0-9]{8})?$`(無預估時為空字串),值不比 |
+| `cache-control`、`x-content-type-options`(13.1.3) | 全部路徑,9.1.4 的 403 與 5xx 回應除外 | 字串逐字 |
+
+`Content-Type`、`Allow`、`Content-Disposition` 等於 Web UI API 移植時補入本表。
+
+### 15.5 相等定義
+
+15.5.1 bool、null、數值、字串、陣列、物件彼此不相等。缺鍵與 null 不相等。
+
+15.5.2 物件不計鍵順序。陣列預設有序;無序陣列須於 15.9 逐欄列出。
+
+15.5.3 數值以 JSON 數值比較(`1` 等於 `1.0`)。必須為整數的欄位逐欄列於 15.9,另比型別。
+
+### 15.6 時間
+
+15.6.1 parity 一律以 `SPILLWAY_TEST_CONTROL=1`、符合 13.1.2 的 `SPILLWAY_HOME` 與 `SPILLWAY_TEST_START_TIME` 啟動;時間欄位不設例外,依 15.5、15.8 逐字比對。
+
+15.6.2 `latency_ms`(路徑列於 15.9.5):兩側皆 null 視為相等;一側 null 判定不一致;否則兩側都必須為整數且 `>= 0`,值不比。
+
+### 15.7 錯誤與自由文字
+
+15.7.1 `error.code` 與 HTTP 狀態碼永遠比對。
+
+15.7.2 下列訊息逐字比對:`no_candidate`(形狀見 4.5.3)、13.1.4 不存在路徑的 404(`Not Found`)。
+
+15.7.3 HTTP 422 只比對欄位路徑集合。`error.message` 依 `; ` 切分(9.1.2),每段第一個 `: ` 之前的文字完全符合 `^(body|query|path|header|cookie)(\.[^\s.:;]+)*$` 時為欄位路徑,原因不比;不符合的段落不比。語料的 422 案例每案只違反一個欄位。畸形 JSON 案例由語料標記,只比 15.7.1。
+
+15.7.4 下列上游原文只比有無(皆為非空字串,或皆為 null)與不含 sentinel(15.10.3):`usage_ledger.error`、15.9.5 標 15.7.4 的路徑、15.7.2 未列的 5xx 訊息(含 `internal_error`)。
+
+15.7.5 回應符合 9.1.2 形狀時,`error.message` 只依本節比對,不套用 15.5;`error` 下的其他鍵與 body 其他鍵依 15.5。本節未列的 `error.message` 只比型別為非空字串。
+
+15.7.6 非 JSON 回應(9.1.4 伺服器層 400、CSV、YAML、HTML)在對應比對面定義前,只比 HTTP 狀態碼與 15.4 的 header。
+
+15.7.7 本節只規範跨實作比對;共用測試既有的子字串斷言不受影響。
+
+### 15.8 資料庫
+
+15.8.1 情境最後一個回應收到後,以唯讀連線取快照。比對下列 10 張表的全部資料列,依主鍵排序:`deployments`、`deployment_tags`、`budgets`、`cooldowns`、`groups`、`routes`、`route_targets`、`usage_ledger`、`usage_payloads`、`settings`;不含 `sqlite_%`。`PRAGMA user_version` 必須相等。未列於 15.8.3 的欄位依 `typeof()` 相同且值相等比對。
+
+15.8.2 JSON 文字欄位的規範形式為 `json.dumps(value, ensure_ascii=False, sort_keys=True)` 的輸出:分隔符 `, ` 與 `: `,鍵依 Unicode code point 遞增,非 ASCII 原樣輸出,浮點數形式同 Python `repr`。本規範形式只適用於 15.8.3 標 literal 的 JSON 欄位。`literal` 指遮罩與 15.9 替換後逐位元組相等。
+
+15.8.3 下表各欄另比 `typeof()`,標明只比型別者除外。
+
+| 欄位 | 方式 |
+|------|------|
+| `deployments.params` | 先依 15.9.5 替換 `$.api_base`,其餘 literal |
+| `deployments.capabilities`、`groups.selector`、`routes.target`、`routes.tags` | literal |
+| `usage_payloads.request_json` | `truncated = 0` 且兩側都能解析為 JSON 時,解析後依 15.5 比對;其餘情況(截斷、CLI prompt)逐字比對 |
+| `usage_payloads.response_text` | 逐字(經遮罩)。tool_calls 形式隨內建協定 adapter 移植定義,在此之前語料不含 tool_calls |
+| `usage_payloads.ledger_id`、`bytes`、`truncated`、`redacted` | 整數逐值 |
+| `usage_payloads.ts` | 15.6.1 |
+| `settings.access_token_sha256` | 比形狀 `^[0-9a-f]{64}$`,值不列入報告 |
+| `settings` 其餘鍵 | literal |
+| `usage_ledger.latency_ms` | 15.6.2 |
+| `usage_ledger.error` | 15.7.4 |
+| `usage_ledger.cost_usd`、`est_tokens_in`、`est_tokens_out_p50`、`est_tokens_out_p90`、`est_cost_usd_p90` | 「花費與 token 估算」待定義期間只比 `typeof()`,值不比 |
+
+`usage_ledger.tokens_in`、`tokens_out` 來自上游 usage,逐值比對。
+
+15.8.4 `usage_payloads` 的寫入形式(實作義務,與比對方式分開):`request_json` 為 `ensure_ascii=False`、分隔符 `, ` 與 `: `、不排序鍵的 JSON 文字,每個 message 先 `role`、`content`,其餘鍵依請求順序。寫入順序為序列化、遮罩(2.4.4)、截斷(2.4.3)。`bytes` 為寫入的 `request_json` 與 `response_text` 的 UTF-8 位元組長度之和。
+
+### 15.9 正規化
+
+15.9.1 只依欄位路徑逐項列出,不依值的樣式替換。未列路徑一律依 15.5 比對。
+
+15.9.2 替換前驗證形狀;形狀不符判定不一致。標「遮罩前」的形狀在 15.10.1 ② 驗證。
+
+15.9.3 以首次出現順序編號,例如 `<id-1>`。編號範圍為單一情境,依 15.2 表列的比對面順序,物件鍵排序後深度優先走訪;同值同號。
+
+15.9.4 環境衍生值為 serve 綁定的埠、HOME(即本次 `SPILLWAY_HOME`)、fake `base_url`、`version`、`data_dir`。runner 已知實際值者,形狀驗證一律為「與本次實際值完全相等」。
+
+15.9.5 下表為全部的正規化路徑與必須為整數的欄位。新增列必須說明該值為何屬於不定值或環境衍生值,並附突變案例。parity 程式內的路徑常數必須與本表一致,由自動測試比對本表與程式常數。
+
+| 面 | 路徑 | 形狀或型別 | 處理 |
+|----|------|------------|------|
+| `POST /v1/chat/completions` | `$.id` | `^chatcmpl-[0-9a-f]{32}$` | `<id-n>` |
+| 同上 | `$.created`、`$.choices[*].index`、`$.usage.prompt_tokens`、`$.usage.completion_tokens`、`$.usage.total_tokens` | 整數 | 不替換 |
+| `GET /v1/models` | `$.data[*].created` | 整數 | 不替換 |
+| `POST /api/settings/token/rotate` | `$.token` | 遮罩前 `^[A-Za-z0-9_-]{43}$`;遮罩後必須為 `[REDACTED]` | 不另替換 |
+| `GET /api/settings` | `$.port` | 整數,等於本次埠 | `<port>` |
+| 同上 | `$.data_dir` | 等於本次 `SPILLWAY_HOME` | `<home>` |
+| 同上 | `$.version` | `^[0-9]+\.[0-9]+\.[0-9]+` | `<version>` |
+| 同上 | `$.counts.*`、`$.context.context_retention_days`、`$.context.context_max_bytes`、`$.context.payload_count`、`$.context.payload_bytes` | 整數 | 不替換 |
+| `GET /api/deployments` | `$.deployments[*].params.api_base` | 見 DB 列 | 同 DB 列 |
+| `GET`、`PUT /api/deployments/{id}`、`POST /api/deployments` | `$.params.api_base` | 見 DB 列 | 同 DB 列 |
+| `POST /api/deployments/{id}/test` | `$.latency_ms` | 15.6.2 | 不替換 |
+| 同上 | `$.error` | 15.7.4 | 不替換 |
+| 同上 | `$.cost_usd` | 待定義期間只比 null 或數值 | 不替換 |
+| 同上 | `$.ledger_id`、`$.tokens_in`、`$.tokens_out` | 整數或 null | 不替換 |
+| `GET /api/ledger` | `$.items[*].latency_ms` | 15.6.2 | 不替換 |
+| 同上 | `$.items[*].error` | 15.7.4 | 不替換 |
+| 同上 | `$.items[*].cost_usd`、`est_cost_usd_p90` | 待定義期間只比 null 或數值 | 不替換 |
+| 同上 | `$.items[*].est_tokens_in`、`est_tokens_out_p50`、`est_tokens_out_p90` | 待定義期間只比 null 或整數 | 不替換 |
+| 同上 | `$.items[*].id`、`tokens_in`、`tokens_out`、`slot`、`fallback_depth`、`$.page`、`$.page_size`、`$.total`、`$.pages` | 整數或 null | 不替換 |
+| `GET /api/ledger/{id}/payload` | `$.request_json`、`$.response_text` | 同 15.8.3 同名欄位 | 不替換 |
+| `GET /api/mcp/catalog` | `$.connection.url`、`$.connection.groups[*].url` | `^http://127\.0\.0\.1:<本次埠>/mcp/` | 只把埠換成 `<port>` |
+| 同上 | `$.connection.stdio.args[*]` 中 `--port` 的下一項 | 等於本次埠 | `<port>` |
+| 同上 | `$.connection.stdio.command` | `^spillway(-rs)?$` | `<cmd>`(15.11) |
+| DB | `deployments.params` 的 `$.api_base` | 值以本次 fake `base_url` 開頭時替換;其他值不替換,依 literal 比對 | 把該字首換成 `<fake-base-url>` |
+
+`GET /api/mcp/config` 依 `tool` 的路徑隨 MCP 移植補入本表。
+
+### 15.10 秘密
+
+15.10.1 每個擷取面依序處理:① 原始擷取只留在記憶體;② sentinel 掃描與 15.9.5 標「遮罩前」的形狀驗證;③ 金鑰遮罩(黑箱測試工具 `tests.blackbox.mask.mask_secrets`,`extra` 為語料金鑰值與本次 token 明文);④ 15.9 正規化;⑤ 比對。比較的是遮罩後的值。
+
+15.10.2 語料金鑰只使用 `sk-test-`、`sk-fake` 開頭的假值。fakeapi 的 `echo_auth` 模式不得進語料。13.4.3 的種入內容不得含 sentinel。
+
+15.10.3 sentinel 為語料金鑰值與本次 token 明文。掃描範圍:HTTP 回應的 header 與 body、DB 全部 TEXT 欄位、`SPILLWAY-LOG` 與 `SPILLWAY-LOG-CONT ` 行。命中判定不一致,報告只寫比對面與路徑,不寫值。下列位置不掃描:送往上游的請求 JSON body(使用者 prompt 依設計轉發)、`POST /api/settings/token/rotate` 的 `$.token`、13.4.5 故意種入的 `deployments.params` 及其 API 回顯。
+
+15.10.4 差異報告、junit、`artifacts/` 與 runner 自己的記錄檔不得含金鑰或 token 值。
+
+### 15.11 允許差異與語料範圍
+
+允許差異:
+
+- Python 模組擴充(Python 版專屬,兩個實作共同的擴充形式為設定檔;CHG-20261108-01 決策 3):7.6.1 的模組探索與 `SPILLWAY_TEST_ADAPTER_PATHS` 載入 Python 模組。
+- 實作相依測試清單(`tests/blackbox/impl_dependent.toml`,列出換實作時須更換夾具的測試)中 `on_rust` 為 `replace` 或 `not_applicable` 的項目。
+- MCP stdio 的 command(`GET /api/mcp/catalog` 的 `$.connection.stdio.command`)。
+
+語料範圍:
+
+- 每個 slot 至多一個雲端(`cli`、`api`)候選;跨 slot fallback 與 `local` 依 `position` 不受此限。只含循序請求。
+- 不設 `budget_precheck`(4.2.5),不設 `usd` 額度上限。
+- 「花費與 token 估算」轉為已定義前,不含 `POST /api/estimate`、`POST /api/routes/{name}/dry-run`、`GET /api/dashboard`。
+- 設定檔驅動 adapter 定義前,不含 `GET /api/adapters`。
+- 不可達的上游只用固定的 `http://127.0.0.1:9/v1`,不用隨機取得的空閒埠。
