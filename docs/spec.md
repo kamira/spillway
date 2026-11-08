@@ -466,7 +466,7 @@ routes:
 
 ### 7.1 介面
 
-下列 Python 介面為 Python 版專屬；Rust 版不必實作相同的語言介面，對外行為依第 15 節，送往上游的請求依 15.3。
+下列 Python 介面與 7.1.1、7.1.2 的模組形式為 Python 版專屬（兩個實作共同的擴充形式見 15.11）；Rust 版不必實作相同的語言介面，對外行為依第 15 節，送往上游的請求依 15.3；7.1.1 中未宣告 `provider` 的處理，Rust 版由內建協定 adapter 移植定義。
 
 ```python
 class Adapter(Protocol):
@@ -492,7 +492,7 @@ class CallResult:
 
 ### 7.2 LiteLLM 呼叫（anthropic_api、openai_api、litellm 模組）
 
-LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1–7.2.3 適用於使用它的模組。本節的 LiteLLM 呼叫方式為 Python 版專屬，Rust 版依 15.3；LiteLLM 升版依 15.1.3。
+LiteLLM 呼叫為上述三個模組共用的函式，不是獨立模組；7.2.1–7.2.3 適用於使用它的模組。7.2.1 的模型字串形式與本節的 LiteLLM 呼叫方式為 Python 版專屬，Rust 版送往上游的請求依 15.3；`params.api_base` 的採用、7.2.2、7.2.3 的行為要求兩個實作皆適用（Rust 版適用於對應的內建協定 adapter）；LiteLLM 升版依 15.1.3。
 
 7.2.1 模型字串必須為 `<provider>/<model>`；`params.api_base` 存在時傳入。
 
@@ -785,7 +785,7 @@ env_vars = ["SPILLWAY_TOKEN"]
 
 9.1.1 預設只綁 127.0.0.1；綁定其他位址時，所有端點必須驗證 Bearer token。
 
-9.1.2 錯誤回應格式：`{"error": {"code": "<錯誤碼>", "message": "<說明>"}}`。請求驗證失敗（HTTP 422）的 `message` 為 `<欄位路徑>: <原因>`，多個錯誤以 `; ` 串接；欄位路徑以 `.` 連接各層（例如 `body.messages.0.role`）。
+9.1.2 錯誤回應格式：`{"error": {"code": "<錯誤碼>", "message": "<說明>"}}`。請求驗證失敗（HTTP 422）的 `message` 為 `<欄位路徑>: <原因>`，多個錯誤以 `; ` 串接；欄位路徑以 `.` 連接各層（例如 `body.messages.0.role`）。設定匯入（3.1）的欄位路徑形式依 3.1.9；沒有對應欄位的驗證錯誤，`message` 可只有 `<原因>`。
 
 9.1.3 `/v1/chat/completions` 回應必須帶 header `X-Spillway-Served-By`（成員 id）與 `X-Spillway-Slot`。
 
@@ -1151,7 +1151,7 @@ serve 就緒的判定為 `GET /api/settings/context` 回傳 HTTP 200 且行程�
 | CSV 與 YAML 匯出 | — | — | 待定義(設定與資料目錄移植、Web UI API 移植) | — |
 | 花費與 token 估算 | — | — | 待定義(路由與額度移植) | — |
 
-Streaming 依 1.1.3 不涵蓋;`stream: true` 的 400 回應由「錯誤物件」比對。
+Streaming 依 1.1.3 不涵蓋;`stream: true` 的 400 回應(錯誤碼 `streaming_unsupported`)由「錯誤物件」比對。
 
 log 不列入比對面。parity 以 `SPILLWAY_TEST_LOG_LEVEL=INFO` 啟動;輸出的 `SPILLWAY-LOG` 與 `SPILLWAY-LOG-CONT ` 行只檢查 14.3.5 的等級格式合法且不含 sentinel(15.10.3);logger 名稱與訊息內容依 14.3.5 為實作相依,兩側行數也不比較。
 
@@ -1308,7 +1308,7 @@ Gemini 協定隨設定檔驅動 adapter 補入本表。
 
 允許差異:
 
-- Python 模組擴充(Python 版專屬,兩個實作共同的擴充形式為設定檔;CHG-20261108-01 決策 3):7.6.1 的模組探索與 `SPILLWAY_TEST_ADAPTER_PATHS` 載入 Python 模組。
+- Python 模組擴充(Python 版專屬,兩個實作共同的擴充形式由設定檔驅動 adapter CHG 定義;CHG-20261108-01 決策 3):7.6.1 的模組探索與 `SPILLWAY_TEST_ADAPTER_PATHS` 載入 Python 模組。
 - 實作相依測試清單(`tests/blackbox/impl_dependent.toml`,列出換實作時須更換夾具的測試)中 `on_rust` 為 `replace` 或 `not_applicable` 的項目。
 - MCP stdio 的 command(`GET /api/mcp/catalog` 的 `$.connection.stdio.command`)。
 
