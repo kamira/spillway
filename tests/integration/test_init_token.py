@@ -33,7 +33,8 @@ from tests.fakes.cli_upstream import safe_subprocess_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
-REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+                 "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 EXISTS_MSG = "已存在,未變更"
 
 

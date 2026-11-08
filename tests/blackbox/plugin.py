@@ -4,7 +4,8 @@
 - `serve_factory`(函式範圍):`make(home=None, **opts) -> Serve`,啟動並等到就緒(`opts` 見
   `tests.blackbox.harness.Serve`;`home` 省略時為 `tmp_path / "home-<n>"`)。測試結束時以相反順序
   `stop()`(含結束碼、Traceback、ERROR、逾時的斷言);測試本身失敗時改為 `kill()`。已由測試自行停止的
-  serve 不再重複停止。
+  serve 不再重複停止。差距清單的預期失敗(CHG-20261108-01 T2 仲裁 B4;由 `tests.parity.gaps` 標記)同樣走 `kill()`,
+  另掃描 stderr 的 `panicked at`、`Traceback`:崩潰不是「尚未移植」,命中就在收尾失敗,訊息只含行數。
 - `blackbox_guard`(session 範圍、autouse;施工審議 T2 F1):轉換後的目錄不必另外啟用。session 結束時,若本次
   收集到的測試**全部**位於 `guard.converted_roots()` 之內(「純執行」)或設了 `SPILLWAY_BLACKBOX_GUARD=1`,
   斷言 `sys.modules` 沒有 `spillway*`、`litellm*`;與 unit、integration 一起跑的 session 不檢查(它們本來就
@@ -16,6 +17,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,8 @@ from tests.blackbox.harness import Serve
 
 _PURE_KEY = pytest.StashKey[bool]()
 _FAILED_KEY = pytest.StashKey[bool]()
+_EXPECTED_FAIL_KEY = pytest.StashKey[bool]()
+_CRASH_RE = re.compile(r"panicked at|Traceback")
 
 
 def _under(path: Path, roots: list[str]) -> bool:
@@ -87,11 +91,15 @@ def serve_factory(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator[Ca
 
     yield make
     failed = request.node.stash.get(_FAILED_KEY, False)
+    expected_fail = request.node.stash.get(_EXPECTED_FAIL_KEY, False)
     errors: list[BaseException] = []
     for s in reversed(started):
         try:
             if failed:
                 s.kill()
+                crashes = sum(1 for ln in s.stderr_text().splitlines() if _CRASH_RE.search(ln)) if expected_fail else 0
+                if crashes:
+                    errors.append(AssertionError(f"預期失敗的測試,serve stderr 有 {crashes} 行崩潰訊息"))
             else:
                 s.stop()
         except BaseException as exc:  # noqa: BLE001 — 全部停完再回報

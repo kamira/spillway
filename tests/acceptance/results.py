@@ -6,20 +6,29 @@ import math
 from pathlib import Path
 from typing import Any
 
+from tests.blackbox.harness import spillway_impl
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS = REPO_ROOT / "artifacts" / "m2"
 RESULTS_FILE = ARTIFACTS / "acceptance-results.json"
 
 
+def _results_file() -> Path:
+    """`SPILLWAY_IMPL=rust` 時寫入獨立子目錄,不覆蓋 Python 版的量測(AM-11)。"""
+    root = ARTIFACTS / "rust" if spillway_impl() == "rust" else ARTIFACTS
+    return root / RESULTS_FILE.name
+
+
 def record_result(key: str, value: Any) -> None:
     """量測數字(不含任何秘密)合併寫入 `acceptance-results.json`。"""
-    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    results_file = _results_file()
+    results_file.parent.mkdir(parents=True, exist_ok=True)
     try:
-        data = json.loads(RESULTS_FILE.read_text(encoding="utf-8"))
+        data = json.loads(results_file.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
         data = {}
     data[key] = value
-    RESULTS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    results_file.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                             encoding="utf-8")
 
 

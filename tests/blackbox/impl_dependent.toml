@@ -1,70 +1,101 @@
 # 實作相依清單(CHG-20261107-03 AM-13;已知限制 5)。
 #
-# Python 版照常全跑;本清單只供日後以 SPILLWAY_CMD 換成其他實作(Rust 版)時參考:列出的測試依賴
-# Python 版的實作細節,換實作時要改夾具或預期,不代表規格不同。不改 feature 文字、不加 behave tag。
+# Python 版照常全跑;本清單只在 SPILLWAY_IMPL=rust 時起作用:列出的測試依賴 Python 版的實作細節,換實作時要改夾具或
+# 預期,不代表規格不同。不改 feature 文字、不加 behave tag。
 #
-# 欄位:kind = "behave"(id 為 feature 路徑 + "::" + 情境名稱)或 "pytest"(id 為 node ID);
-#       reason 寫明依賴哪個實作細節;scope(選填)說明只有其中一部分相依。
-# 一致性:tests/blackbox/test_harness.py 斷言每個 id 都在 artifacts/m5a/baseline/ 的基準清單裡。
+# 欄位:kind = "behave"(id 為 feature 路徑 + "::" + 情境名稱)或 "pytest"(id 為 node ID,不含參數化後綴時涵蓋全部變體);
+#       reason 寫明依賴哪個實作細節;scope(選填)說明只有其中一部分相依;
+#       on_rust(CHG-20261108-01 AM-9,必填)見下;on_rust_reason 寫選擇理由(not_applicable 必填)。
+#       [[file_entry]] 登記整個檔案(id 為檔案路徑),沒有 kind。
+# on_rust:項目不會自動被略過或標成預期失敗。
+#   not_applicable       Rust 下 deselect 並計數(tests/parity/gaps.py)。
+#   gap                  測試原樣跑;失敗時要在 tests/parity/rust_gaps.toml 登記,否則就是失敗。
+#   replace:<測試 id>    由替代測試承接跨實作行為;替代測試存在於本次收集結果時,本測試在 Rust 下 deselect 並計數(T2 仲裁 A2,依決策 5);
+#                        替代測試不存在時照常跑、照常失敗。替代測試 id 是預定名稱:本筆尚未存在,由設定檔驅動 adapter CHG 新增(NFR-4 那一項由內建協定 adapter CHG 新增,AM-18)
+#                        (可改名,同步本檔),不得等於自己的 id。全部 replace 都有替代測試是決策 5「追齊」的條件。
+# 一致性:tests/blackbox/test_harness.py 斷言每個 [[entry]] 的 id 都在 artifacts/m5a/baseline/ 的基準清單裡;
+#         tests/parity/test_gaps_file.py 以實際收集結果比對,並驗證 on_rust。
 
 # ---- 固定 seed 的抽選序列(spec 13.4.2:seed 為不透明值,跨實作不保證序列相同)
 [[entry]]
 kind = "behave"
 id = "tests/features/m2_routing.feature::slot 內依優先權重分攤 (AC-4)"
 reason = "固定 SPILLWAY_TEST_RNG_SEED 的 400 次抽選序列;換一個序列約 2% 機率落在 0.70–0.80 之外(決策審議仲裁 #12)"
+on_rust = "gap"
+on_rust_reason = "行為跨實作相同(權重比例),只有抽選序列不同;測試原樣跑,路由與額度移植前列入差距清單,不另寫放寬的版本"
 
 # ---- SPILLWAY_TEST_ADAPTER_PATHS 載入 Python 模組(Rust 改用 manifest,DIR-5 ①;等改寫 AC-19 的 CHG 再換夾具)
 [[entry]]
 kind = "behave"
 id = "tests/features/m2_adapters.feature::新增模組資料夾後被列出並可被路由 (AC-19)"
 reason = "以 tests/blackbox/fakemods.write_module 寫出的 Python 模組經 SPILLWAY_TEST_ADAPTER_PATHS 載入"
+on_rust = "replace:tests/features/m2_adapters.feature::新增設定檔模組資料夾後被列出並可被路由 (AC-19)"
+on_rust_reason = "Python 模組載入是 Python 專屬(決策 3、spec 15.11);跨實作版本改用設定檔資料夾,由設定檔驅動 adapter CHG 新增"
 
 [[entry]]
 kind = "behave"
 id = "tests/features/m2_adapters.feature::single 模組只允許 1 個成員 (7.6.5、9.2.3;AC-12 的 M2 邏輯部分,不計入 M2 閘門)"
 reason = "同上(cardinality single 的 Python 測試模組)"
+on_rust = "replace:tests/features/m2_adapters.feature::single 設定檔模組只允許 1 個成員 (7.6.5、9.2.3)"
+on_rust_reason = "同上:cardinality single 改由設定檔宣告"
 
 [[entry]]
 kind = "behave"
 id = "tests/features/m2_adapters.feature::無法載入的模組不影響其他模組 (7.6.7;AC-21 的 M2 邏輯部分,不計入 M2 閘門)"
 reason = "同上(__init__.py 無法 import 的 Python 測試模組)"
+on_rust = "replace:tests/features/m2_adapters.feature::無法載入的設定檔模組不影響其他模組 (7.6.7)"
+on_rust_reason = "同上:無法載入改為不合法的設定檔"
 
 [[entry]]
 kind = "behave"
 id = "tests/features/m4b_ui.feature::無法載入的模組在供應商選單停用並顯示原因 (AC-21)"
 reason = "同上(無法 import 的 Python 測試模組)"
+on_rust = "replace:tests/features/m4b_ui.feature::無法載入的設定檔模組在供應商選單停用並顯示原因 (AC-21)"
+on_rust_reason = "同上"
 
 [[entry]]
 kind = "pytest"
 id = "tests/ui/test_members.py::test_unavailable_module_disabled_ac21"
 reason = "同上(tests/blackbox/ui/members.broken_adapter_dir)"
+on_rust = "replace:tests/ui/test_members.py::test_unavailable_manifest_module_disabled_ac21"
+on_rust_reason = "同上"
 
 [[entry]]
 kind = "pytest"
 id = "tests/ui/test_members.py::test_user_data_rendered_as_text"
 reason = "同上(provider 名稱含標記的 Python 測試模組)"
+on_rust = "replace:tests/ui/test_members.py::test_user_data_rendered_as_text_manifest"
+on_rust_reason = "XSS 防護跨實作都要驗,不可 not_applicable;只有產生帶標記 provider 名稱的夾具要換成設定檔"
 
 [[entry]]
 kind = "pytest"
 id = "tests/acceptance/test_m4b_operation.py::test_m4b_operation"
 reason = "同上"
 scope = "步驟 ⑨(AC-21)"
+on_rust = "gap"
+on_rust_reason = "只有步驟 ⑨ 相依;其餘步驟是跨實作的操作驗收,不另開替代測試,Web UI 移植與設定檔夾具完成前列入差距清單;退出條件:設定檔 adapter CHG 將本測試的 `adapter_paths` 夾具換成設定檔資料夾;只移植 CLI adapter(或 Web UI)不會通過"
 
 [[entry]]
 kind = "pytest"
 id = "tests/blackbox/test_process_contract.py::test_exit_3_on_adapter_conflict"
 reason = "以 Python 測試模組宣告與內建模組相同的 provider 觸發 7.6.6 啟動失敗"
+on_rust = "replace:tests/blackbox/test_process_contract.py::test_exit_3_on_manifest_adapter_conflict"
+on_rust_reason = "7.6.6 的衝突行為跨實作要驗;Python 模組的宣告方式改為設定檔"
 
 [[entry]]
 kind = "pytest"
 id = "tests/blackbox/test_control_contract.py::test_cli_subprocess_does_not_inherit_knobs"
 reason = "以 SPILLWAY_TEST_ADAPTER_PATHS 載入 Python 測試模組(harness 斷言它確實載入),證明這個旋鈕也從 CLI 子行程環境移除"
 scope = "SPILLWAY_TEST_ADAPTER_PATHS 那一個旋鈕"
+on_rust = "gap"
+on_rust_reason = "AM-9 明文暫緩到 CLI adapter 移植;只有 SPILLWAY_TEST_ADAPTER_PATHS 一個旋鈕相依,其餘旋鈕跨實作要驗;退出條件:設定檔 adapter CHG 將本測試的 `adapter_paths` 夾具換成設定檔資料夾;只移植 CLI adapter(或 Web UI)不會通過"
 
 [[entry]]
 kind = "pytest"
 id = "tests/blackbox/test_harness.py::test_adapter_paths_are_verified_loaded"
 reason = "以 Python 測試模組驗證 harness 的 adapter 載入斷言"
+on_rust = "not_applicable"
+on_rust_reason = "驗的是 harness 對 Python 測試模組的載入斷言,Rust 版沒有 SPILLWAY_TEST_ADAPTER_PATHS 的 Python 模組載入(spec 15.11)"
 
 # ---- NFR-4 的 LiteLLM 豁免窗口(spec 14.3.5:logger 名稱與訊息屬於實作相依)
 [[entry]]
@@ -72,3 +103,19 @@ kind = "pytest"
 id = "tests/acceptance/test_nfr4_prescan.py::test_nfr4_known_key_prescan"
 reason = "前提斷言「請求窗口內至少一行 SPILLWAY-LOG 的 logger 名稱以 LiteLLM 開頭」與 LiteLLM DEBUG 回顯的豁免窗口(Python 版在 INFO 下限下預期為空)"
 scope = "logger 名稱的斷言與豁免窗口"
+on_rust = "replace:tests/acceptance/test_nfr4_prescan.py::test_nfr4_known_key_prescan_without_litellm_window"
+on_rust_reason = "金鑰掃描跨實作要驗(安全項不可 not_applicable);LiteLLM logger 前提與豁免窗口在 Rust 版不存在,既有斷言不改(Global Constraints),所以另寫替代測試"
+
+# ---- 只驗測試基礎設施或 Python 專屬行為(CHG-20261108-01 AM-9 登記)
+[[entry]]
+kind = "pytest"
+id = "tests/ui/test_shell.py::test_async_tests_after_ui_module_pass"
+reason = "子行程跑 tests/unit/api/test_drain.py(import spillway),驗的是 Playwright 與 anyio 在同一 Python 行程的互動"
+on_rust = "not_applicable"
+on_rust_reason = "後半是 Python 專屬的 unit 測試(決策 9),與受測實作無關"
+
+[[file_entry]]
+id = "tests/blackbox/test_harness.py"
+reason = "harness 自測:包裝程式、CHG-20261107-03 基準、compare.py、litellm 價格檔"
+on_rust = "not_applicable"
+on_rust_reason = "驗的是 tests/blackbox 本身與 Python 版基準,不是受測實作的行為;Rust 閘的共用根目錄排除此檔(AM-13)"

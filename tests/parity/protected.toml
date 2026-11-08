@@ -1,0 +1,39 @@
+# 不得列入 rust_gaps.toml 的受保護測試(CHG-20261108-01 T2;AM-9)。修改本檔需走安全邊界停點(DIR-4 規則 3)。
+#
+# [[protected]] file(相對於 repo 根目錄)、names(測試函式名稱;`*` 是唯一的萬用字元,參數化的 `[...]` 為字面字元,
+# 名稱也涵蓋該測試的全部參數化變體)。test_gaps_file.py 以實際收集結果展開,展開不到 node ID 的名稱判失敗。
+#
+# test_cli_subprocess_does_not_inherit_knobs 依 AM-9 暫緩到 CLI adapter 移植,不在本清單。
+
+[[protected]]
+file = "tests/blackbox/test_control_contract.py"
+names = [
+    "test_off_every_method_and_variant_is_404_like_unknown_path",
+    "test_control_values_other_than_1_do_not_enable[*]",
+    "test_on_not_in_openapi_and_headers_and_host_origin",
+    "test_home_check_*",
+    "test_clock_*",
+    "test_system_clock_mode",
+]
+
+[[protected]]
+file = "tests/blackbox/test_process_contract.py"
+names = [
+    "test_token_*",
+    "test_control_warning_line",
+    "test_ignored_knobs_line_lists_names_only",
+    "test_exit_2_*",
+    "test_exit_1_*",
+    "test_exit_3_on_newer_schema_version",
+    "test_sigterm_ends_by_signal",
+    "test_sigint_exit_130_without_traceback",
+    "test_init_exit_codes_and_streams",
+    "test_ready_and_bound_to_loopback_only",
+]
+
+[[protected]]
+file = "tests/blackbox/test_schema_contract.py"
+names = [
+    "test_fresh_database_matches_golden_snapshot",
+    "test_fresh_database_has_no_rows_except_settings_token",
+]
