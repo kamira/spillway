@@ -188,7 +188,7 @@ def _print_summary(report: dict[str, Any]) -> None:
             print(f"skipped:{test_id}")
     for test_id in report["id_differences"]["unregistered"]:
         print(f"unregistered:{test_id}")
-    print(f'local_gate: sha={report["git_sha"]} gaps={report["gap_count"]} rust_side=none result={report["result"]}')
+    print(f'local_gate: sha={report["git_sha"]} dirty={str(report["git_dirty"]).lower()} gaps={report["gap_count"]} rust_side=none result={report["result"]}')
 
 
 def main(argv: list[str] | None = None) -> int:

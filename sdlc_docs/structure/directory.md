@@ -226,7 +226,7 @@ $SPILLWAY_HOME/                  # 未設時為 platformdirs.user_data_dir("spil
 | `tests/helpers/` | 測試輔助套件(unit 與 integration 使用;黑箱目錄不可 import);`live_gateway.py` 為需要 GET SSE、`list_changed`、stdio 或停機的測試用的背景 uvicorn harness;`config_golden.py` 為黃金檔的種入資料與全表快照;`ui.py` 為行程內畫面 helper,CHG-20261107-03 起只留給 integration(畫面測試與 behave 改用 `tests/blackbox/ui/`) | — |
 | `tests/ui/` | 畫面測試(pytest + Playwright,Chromium 1248 headless);全量 `pytest -q` 包含本目錄;主 thread 不可使用 asyncio | — |
 | `tests/unit/data/` | 單元測試的資料檔(設定匯出黃金檔 `config_golden.yaml`;改動須經修改治理) | — |
-| `artifacts/` | 驗收與量測產物,不進版控;每筆 CHG 一個子目錄(`m2/`、`m2c/`、`m3a/`、`m3b/`、`m4a/`、`m4b/`、`m5a/`、`m5b/`),本機閘報告在 `gate/`;`SPILLWAY_IMPL=rust` 的驗收量測寫入 `m2/rust/`;例外:`m5a/baseline/` 為驗收對照用的基準清單,進版控 | — |
+| `artifacts/` | 驗收與量測產物,不進版控;每筆 CHG 一個子目錄(`m2/`、`m2c/`、`m3a/`、`m3b/`、`m4a/`、`m4b/`、`m5a/`、`m5b/`),本機閘報告在 `gate/`;`SPILLWAY_IMPL=rust` 時只有 `m2/acceptance-results.json` 改寫入 `m2/rust/`,其餘驗收產物不分流(CHG-20261108-01「後續 CHG」);例外:`m5a/baseline/` 為驗收對照用的基準清單,進版控 | — |
 | `tests/acceptance/` | 驗收項,檔名帶 AC 編號 | — |
 
 ## 命名與放置規則

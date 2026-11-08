@@ -16,11 +16,14 @@ if [ ! -x "$PY" ]; then
   exit 2
 fi
 SHA=$(git rev-parse HEAD) || exit 2
-if [ -n "$(git status --porcelain)" ]; then DIRTY=1; else DIRTY=0; fi
+START_STATUS=$(git status --porcelain) || exit 2
+if [ -n "$START_STATUS" ]; then DIRTY=1; else DIRTY=0; fi
+# 報告只來自這一次執行:中途中止或彙整被拒時,不留下同一 commit 的舊結論
+rm -f "artifacts/gate/$SHA.json"
 
 export PYTHONPATH="$ROOT/src" LITELLM_LOCAL_MODEL_COST_MAP=True
-for name in SPILLWAY_CMD SPILLWAY_IMPL SPILLWAY_PARITY_CMD_B SPILLWAY_BLACKBOX_GUARD; do
-  if [ -n "${!name:-}" ]; then echo "local_gate: 清除環境變數 $name(本閘只驗 Python 版)"; fi
+for name in SPILLWAY_CMD SPILLWAY_IMPL SPILLWAY_PARITY_CMD_B SPILLWAY_BLACKBOX_GUARD PYTEST_ADDOPTS PYTEST_PLUGINS; do
+  if [ -n "${!name:-}" ]; then echo "local_gate: 清除環境變數 $name(受測範圍不受呼叫端環境影響)"; fi
   unset "$name"
 done
 
@@ -74,5 +77,10 @@ run_compare
 run_pytest pytest_parity tests/parity
 run_behave behave_parity tests/parity/features
 
+# 全程超過 10 分鐘:期間 HEAD 或工作目錄有變動時,報告不能代表 $SHA
+if [ "$(git rev-parse HEAD)" != "$SHA" ] || [ "$(git status --porcelain)" != "$START_STATUS" ]; then
+  echo "local_gate: 執行期間 HEAD 或工作目錄有變動"
+  DIRTY=1
+fi
 "$PY" -m tests.parity.gate_report --sha "$SHA" --dirty "$DIRTY" --parts "$PARTS" --out "artifacts/gate/$SHA.json"
 exit $?

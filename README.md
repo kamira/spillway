@@ -220,11 +220,13 @@ behave、`tests/acceptance` 與 `tests/ui` 是黑箱測試（CHG-20261107-03）�
 `serve`、`init`、`mcp-stdio` 一律經環境變數 `SPILLWAY_CMD` 執行：以 shell 規則切開的程式前綴，預設為執行測試的 Python 加 `-m spillway`。要以同一套測試檢驗其他實作時，只需設定它：
 
 ```bash
-SPILLWAY_CMD="/path/to/spillway" .venv/bin/python -m behave tests/features
-SPILLWAY_CMD="/path/to/spillway" .venv/bin/python -m pytest -q tests/acceptance tests/ui
+SPILLWAY_IMPL=python SPILLWAY_CMD="/path/to/spillway" .venv/bin/python -m behave tests/features
+SPILLWAY_IMPL=python SPILLWAY_CMD="/path/to/spillway" .venv/bin/python -m pytest -q tests/acceptance tests/ui
 ```
 
-預設的 `python -m spillway` 沿用目前的 `PYTHONPATH`；未設定時由 editable 安裝的 `.pth` 決定，它指向主 checkout 的 `src`。在其他 worktree 執行時，請設定 `PYTHONPATH=<該樹>/src` 或 `SPILLWAY_CMD`，否則測到的是主 checkout 的程式碼。
+預設的 `python -m spillway` 沿用目前的 `PYTHONPATH`；未設定時由 editable 安裝的 `.pth` 決定，它指向主 checkout 的 `src`。在其他 worktree 執行時，請設定 `PYTHONPATH=<該樹>/src`，或同時設定 `SPILLWAY_CMD` 與 `SPILLWAY_IMPL=python`，否則測到的是主 checkout 的程式碼。
+
+`SPILLWAY_CMD` 不是預設值時必須同時設定 `SPILLWAY_IMPL`（`python` 或 `rust`），否則 pytest 以 usage error 結束。`SPILLWAY_IMPL=rust` 才會套用差距清單；此時 behave 要以 `-f json` 輸出，再交給 `python -m tests.parity.behave_gate <json> --root <feature 根目錄>` 判定。
 
 ### `SPILLWAY_CMD` 的要求
 
@@ -260,7 +262,7 @@ scripts/local_gate.sh
 5. `pytest tests/parity`。
 6. `behave tests/parity/features`。
 
-結果寫入 `artifacts/gate/<sha>.json`（不進版控）：git sha、工作目錄是否乾淨、兩側實作標籤、測試 id 集合、各段的狀態計數、skip 清單、差距條數。skip 要列出，不要求 0。目前沒有 Rust 版，報告以 `rust_side.exists = false` 明寫，也不比對兩側的 id 集合。終端輸出只有測試 id、狀態與計數，不轉印失敗內容；要看細節時單獨重跑該測試。腳本會清除 `SPILLWAY_CMD`、`SPILLWAY_IMPL`，這一版只驗 Python 版。
+結果寫入 `artifacts/gate/<sha>.json`（不進版控）：git sha、工作目錄是否乾淨、兩側實作標籤、測試 id 集合、各段的狀態計數、skip 清單、差距條數。skip 要列出；`tests/features` 由第 4 段依 CHG-20261107-03 基準要求 0 skipped，其餘各段不要求 0。`git_dirty` 為 true（開始時不乾淨，或執行期間 HEAD、工作目錄有變動）的報告不能當驗收證據。目前沒有 Rust 版，報告以 `rust_side.exists = false` 明寫，也不比對兩側的 id 集合。終端輸出只有測試 id、狀態與計數，不轉印失敗內容；要看細節時單獨重跑該測試。腳本會清除 `SPILLWAY_CMD`、`SPILLWAY_IMPL`，這一版只驗 Python 版。
 
 第一段是全量，會收集 unit 與 integration（它們本來就 import spillway），所以黑箱的執行期守門在這一段不生效。第二段有守門：只收集黑箱範圍，以 `SPILLWAY_BLACKBOX_GUARD=1` 開啟執行期守門，`sys.meta_path` 的 import 阻擋器在 import 當下擋下 `spillway`、`litellm`，session 結束時再檢查 `sys.modules`。behave 在 `after_all` 做同樣的檢查。
 
