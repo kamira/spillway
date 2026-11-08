@@ -119,7 +119,7 @@ def _seeded_ids(scenario: Scenario) -> frozenset[str]:
     return frozenset(s.json["id"] for s in scenario.steps if isinstance(s, Step) and s.path == RAW_PARAMS_PATH)
 
 
-def _do_step(step: Step, client: Any, fake_base: str, capture: Capture) -> None:
+def _send(step: Step, client: Any, fake_base: str) -> Any:
     kw: dict[str, Any] = {}
     if step.json is not None:
         kw["json"] = _substitute(step.json, fake_base)
@@ -127,7 +127,14 @@ def _do_step(step: Step, client: Any, fake_base: str, capture: Capture) -> None:
         kw["content"] = step.content
     if step.headers:
         kw["headers"] = dict(step.headers)
-    r = client.request(step.method, step.path, **kw)
+    return client.request(step.method, step.path, **kw)
+
+
+def _do_step(step: Step, client: Any, fake_base: str, capture: Capture) -> None:
+    try:
+        r = _send(step, client, fake_base)
+    except Exception as exc:    # `from None`:--tb=long 會逐層印出 httpx 函式的 `json=` 參數,其中可能有語料金鑰(15.10.4)
+        raise RunnerError(_scrub(f"{step.method} {step.path}: 請求失敗:{type(exc).__name__}", capture)) from None
     ex = Exchange(step.method, step.path, r.status_code, tuple(r.headers.multi_items()), r.content, step.error_mode)
     capture.exchanges.append(ex)
     if step.path == ROTATE_PATH and r.status_code == 200:

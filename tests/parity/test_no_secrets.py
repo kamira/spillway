@@ -125,6 +125,7 @@ def test_log_line_count_and_message_not_compared():
 INNER_TEST = """
 import json
 from dataclasses import replace
+import httpx
 from tests.parity.corpus import CORPUS_KEYS, SCENARIOS, Step, sample_capture
 from tests.parity.normalize import compare_captures
 from tests.parity.runner import PairResult, _do_step, mutant_cmd, run_pair
@@ -160,6 +161,12 @@ class RaisingClient:
 def test_do_step_funcargs_are_printed():
     step = next(s for s in _secret_scenario().steps if isinstance(s, Step) and s.json and KEY in json.dumps(s.json))
     _do_step(step, RaisingClient(), "http://127.0.0.1:1", sample_capture("a"))
+
+def test_do_step_real_httpx_transport_failure():
+    # 真的 httpx.Client:連不上時 traceback 會逐層印出 httpx 函式的 `json=` 參數(15.10.4)
+    step = next(s for s in _secret_scenario().steps if isinstance(s, Step) and s.json and KEY in json.dumps(s.json))
+    with httpx.Client(base_url="http://127.0.0.1:1", trust_env=False, timeout=5.0) as client:
+        _do_step(step, client, "http://127.0.0.1:1", sample_capture("a"))
 """
 
 
