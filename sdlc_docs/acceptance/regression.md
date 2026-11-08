@@ -14,7 +14,7 @@
 
 | # | 指令 | 通過標準 | 涵蓋條件 | 來源 ACC | 範圍標籤 |
 |---|------|----------|----------|----------|----------|
-| R1 | `python -m pytest -q` | exit 0;0 failed(ACC-20261031-01 時為 1089 passed;ACC-20261101-01 時為 1340 passed;ACC-20261101-02 時為 1739 passed;ACC-20261102-01 時為 2194 passed;ACC-20261102-02 時為 2578 passed;ACC-20261103-01 時為 3004 passed;ACC-20261107-01 時為 3045 passed;ACC-20261107-02 時為 3057 passed) | 單元、合約、整合、fakes 與 acceptance 全部;含 AC-19 合約測試、管理 API 錯誤碼(FR-13、FR-25)、`stream: true` 400、retention 每小時排程、AC-7、NFR-1、NFR-2、NFR-3、NFR-5 | ACC-20261031-01 | 全部 |
+| R1 | `python -m pytest -q` | exit 0;0 failed(ACC-20261031-01 時為 1089 passed;ACC-20261101-01 時為 1340 passed;ACC-20261101-02 時為 1739 passed;ACC-20261102-01 時為 2194 passed;ACC-20261102-02 時為 2578 passed;ACC-20261103-01 時為 3004 passed;ACC-20261107-01 時為 3045 passed;ACC-20261107-02 時為 3057 passed;ACC-20261107-03 時為 3382 passed) | 單元、合約、整合、fakes 與 acceptance 全部;含 AC-19 合約測試、管理 API 錯誤碼(FR-13、FR-25)、`stream: true` 400、retention 每小時排程、AC-7、NFR-1、NFR-2、NFR-3、NFR-5 | ACC-20261031-01 | 全部 |
 | R2 | `python -m behave tests/features` | exit 0;全部情境全過、0 skipped(ACC-20261031-01 時 5 features、18 scenarios、155 steps;ACC-20261101-01 時 6 features、22 scenarios、183 steps;ACC-20261101-02 時 7 features、31 scenarios、279 steps;ACC-20261102-01 時 8 features、40 scenarios、395 steps;ACC-20261102-02 時 9 features、50 scenarios、498 steps;ACC-20261103-01 時 10 features、60 scenarios、570 steps) | AC-3、AC-4、AC-5、AC-13、AC-14、AC-15、AC-18、AC-19、4.2.5(api 版)、4.2.6(api 版) | ACC-20261031-01 | routing、quota、estimate、ledger、redact、adapters、api |
 | R3 | `python -m pytest tests/acceptance -q -rs` | 全數 passed(ACC-20261031-01 時 9、ACC-20261101-01 時 10、ACC-20261101-02 時 12、ACC-20261102-01 時 17、ACC-20261102-02 時 19、ACC-20261103-01 時 20)且**必須 0 skipped**(缺 lsof 時 NFR-3 與操作驗收會被跳過;驗收平台 macOS 有 lsof,出現 skipped 即視為未通過) | AC-7、NFR-1(dry-run P95 < 20 ms)、NFR-2(dashboard P95 < 200 ms)、NFR-3(只聽 127.0.0.1)、NFR-5(payload 過期刪除)、Acceptance operation、NFR-4 預掃描(不計入 M2 閘門) | ACC-20261031-01 | api、cli、routing、ledger、store |
 
@@ -83,6 +83,10 @@ R1 與 R2 合起來就是 CHG-20261030-02 的本機閘(`python -m pytest -q && p
 | R63 | 雜湊 lock 檔契約(確切版本與 sha256、全檔無註解、涵蓋 pyproject 相依、兩份 lock 版本一致、runtime ⊆ dev、litellm 排除已知被植入版本、build-constraints 只有 setuptools) | `tests/contract/test_dependency_lock.py` | ACC-20261107-01 | 相依、安全 |
 | R64 | venv 與 dev lock 的漂移偵測(lock 外套件、版本不符、未安裝、重複 dist-info) | `tests/unit/test_venv_matches_lock.py` | ACC-20261107-01 | 相依 |
 | R65 | venv 入侵檢查腳本(.pth 內容與歸屬、啟動掛鉤各種形式、RECORD 雜湊與遞迴歸屬、未加 -S 拒絕執行) | `tests/unit/test_check_venv_integrity.py`、`scripts/check_venv_integrity.py` | ACC-20261107-01 | 相依、安全 |
+| R66 | `python -m pytest tests/integration/test_test_control.py tests/blackbox/test_control_contract.py -q` | exit 0;0 failed | 測試控制介面(spec 13):僅 `SPILLWAY_TEST_CONTROL=1` 且 HOME 檢查通過時掛載;關閉時測試控制路徑一律 404;端點錯誤碼 | ACC-20261107-03 | api、安全、測試基礎 |
+| R67 | `python -m pytest tests/blackbox/test_process_contract.py tests/blackbox/test_harness.py -q` | exit 0;0 failed;須前景執行(含 SIGINT) | 行程契約(spec 14):結束碼、`TOKEN_NOTICE`、stderr 契約行、就緒與綁定;`SPILLWAY_CMD` 包裝程式要求與 `kill()` 收尾 | ACC-20261107-03 | cli、測試基礎 |
+| R68 | `python -m pytest tests/contract/test_blackbox_boundary.py -q` | exit 0;0 failed | 黑箱邊界守門:轉換範圍不 import spillway、litellm,不引用 src 路徑 | ACC-20261107-03 | 測試基礎 |
+| R69 | `python -m pytest tests/blackbox/test_schema_contract.py tests/contract/test_schema_python.py -q` | exit 0;0 failed | 資料庫 schema v2 跨語言契約(`tests/blackbox/golden/schema_v2.json`) | ACC-20261107-03 | 資料、測試基礎 |
 
 ## Interaction spec(M2)
 
