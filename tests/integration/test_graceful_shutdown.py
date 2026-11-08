@@ -44,7 +44,8 @@ from tests.fakes.cli_upstream import FakeCli, install, safe_subprocess_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = REPO_ROOT / "src"
-REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+                 "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 GRACEFUL = 2.0
 SLOW_GRACEFUL = 20.0   # force_exit 測試:必須遠早於這個上限結束
 TERM_GRACE = DEFAULT_TERM_GRACE   # CliRunner SIGTERM→SIGKILL 寬限

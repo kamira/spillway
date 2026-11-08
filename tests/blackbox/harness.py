@@ -13,8 +13,15 @@
 - `run_cli(*args, home, fake_bin=None, extra_env=None, input=None, timeout=60)`:執行
   `SPILLWAY_CMD <args>`(例如 `init`、`init --rotate`)並回傳 `CompletedProcess`(text)。
 
+實作辨識(CHG-20261108-01 T2;AM-9)
+- `SPILLWAY_IMPL=python|rust`(`spillway_impl()`):未設時視為 python;設了非預設 `SPILLWAY_CMD` 卻沒設此變數、值不合法、
+  宣稱 rust 卻用預設命令都是 `ImplConfigError`(pytest 由 `tests/parity/gaps.py` 在 `pytest_configure` 變成 usage error,behave 由
+  `tests/parity/behave_gate.py` 判定)。只影響測試端,不傳給子行程,產品端沒有實作識別欄位。
+- `EndpointNotImplemented`:差距清單的預期失敗除 AssertionError 外唯一允許的例外(`tests.parity.gaps.XFAIL_RAISES`);`require_implemented(r)` 在
+  404、405、501 時丟出。
+
 `Serve(home, **opts)`:一個 `serve` 子行程(`start()` 或 `with Serve(...) as s:`)。
-- 選項:`control=True`(`SPILLWAY_TEST_CONTROL=1`)、`start_time`、`rng_seed`、`adapter_paths`、
+- 選項:`cmd`(這個實例專用的程式前綴,省略時為 `spillway_cmd()`;相對路徑解析同 `SPILLWAY_CMD`)、`control=True`(`SPILLWAY_TEST_CONTROL=1`)、`start_time`、`rng_seed`、`adapter_paths`、
   `retention_poll_seconds`、`retention_stepped`、`no_token`、`log_level`(spec 13.2 旋鈕;`control=False`
   時不設定任何旋鈕)、`graceful_timeout=3.0`(`SPILLWAY_TEST_GRACEFUL_TIMEOUT`;None 為不設定)、
   `mcp_max_sessions`、`extra_env`、`fake_bin`、`port`(預設隨機空埠)、`log_path`、
@@ -103,15 +110,19 @@ from tests.blackbox.ports import free_port
 from tests.fakes.cli_upstream import assert_only_fakes, safe_subprocess_env
 
 __all__ = [
-    "CMD_ENV", "CONTROL_ENV", "EXIT_PREFLIGHT", "EXIT_SIGINT", "EXIT_SIGTERM", "EXIT_STARTUP", "EXIT_USAGE",
+    "CMD_ENV", "CONTROL_ENV", "IMPL_ENV", "IMPLS", "EndpointNotImplemented", "ImplConfigError", "EXIT_PREFLIGHT",
+    "EXIT_SIGINT", "EXIT_SIGTERM", "EXIT_STARTUP", "EXIT_USAGE",
     "GRACEFUL_ENV", "KNOBS_IGNORED_PREFIX", "KNOB_ENVS", "MCP_MAX_SESSIONS_ENV", "REAL_KEY_VARS",
     "TEST_CONTROL_WARNING", "TOKEN_NOTICE", "Serve", "assert_only_fakes", "child_env", "drain_expire_delay",
-    "parse_tokens", "run_cli", "spillway_cmd", "stderr_problems",
+    "parse_tokens", "require_implemented", "run_cli", "spillway_cmd", "spillway_impl", "stderr_problems",
 ]
 
 CMD_ENV = "SPILLWAY_CMD"
+IMPL_ENV = "SPILLWAY_IMPL"
+IMPLS = ("python", "rust")
 HOST = "127.0.0.1"
-REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+                 "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 
 # spec 14.2.1(前綴位元組見 spec;tests/blackbox/test_process_contract.py 逐位元組核對)
 TOKEN_NOTICE = "spillway: 已產生存取 token(只顯示這一次,資料庫只存雜湊): "
@@ -144,7 +155,7 @@ EXIT_STARTUP = 3
 EXIT_SIGINT = 130
 EXIT_SIGTERM = -_signal.SIGTERM
 
-_DROP_ENV = frozenset({*REAL_KEY_VARS, "SPILLWAY_TOKEN", "SPILLWAY_DEPTH", CMD_ENV, CONTROL_ENV, *KNOB_ENVS,
+_DROP_ENV = frozenset({*REAL_KEY_VARS, "SPILLWAY_TOKEN", "SPILLWAY_DEPTH", CMD_ENV, IMPL_ENV, CONTROL_ENV, *KNOB_ENVS,
                        GRACEFUL_ENV, MCP_MAX_SESSIONS_ENV})
 _PROBLEM_RE = re.compile(r"Traceback|^ERROR\b|^CRITICAL\b|^SPILLWAY-LOG (ERROR|CRITICAL) |panicked at|"
                          r"^thread '.*' panicked")
@@ -157,15 +168,52 @@ def drain_expire_delay(grace: float) -> float:
     return max(grace * 0.5, grace - 1.5)
 
 
-def spillway_cmd() -> list[str]:
-    raw = os.environ.get(CMD_ENV, "")
-    if not raw.strip():
-        return [sys.executable, "-m", "spillway"]
-    cmd = shlex.split(raw)
+def _resolve_cmd(cmd: list[str]) -> list[str]:
     first = cmd[0]
     if (os.sep in first or (os.altsep and os.altsep in first)) and not os.path.isabs(first):
         cmd[0] = str((INVOCATION_DIR / first).resolve())
     return cmd
+
+
+def spillway_cmd() -> list[str]:
+    raw = os.environ.get(CMD_ENV, "")
+    if not raw.strip():
+        return [sys.executable, "-m", "spillway"]
+    return _resolve_cmd(shlex.split(raw))
+
+
+class ImplConfigError(RuntimeError):
+    """`SPILLWAY_IMPL` 與 `SPILLWAY_CMD` 的組合不合法(AM-9)。"""
+
+
+class EndpointNotImplemented(AssertionError):
+    """這個實作還沒有該端點(AM-9;差距清單預期失敗的具名例外,見 `tests.parity.gaps.XFAIL_RAISES`)。
+
+    繼承 AssertionError:behave 1.3 的 json 輸出對其他例外只有狀態 `error`、沒有例外內容,無法辨識型別。
+    """
+
+
+def require_implemented(response: httpx.Response) -> httpx.Response:
+    """404、405、501 時丟出 `EndpointNotImplemented`,其餘原樣回傳。訊息不含查詢字串。"""
+    if response.status_code in (404, 405, 501):
+        raise EndpointNotImplemented(
+            f"{response.request.method} {response.request.url.path} → {response.status_code}")
+    return response
+
+
+def spillway_impl() -> str:
+    """目前測試的實作名稱;設定不合法時丟出 `ImplConfigError`(不寫進 `spillway_cmd()`:測試會暫時改 `SPILLWAY_CMD`)。"""
+    raw = os.environ.get(IMPL_ENV, "").strip()
+    default_cmd = not os.environ.get(CMD_ENV, "").strip() or spillway_cmd() == [sys.executable, "-m", "spillway"]
+    if not raw:
+        if not default_cmd:
+            raise ImplConfigError(f"設了非預設的 {CMD_ENV} 卻沒設 {IMPL_ENV}(python 或 rust)")
+        return "python"
+    if raw not in IMPLS:
+        raise ImplConfigError(f"{IMPL_ENV} 必須是 {' 或 '.join(IMPLS)}:{raw!r}")
+    if raw == "rust" and default_cmd:
+        raise ImplConfigError(f"{IMPL_ENV}=rust 必須同時設定指向 Rust 版的 {CMD_ENV}")
+    return raw
 
 
 def _require_tmp(home: Path) -> Path:
@@ -346,7 +394,11 @@ class Serve:
         log_path: Path | None = None,
         allowed_unavailable_adapters: Iterable[str] = (),
         allow_stderr: Iterable[str] = (),
+        cmd: Sequence[str] | None = None,
     ) -> None:
+        if cmd is not None and not cmd:
+            raise ValueError("cmd 不可為空序列")
+        self.cmd = None if cmd is None else _resolve_cmd(list(cmd))
         self.home = _require_tmp(Path(home))
         self.home.mkdir(parents=True, exist_ok=True)
         self.control_enabled = control
@@ -403,7 +455,7 @@ class Serve:
     def start(self, *, wait_ready: bool = True, timeout: float = 60.0) -> Serve:
         assert self.proc is None or self.proc.poll() is not None, "serve 已在執行"
         self.proc = subprocess.Popen(
-            [*spillway_cmd(), "serve", "--port", str(self.port)], env=self.env(), cwd=str(self.home.parent),
+            [*(self.cmd or spillway_cmd()), "serve", "--port", str(self.port)], env=self.env(), cwd=str(self.home.parent),
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=True)
         secrets = _Secrets()

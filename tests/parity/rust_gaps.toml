@@ -1,0 +1,8 @@
+# Rust 版差距清單(CHG-20261108-01 T2;AM-9;決策 5)。Python 版不套用本清單。
+#
+# 每項:[[gap]] kind("pytest" 或 "behave")、id(實際收集到的 node ID,或 feature 路徑 + "::" + 情境名稱)、
+#       reason、batch(移植批次)、since(CHG 編號);選填 expect(失敗文字必須包含此子字串)、
+#       readd_chg(加回已刪除 id 時,列出此 id 並經決策 6 判定的 CHG)。
+# 清單以腳本依實際收集結果產生:python -m tests.parity.gaps render ...
+# strict:清單內的測試若通過,該次執行失敗,必須刪除該項。tests/parity/protected.toml 的測試不得列入。
+# 本筆(CHG-20261108-01)沒有 Rust 程式,清單為空;第一筆跑 Rust 閘的 CHG 依實際收集結果列入。

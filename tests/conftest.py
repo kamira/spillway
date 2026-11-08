@@ -35,9 +35,10 @@ from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install, saniti
 if TYPE_CHECKING:
     from spillway.clock import FakeClock
 
-pytest_plugins = ["tests.fakes.plugin", "tests.blackbox.plugin"]
+pytest_plugins = ["tests.fakes.plugin", "tests.blackbox.plugin", "tests.parity.gaps"]
 
-REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+                 "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
 def pytest_configure(config: pytest.Config) -> None:
