@@ -10,8 +10,9 @@
 # on_rust:項目不會自動被略過或標成預期失敗。
 #   not_applicable       Rust 下 deselect 並計數(tests/parity/gaps.py)。
 #   gap                  測試原樣跑;失敗時要在 tests/parity/rust_gaps.toml 登記,否則就是失敗。
-#   replace:<測試 id>    由替代測試承接跨實作行為;本測試在 Rust 下仍照常跑。替代測試 id 是預定名稱:本筆尚未存在,由設定檔驅動
-#                        adapter CHG 新增(可改名,同步本檔)。全部 replace 都有替代測試是決策 5「追齊」的條件。
+#   replace:<測試 id>    由替代測試承接跨實作行為;替代測試存在於本次收集結果時,本測試在 Rust 下 deselect 並計數(T2 仲裁 A2,依決策 5);
+#                        替代測試不存在時照常跑、照常失敗。替代測試 id 是預定名稱:本筆尚未存在,由設定檔驅動 adapter CHG 新增
+#                        (可改名,同步本檔),不得等於自己的 id。全部 replace 都有替代測試是決策 5「追齊」的條件。
 # 一致性:tests/blackbox/test_harness.py 斷言每個 [[entry]] 的 id 都在 artifacts/m5a/baseline/ 的基準清單裡;
 #         tests/parity/test_gaps_file.py 以實際收集結果比對,並驗證 on_rust。
 
@@ -72,7 +73,7 @@ id = "tests/acceptance/test_m4b_operation.py::test_m4b_operation"
 reason = "同上"
 scope = "步驟 ⑨(AC-21)"
 on_rust = "gap"
-on_rust_reason = "只有步驟 ⑨ 相依;其餘步驟是跨實作的操作驗收,不另開替代測試,Web UI 移植與設定檔夾具完成前列入差距清單"
+on_rust_reason = "只有步驟 ⑨ 相依;其餘步驟是跨實作的操作驗收,不另開替代測試,Web UI 移植與設定檔夾具完成前列入差距清單;退出條件:設定檔 adapter CHG 將本測試的 `adapter_paths` 夾具換成設定檔資料夾;只移植 CLI adapter(或 Web UI)不會通過"
 
 [[entry]]
 kind = "pytest"
@@ -87,7 +88,7 @@ id = "tests/blackbox/test_control_contract.py::test_cli_subprocess_does_not_inhe
 reason = "以 SPILLWAY_TEST_ADAPTER_PATHS 載入 Python 測試模組(harness 斷言它確實載入),證明這個旋鈕也從 CLI 子行程環境移除"
 scope = "SPILLWAY_TEST_ADAPTER_PATHS 那一個旋鈕"
 on_rust = "gap"
-on_rust_reason = "AM-9 明文暫緩到 CLI adapter 移植;只有 SPILLWAY_TEST_ADAPTER_PATHS 一個旋鈕相依,其餘旋鈕跨實作要驗"
+on_rust_reason = "AM-9 明文暫緩到 CLI adapter 移植;只有 SPILLWAY_TEST_ADAPTER_PATHS 一個旋鈕相依,其餘旋鈕跨實作要驗;退出條件:設定檔 adapter CHG 將本測試的 `adapter_paths` 夾具換成設定檔資料夾;只移植 CLI adapter(或 Web UI)不會通過"
 
 [[entry]]
 kind = "pytest"

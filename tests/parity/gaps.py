@@ -12,7 +12,8 @@
 - xfail 一律 strict,`raises` 只有 `XFAIL_RAISES`(serve 起不來是 RuntimeError 或 OSError,不算 xfail)。
 - 受保護清單與差距清單交集為空(`protected_hits`)。
 - 單向(`main_deleted_ids`、`one_way_violations`):`main` 歷史上出現過、目前 `main` 已沒有的 id 不得加回;例外是該項
-  `readd_chg` 指向的 CHG 文件逐字列出此 id(決策 6 判定)。`main` 上沒有此檔案視為空清單;沒有 `main` ref 則失敗。
+  `readd_chg` 指向的 CHG 文件有一行(去掉行首空白與 `- ` 後)以 `決策 6 判定:<id>:` 開頭、其後有非空理由(冒號是全形,`<id>`
+  逐字)。`main` 上沒有此檔案視為空清單;沒有 `main` ref 則失敗。
   「新增項只限新測試」無法從檔案判定(下一筆跑 Rust 閘的 CHG 可一次列入既有測試),由審查把關。
 - id 一律以實際收集結果比對(`collect_pytest_ids`、`collect_behave_ids`),不用凍結基準。
 
@@ -21,8 +22,15 @@
 
 本模組也是 pytest plugin(根 `tests/conftest.py` 的 `pytest_plugins`):`pytest_configure` 解析 `SPILLWAY_IMPL`,不合法是 usage
 error。只有 rust 時才讀清單(python 套用 0 項):清單內的 pytest 測試加 `xfail(strict=True, raises=XFAIL_RAISES)`,`expect` 不符或
-測試被 skip 都判失敗,受保護的 id 進清單時整個 run 是 usage error;`impl_dependent.toml` 的 `not_applicable` 項目 deselect 並在
-結尾計數,`replace`、`gap` 不做任何事(照常執行、照常失敗)。
+測試被 skip 都判失敗,受保護的 id 進清單時整個 run 是 usage error。
+
+預期失敗的階段規則(T2 仲裁 A1):setup 與 call 的 AssertionError 可算預期失敗(端點未移植時由 fixture 種資料失敗,就是差距本身),
+此時設 `_FAILED_KEY` 與 `_EXPECTED_FAIL_KEY`(`serve_factory` 走 `kill()` 並掃描 serve 崩潰);teardown 的失敗不算(秘密掃描、
+黑箱邊界斷言在這個階段),`RealCliFound` 在任何階段都不算,且不看 `expect`。
+
+`impl_dependent.toml` 在 rust 下:`not_applicable` 項目 deselect;`replace` 項目在替代測試存在於本次收集結果時 deselect(T2 仲裁 A2,
+依決策 5:這些原測試綁 Python 模組載入或 LiteLLM logger,替代測試存在後才解除);兩者結尾各自計數。替代測試不在本次收集結果中時原測試
+照常執行、照常失敗,`gap` 也一樣不做任何事。被 deselect 的 id 不得在受保護清單或差距清單中,否則整個 run 是 usage error。
 """
 from __future__ import annotations
 
@@ -43,9 +51,10 @@ import pytest
 
 from tests.blackbox.guard import REPO_ROOT, converted_roots
 from tests.blackbox.harness import EndpointNotImplemented, ImplConfigError, spillway_impl
-from tests.blackbox.plugin import _FAILED_KEY
+from tests.blackbox.plugin import _EXPECTED_FAIL_KEY, _FAILED_KEY
+from tests.fakes.cli_upstream.harness import RealCliFound
 
-__all__ = ["IMPL_DEPENDENT_FILE", "KINDS", "PROTECTED_FILE", "RUST_GAPS_FILE", "RUST_GAPS_RELPATH", "XFAIL_RAISES",
+__all__ = ["IMPL_DEPENDENT_FILE", "KINDS", "PROTECTED_FILE", "REAL_CLI_TEXT", "RUST_GAPS_FILE", "RUST_GAPS_RELPATH", "XFAIL_RAISES",
            "Gap", "GapFileError", "ImplDependent", "Protected", "collect_behave_ids", "collect_pytest_ids",
            "expand_protected", "id_matches", "load_gaps", "load_impl_dependent", "load_protected", "main_deleted_ids",
            "missing_replacements", "one_way_violations", "parse_on_rust", "protected_hits", "render_gaps",
@@ -57,6 +66,7 @@ PROTECTED_FILE = REPO_ROOT / "tests/parity/protected.toml"
 IMPL_DEPENDENT_FILE = REPO_ROOT / "tests/blackbox/impl_dependent.toml"
 XFAIL_RAISES: tuple[type[BaseException], ...] = (AssertionError, EndpointNotImplemented)
 KINDS = ("pytest", "behave")
+REAL_CLI_TEXT = ("PATH 上找到真實的", "PATH 中仍有不安全")     # tests/fakes/cli_upstream/harness.py 的 RealCliFound 固定文字
 BEHAVE_ROOT_CANDIDATES = ("tests/features", "tests/parity/features")
 
 _CHG_RE = re.compile(r"CHG-\d{8}-\d{2}")
@@ -207,6 +217,8 @@ def _impl_row(row: dict, kind: str, allowed: set[str], path: Path) -> ImplDepend
     if "on_rust" not in row:
         raise GapFileError(f"{path}: 缺 on_rust:{entry_id}")
     action, target = parse_on_rust(row["on_rust"])
+    if action == "replace" and target == entry_id:
+        raise GapFileError(f"{path}: replace 的替代測試不得是自己:{entry_id}")
     if action == "not_applicable":
         _text(row, "on_rust_reason", path)
     return ImplDependent(kind, entry_id, action, target)
@@ -262,13 +274,22 @@ def main_deleted_ids(repo: Path, ref: str = "main") -> set[str]:
     return seen - _ids_at(repo, ref)
 
 
+def _has_readd_ruling(text: str, gap_id: str) -> bool:
+    prefix = f"決策 6 判定:{gap_id}:"
+    for line in text.splitlines():
+        body = line.lstrip().removeprefix("- ")
+        if body.startswith(prefix) and body[len(prefix):].strip():
+            return True
+    return False
+
+
 def one_way_violations(current: Iterable[Gap], deleted: Collection[str], repo: Path) -> list[str]:
     bad = []
     for g in current:
         if g.id not in deleted:
             continue
         doc = repo / "sdlc_docs/changes" / f"{g.readd_chg}.md"
-        if g.readd_chg is None or not doc.is_file() or g.id not in doc.read_text(encoding="utf-8"):
+        if g.readd_chg is None or not doc.is_file() or not _has_readd_ruling(doc.read_text(encoding="utf-8"), g.id):
             bad.append(g.id)
     return sorted(bad)
 
@@ -329,7 +350,7 @@ def render_gaps(kind: str, ids: Iterable[str], collected: Collection[str], *, re
 # ---------------------------------------------------------------- pytest hook
 
 _IMPL_KEY = pytest.StashKey[str]()
-_APPLIED_KEY = pytest.StashKey[tuple[int, int]]()
+_APPLIED_KEY = pytest.StashKey[tuple[int, int, int]]()
 _GAP_KEY = pytest.StashKey[Gap]()
 
 
@@ -342,11 +363,25 @@ def pytest_configure(config: pytest.Config) -> None:
 
 def _apply_rust_lists(config: pytest.Config, items: list[pytest.Item]) -> None:
     gap_list = load_gaps(RUST_GAPS_FILE)
-    expanded, _ = expand_protected(load_protected(PROTECTED_FILE), {i.nodeid for i in items})
-    hits = protected_hits(gap_list, {i for v in expanded.values() for i in v})
+    nodeids = {i.nodeid for i in items}
+    expanded, _ = expand_protected(load_protected(PROTECTED_FILE), nodeids)
+    protected = {i for v in expanded.values() for i in v}
+    hits = protected_hits(gap_list, protected)
     if hits:
         raise GapFileError(f"受保護的測試不得列入差距清單:{hits}")
     by_id = {g.id: g for g in gap_list if g.kind == "pytest"}
+    entries = load_impl_dependent(IMPL_DEPENDENT_FILE)
+    not_applicable = [e for e in entries if e.action == "not_applicable"]
+    replaced = [e for e in entries if e.action == "replace" and any(id_matches(e.target, n) for n in nodeids)]
+    dropped_na = [i for i in items if any(e.covers(i.nodeid) for e in not_applicable)]
+    na_ids = {i.nodeid for i in dropped_na}
+    dropped_replaced = [i for i in items if i.nodeid not in na_ids and any(e.covers(i.nodeid) for e in replaced)]
+    dropped = [*dropped_na, *dropped_replaced]
+    dropped_ids = {i.nodeid for i in dropped}
+    if dropped_ids & protected:
+        raise GapFileError(f"受保護的測試不得被 deselect:{sorted(dropped_ids & protected)}")
+    if dropped_ids & set(by_id):
+        raise GapFileError(f"同一個 id 不得同時在差距清單與 deselect 清單:{sorted(dropped_ids & set(by_id))}")
     applied = 0
     for item in items:
         gap = by_id.get(item.nodeid)
@@ -354,13 +389,11 @@ def _apply_rust_lists(config: pytest.Config, items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.xfail(strict=True, raises=XFAIL_RAISES, reason=f"rust gap: {gap.batch}"))
             item.stash[_GAP_KEY] = gap
             applied += 1
-    entries = load_impl_dependent(IMPL_DEPENDENT_FILE)
-    dropped = [i for i in items if any(e.action == "not_applicable" and e.covers(i.nodeid) for e in entries)]
     if dropped:
         config.hook.pytest_deselected(items=dropped)
         gone = set(map(id, dropped))
         items[:] = [i for i in items if id(i) not in gone]
-    config.stash[_APPLIED_KEY] = (applied, len(dropped))
+    config.stash[_APPLIED_KEY] = (applied, len(dropped_na), len(dropped_replaced))
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -379,19 +412,23 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]) -> 
     gap = item.stash.get(_GAP_KEY, None)
     if gap is None or not rep.skipped:
         return
-    if rep.when == "call" and hasattr(rep, "wasxfail"):
-        item.stash[_FAILED_KEY] = True     # 預期失敗比照失敗:serve_factory 收尾時 kill(),不做 stop() 的斷言
-    text = "" if call.excinfo is None else str(call.excinfo.value)
-    if not hasattr(rep, "wasxfail") or (gap.expect is not None and gap.expect not in text):
-        rep.outcome = "failed"       # 被 skip 或失敗特徵不符:這不是登記的那個差距
-        if hasattr(rep, "wasxfail"):
+    expected = hasattr(rep, "wasxfail")
+    if expected and rep.when in ("setup", "call"):
+        item.stash[_FAILED_KEY] = True           # 預期失敗比照失敗:serve_factory 收尾時 kill(),不做 stop() 的斷言
+        item.stash[_EXPECTED_FAIL_KEY] = True    # 但要掃描 serve 崩潰
+    exc = None if call.excinfo is None else call.excinfo.value
+    never_expected = expected and (rep.when == "teardown" or isinstance(exc, RealCliFound))
+    if never_expected or not expected or (gap.expect is not None and gap.expect not in str(exc or "")):
+        rep.outcome = "failed"       # 收尾失敗、真實 CLI 護欄、被 skip 或失敗特徵不符:這不是登記的那個差距
+        if expected:
             del rep.wasxfail
 
 
 def pytest_terminal_summary(terminalreporter: Any, config: pytest.Config) -> None:
     if config.stash.get(_IMPL_KEY, None) == "rust":
-        applied, dropped = config.stash.get(_APPLIED_KEY, (0, 0))
-        terminalreporter.write_line(f"spillway impl=rust gaps applied={applied} not_applicable deselected={dropped}")
+        applied, dropped, replaced = config.stash.get(_APPLIED_KEY, (0, 0, 0))
+        terminalreporter.write_line(f"spillway impl=rust gaps applied={applied} not_applicable deselected={dropped} "
+                                    f"replaced deselected={replaced}")
 
 
 def main(argv: list[str] | None = None) -> int:

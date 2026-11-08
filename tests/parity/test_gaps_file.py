@@ -6,6 +6,8 @@
 - L2:以夾具差距清單跑內層 pytest:清單內失敗判 xfail、清單內通過判失敗(strict)、`raises` 以外的例外判失敗、
   serve 起不來判失敗;`SPILLWAY_IMPL=python` 套用 0 項;非預設 `SPILLWAY_CMD` 未設 `SPILLWAY_IMPL` 時失敗。
 - L4:`behave_gate.py` 以**真實 behave 的 json 輸出**當正反樣本判定結束碼。
+- T2 仲裁 A1、A2、B1–B6、C7、C8 的修正各有內層 pytest 或 behave_gate 測試(階段規則、replace 的 deselect、skip 的列出、
+  feature hook、受保護清單、serve 崩潰掃描、readd 格式、退出條件文字、重名情境、清單互斥)。
 
 內層 pytest 的夾具清單由內層 conftest 改寫 `tests.parity.gaps` 的模組常數,正式路徑沒有環境變數或命令列開關可以換掉清單。
 """
@@ -89,12 +91,22 @@ def test_impl_dependent_every_entry_has_on_rust_and_exists(collected):
     assert "tests/blackbox/test_harness.py" in ids
 
 
-def test_impl_dependent_gap_choices_are_not_protected(collected):
+def test_impl_dependent_deselectable_entries_are_not_protected(collected):
     expanded, _ = gaps.expand_protected(gaps.load_protected(gaps.PROTECTED_FILE), collected["pytest"])
     hits = {i for v in expanded.values() for i in v}
     bad = [e.id for e in gaps.load_impl_dependent(gaps.IMPL_DEPENDENT_FILE)
-           if e.action == "not_applicable" and not e.is_file and any(gaps.id_matches(e.id, h) for h in hits)]
+           if e.action in ("not_applicable", "replace") and any(e.covers(h) for h in hits)]
     assert not bad, bad
+
+
+@pytest.mark.parametrize("entry_id", [
+    "tests/blackbox/test_control_contract.py::test_cli_subprocess_does_not_inherit_knobs",
+    "tests/acceptance/test_m4b_operation.py::test_m4b_operation",
+])
+def test_adapter_paths_gaps_state_their_exit_condition(entry_id):
+    rows = tomllib.loads(gaps.IMPL_DEPENDENT_FILE.read_text(encoding="utf-8"))["entry"]
+    row = next(r for r in rows if r["id"] == entry_id)
+    assert row["on_rust"] == "gap" and "設定檔 adapter CHG" in row["on_rust_reason"]
 
 
 def test_one_way_rule_on_real_repo():
@@ -180,6 +192,13 @@ def test_impl_dependent_validation(tmp_path):
             gaps.load_impl_dependent(p)
     p.write_text(_impl_toml("not_applicable", 'on_rust_reason = "x"\n'), encoding="utf-8")
     assert gaps.load_impl_dependent(p)[0].action == "not_applicable"
+
+
+def test_replace_target_must_differ_from_own_id(tmp_path):
+    p = tmp_path / "i.toml"
+    p.write_text(_impl_toml("replace:a::b"), encoding="utf-8")
+    with pytest.raises(gaps.GapFileError):
+        gaps.load_impl_dependent(p)
 
 
 def test_missing_replacements_defines_catch_up(tmp_path):
@@ -270,10 +289,17 @@ def test_one_way_readd_needs_chg_that_lists_the_id(git_repo, tmp_path):
     assert gaps.one_way_violations(current, deleted, git_repo) == ["a::b"]        # CHG 檔不存在
     chg = git_repo / "sdlc_docs/changes/CHG-20270101-01.md"
     chg.parent.mkdir(parents=True)
-    chg.write_text("決策 6 判定後加回其他項目\n", encoding="utf-8")
-    assert gaps.one_way_violations(current, deleted, git_repo) == ["a::b"]        # CHG 沒列這個 id
-    chg.write_text("決策 6 判定:a::b 因規格修訂加回\n", encoding="utf-8")
-    assert gaps.one_way_violations(current, deleted, git_repo) == []
+    for text in ("決策 6 判定後加回其他項目\n",           # 沒列這個 id
+                 "本筆刪除 a::b,移植完成\n",              # 只提到 id
+                 "決策 6 判定:a::c:規格修訂\n",          # 別的 id
+                 "決策 6 判定:a::b:   \n",               # 理由為空
+                 "決策 6 判定:a::bb:規格修訂\n",         # id 必須逐字
+                 "說明:決策 6 判定:a::b:規格修訂\n"):    # 必須在行首
+        chg.write_text(text, encoding="utf-8")
+        assert gaps.one_way_violations(current, deleted, git_repo) == ["a::b"], text
+    for text in ("決策 6 判定:a::b:規格修訂,Rust 版行為待定\n", "  - 決策 6 判定:a::b:規格修訂\n"):
+        chg.write_text(text, encoding="utf-8")
+        assert gaps.one_way_violations(current, deleted, git_repo) == [], text
 
 
 # ================================================================ harness:實作辨識、Serve(cmd=...)
@@ -527,7 +553,7 @@ def test_ok():
 """
 
 
-def test_inner_on_rust_only_not_applicable_is_deselected(tmp_path):
+def test_inner_replace_without_target_runs_only_not_applicable_is_deselected(tmp_path):
     entries = (_impl_entry("test_na", "not_applicable", 'on_rust_reason = "x"\n')
                + _impl_entry("test_replace", "replace:test_sample.py::test_future")
                + _impl_entry("test_gap_choice", "gap"))
@@ -551,6 +577,145 @@ def test_inner_not_applicable_file_entry_deselects_the_whole_file(tmp_path):
     p = _inner(tmp_path, "", impl_dependent=entries, sample=_IMPL_SAMPLE)
     assert p.returncode == pytest.ExitCode.NO_TESTS_COLLECTED, p.stdout + p.stderr
     assert "4 deselected" in p.stdout
+
+
+def test_inner_replace_with_existing_target_deselects_the_original(tmp_path):
+    entries = _impl_entry("test_replace", "replace:test_sample.py::test_new")
+    sample = "def test_replace():\n    assert 1 == 2\ndef test_new():\n    pass\n"
+    p = _inner(tmp_path, "", impl_dependent=entries, sample=sample)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert _outcome(p, "test_new") == "PASSED" and "test_replace" not in p.stdout
+    assert "replaced deselected=1" in p.stdout and "not_applicable deselected=0" in p.stdout
+
+
+def test_inner_replace_is_kept_under_python(tmp_path):
+    entries = _impl_entry("test_replace", "replace:test_sample.py::test_new")
+    sample = "def test_replace():\n    assert 1 == 2\ndef test_new():\n    pass\n"
+    p = _inner(tmp_path, "", impl="python", cmd=None, impl_dependent=entries, sample=sample)
+    assert _outcome(p, "test_replace") == "FAILED" and "deselected" not in p.stdout
+
+
+_NA_FILE = '[[file_entry]]\nid = "test_sample.py"\nreason = "r"\non_rust = "not_applicable"\non_rust_reason = "x"\n'
+
+
+@pytest.mark.parametrize("entries", [
+    _NA_FILE,
+    _impl_entry("test_protected_x", "not_applicable", 'on_rust_reason = "x"\n'),
+    _impl_entry("test_protected_x", "replace:test_sample.py::test_new"),
+], ids=["file_entry", "not_applicable", "replace"])
+def test_inner_protected_test_cannot_be_deselected(tmp_path, entries):
+    sample = "def test_protected_x():\n    assert 1 == 2\ndef test_new():\n    pass\n"
+    p = _inner(tmp_path, "", impl_dependent=entries, sample=sample)
+    assert p.returncode == pytest.ExitCode.USAGE_ERROR, p.stdout + p.stderr
+    assert "test_sample.py::test_protected_x" in p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("entries", [
+    _impl_entry("test_listed", "not_applicable", 'on_rust_reason = "x"\n'),
+    _impl_entry("test_listed", "replace:test_sample.py::test_new"),
+], ids=["not_applicable", "replace"])
+def test_inner_gap_and_deselect_lists_are_exclusive(tmp_path, entries):
+    sample = "def test_listed():\n    assert 1 == 2\ndef test_new():\n    pass\n"
+    p = _inner(tmp_path, _gap_toml("test_sample.py::test_listed"), impl_dependent=entries, sample=sample)
+    assert p.returncode == pytest.ExitCode.USAGE_ERROR, p.stdout + p.stderr
+    assert "test_sample.py::test_listed" in p.stdout + p.stderr
+
+
+# ---------------------------------------------------------------- 階段規則(T2 仲裁 A1)
+
+
+def test_inner_teardown_assert_of_listed_test_is_not_xfail(tmp_path):
+    sample = """
+import pytest
+@pytest.fixture(scope="module", autouse=True)
+def module_scan():
+    yield
+    assert False, "secret-scan"
+def test_fails():
+    assert 1 == 2
+"""
+    p = _inner(tmp_path, _gap_toml("test_sample.py::test_fails"), sample=sample)
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "ERROR at teardown" in p.stdout
+
+
+def test_inner_setup_assert_of_listed_test_is_xfail_and_sets_failed_key(tmp_path):
+    sample = """
+from pathlib import Path
+import pytest
+from tests.blackbox.plugin import _FAILED_KEY
+@pytest.fixture
+def report_flag(request):
+    yield
+    Path("flag").write_text(str(request.node.stash.get(_FAILED_KEY, False)))
+@pytest.fixture
+def seeded(report_flag):
+    assert 1 == 2, "endpoint not ported"
+def test_fails(seeded):
+    pass
+"""
+    p = _inner(tmp_path, _gap_toml("test_sample.py::test_fails"), sample=sample)
+    assert p.returncode == 0 and _outcome(p, "test_fails") == "XFAIL", p.stdout + p.stderr
+    assert (tmp_path / "inner/flag").read_text() == "True"
+
+
+def test_inner_real_cli_guard_is_never_xfail(tmp_path):
+    sample = """
+import pytest
+from tests.fakes.cli_upstream.harness import RealCliFound
+@pytest.fixture
+def guarded():
+    raise RealCliFound("PATH 上找到真實的 claude:/x")
+def test_body():
+    raise RealCliFound("PATH 上找到真實的 claude:/x")
+def test_fixture(guarded):
+    pass
+"""
+    listed = _gap_toml("test_sample.py::test_body", "test_sample.py::test_fixture", extra='expect = "PATH"\n')
+    p = _inner(tmp_path, listed, sample=sample)
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert _outcome(p, "test_body") == "FAILED" and _outcome(p, "test_fixture") == "ERROR", p.stdout
+
+
+# ---------------------------------------------------------------- serve 崩潰掃描(T2 仲裁 B4)
+
+_FAKE_SERVE = r"""
+import sys
+from http.server import BaseHTTPRequestHandler
+from socketserver import TCPServer
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+    def log_message(self, *a):
+        pass
+print(STDERR_LINE, file=sys.stderr, flush=True)
+TCPServer(("127.0.0.1", int(sys.argv[sys.argv.index("--port") + 1])), H).serve_forever()
+"""
+
+
+def _crash_sample(stderr_line: str) -> str:
+    code = _FAKE_SERVE.replace("STDERR_LINE", repr(stderr_line))
+    return f"""
+import sys
+CODE = {code!r}
+def test_fails(serve_factory):
+    serve_factory(cmd=[sys.executable, "-c", CODE], control=False)
+    assert 1 == 2
+"""
+
+
+def test_inner_expected_failure_with_serve_panic_is_error(tmp_path):
+    p = _inner(tmp_path, _gap_toml("test_sample.py::test_fails"), sample=_crash_sample("panicked at src/x.rs:1:1"))
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "ERROR at teardown" in p.stdout
+    assert "src/x.rs" not in p.stdout     # 只報行數,不轉印內容
+
+
+def test_inner_expected_failure_without_serve_panic_stays_xfail(tmp_path):
+    p = _inner(tmp_path, _gap_toml("test_sample.py::test_fails"), sample=_crash_sample("listening"))
+    assert p.returncode == 0 and _outcome(p, "test_fails") == "XFAIL", p.stdout + p.stderr
 
 
 # ================================================================ L4:behave_gate(真實 behave 輸出)
@@ -620,7 +785,7 @@ def behave_sample(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def _gate(root: Path, monkeypatch: pytest.MonkeyPatch, gap_text: str, *, impl: str = "rust",
-          report: str = "report.json") -> int:
+          report: str = "report.json", impl_text: str = "") -> int:
     monkeypatch.chdir(root)
     monkeypatch.setenv("PYTHONPATH", str(REPO))
     if impl == "rust":
@@ -631,7 +796,9 @@ def _gate(root: Path, monkeypatch: pytest.MonkeyPatch, gap_text: str, *, impl: s
         monkeypatch.delenv("SPILLWAY_CMD", raising=False)
     g = root / "fixture-gaps.toml"
     g.write_text(gap_text, encoding="utf-8")
-    return behave_gate.main([report, "--root", "features"], gaps_file=g)
+    i = root / "fixture-impl.toml"
+    i.write_text(impl_text, encoding="utf-8")
+    return behave_gate.main([report, "--root", "features"], gaps_file=g, impl_file=i)
 
 
 def _behave_gaps(*names: str, extra: str = "") -> str:
@@ -746,6 +913,140 @@ def test_gate_cli_exit_codes_and_no_error_text(behave_sample, tmp_path):
                    capture_output=True, text=True, timeout=120, check=True)
     good = _gate_cli(root, "report.json")
     assert good.returncode == 0, good.stdout + good.stderr
+
+
+# ---------------------------------------------------------------- T2 仲裁 A1、A2、B1、B2、C7、C8
+
+
+@pytest.mark.parametrize("text", gaps.REAL_CLI_TEXT)
+def test_evaluate_real_cli_guard_message_is_not_an_expected_failure(text):
+    sid = "features/s.feature::x"
+    gap = gaps.Gap("behave", sid, "r", "b", "CHG-20261108-01")
+    problems = behave_gate.evaluate({sid: behave_gate.Outcome("failed", f"前綴 {text} /secret/path")}, [gap], {sid})
+    assert len(problems) == 1 and sid in problems[0] and "/secret/path" not in problems[0]
+
+
+def test_real_cli_text_matches_the_harness():
+    source = (REPO / "tests/fakes/cli_upstream/harness.py").read_text(encoding="utf-8")
+    assert len(gaps.REAL_CLI_TEXT) == 2 and all(t in source for t in gaps.REAL_CLI_TEXT)
+
+
+def _behave_entry(name: str, on_rust: str, extra: str = "") -> str:
+    return f'[[entry]]\nkind = "behave"\nid = "{_S}{name}"\nreason = "r"\non_rust = "{on_rust}"\n{extra}\n'
+
+
+_KEEP_FAIL = ("通過", "斷言失敗")
+
+
+def test_gate_replace_with_existing_target_is_removed(behave_sample, tmp_path, monkeypatch, capsys):
+    _dry_expected(monkeypatch, {_S + n for n in _KEEP_FAIL})
+    rc = _gate(behave_sample, monkeypatch, "", report=_only_report(behave_sample, tmp_path, _KEEP_FAIL),
+               impl_text=_behave_entry("斷言失敗", f"replace:{_S}通過"))
+    assert rc == 0
+    assert "replaced deselected=1" in capsys.readouterr().out
+
+
+def test_gate_replace_without_target_still_fails(behave_sample, tmp_path, monkeypatch):
+    _dry_expected(monkeypatch, {_S + n for n in _KEEP_FAIL})
+    assert _gate(behave_sample, monkeypatch, "", report=_only_report(behave_sample, tmp_path, _KEEP_FAIL),
+                 impl_text=_behave_entry("斷言失敗", f"replace:{_S}還沒有的情境")) == 1
+
+
+def test_gate_not_applicable_is_removed_from_outcomes_and_expected(behave_sample, tmp_path, monkeypatch, capsys):
+    _dry_expected(monkeypatch, {_S + n for n in (*_KEEP_FAIL, "報告裡沒有的情境")})
+    rc = _gate(behave_sample, monkeypatch, "", report=_only_report(behave_sample, tmp_path, _KEEP_FAIL),
+               impl_text=_behave_entry("斷言失敗", "not_applicable", 'on_rust_reason = "x"\n')
+               + _behave_entry("報告裡沒有的情境", "not_applicable", 'on_rust_reason = "x"\n'))
+    assert rc == 0
+    assert "not_applicable deselected=1" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("on_rust, extra", [("not_applicable", 'on_rust_reason = "x"\n'), (f"replace:{_S}通過", "")])
+def test_gate_python_ignores_impl_dependent(behave_sample, tmp_path, monkeypatch, on_rust, extra):
+    _dry_expected(monkeypatch, {_S + n for n in _KEEP_FAIL})
+    assert _gate(behave_sample, monkeypatch, "", impl="python", report=_only_report(behave_sample, tmp_path, _KEEP_FAIL),
+                 impl_text=_behave_entry("斷言失敗", on_rust, extra)) == 1
+
+
+@pytest.mark.parametrize("on_rust, extra", [("not_applicable", 'on_rust_reason = "x"\n'), (f"replace:{_S}通過", "")])
+def test_gate_gap_and_deselect_lists_are_exclusive(behave_sample, tmp_path, monkeypatch, on_rust, extra):
+    _dry_expected(monkeypatch, {_S + n for n in _KEEP_FAIL})
+    assert _gate(behave_sample, monkeypatch, _behave_gaps("斷言失敗"),
+                 report=_only_report(behave_sample, tmp_path, _KEEP_FAIL),
+                 impl_text=_behave_entry("斷言失敗", on_rust, extra)) == 2
+
+
+def _with_statuses(root: Path, tmp_path: Path, statuses: dict[str, str]) -> str:
+    """只留 `statuses` 內的情境,並把狀態改成指定值。"""
+    data = json.loads((root / "report.json").read_text(encoding="utf-8"))
+    for feat in data:
+        feat["elements"] = [{**e, "status": statuses[e["name"]]} for e in feat["elements"] if e["name"] in statuses]
+    out = tmp_path / "statuses.json"
+    out.write_text(json.dumps(data), encoding="utf-8")
+    return str(out)
+
+
+def test_gate_all_skipped_is_invalid(behave_sample, tmp_path, monkeypatch):
+    statuses = {"通過": "skipped", "斷言失敗": "skipped"}
+    _dry_expected(monkeypatch, {_S + n for n in statuses})
+    assert _gate(behave_sample, monkeypatch, "", report=_with_statuses(behave_sample, tmp_path, statuses)) == 2
+
+
+def test_gate_all_skipped_after_deselect_is_invalid(behave_sample, tmp_path, monkeypatch):
+    statuses = {"通過": "skipped", "斷言失敗": "failed"}
+    _dry_expected(monkeypatch, {_S + n for n in statuses})
+    assert _gate(behave_sample, monkeypatch, "", report=_with_statuses(behave_sample, tmp_path, statuses),
+                 impl_text=_behave_entry("斷言失敗", "not_applicable", 'on_rust_reason = "x"\n')) == 2
+
+
+def test_gate_partial_skip_passes_and_lists_each_id(behave_sample, tmp_path, monkeypatch, capsys):
+    statuses = {"通過": "passed", "斷言失敗": "skipped"}
+    _dry_expected(monkeypatch, {_S + n for n in statuses})
+    assert _gate(behave_sample, monkeypatch, "", report=_with_statuses(behave_sample, tmp_path, statuses)) == 0
+    assert f"skipped:{_S}斷言失敗" in capsys.readouterr().out.splitlines()
+
+
+@pytest.fixture(scope="module")
+def behave_feature_hook_sample(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    root = tmp_path_factory.mktemp("behave-feature-hook")
+    (root / "features/steps").mkdir(parents=True)
+    (root / "features/p.feature").write_text(_PASS_ONLY_FEATURE, encoding="utf-8")
+    (root / "features/steps/s.py").write_text('from behave import given\n@given("ok")\ndef s(context):\n    pass\n',
+                                              encoding="utf-8")
+    (root / "features/environment.py").write_text('def after_feature(context, feature):\n    assert False, "boom"\n',
+                                                  encoding="utf-8")
+    subprocess.run([sys.executable, "-m", "behave", "-f", "json", "-o", "report.json", "features"], cwd=root,
+                   capture_output=True, text=True, timeout=120)
+    return root
+
+
+@pytest.mark.parametrize("impl", ["python", "rust"])
+def test_gate_feature_hook_failure_fails(behave_feature_hook_sample, monkeypatch, capsys, impl):
+    assert _gate(behave_feature_hook_sample, monkeypatch, "", impl=impl) == 1
+    assert "feature hook 失敗:features/p.feature(hook_error)" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("status, n", [("hook_error", 1), ("cleanup_error", 1), ("passed", 0), ("failed", 0)])
+def test_feature_problems_statuses(status, n):
+    assert len(behave_gate.feature_problems([{"location": "f.feature:1", "status": status, "elements": []}])) == n
+
+
+_DUP_REPORT = [{"location": "features/s.feature:1", "elements": [
+    {"type": "scenario", "name": "同名", "status": "failed", "steps": []},
+    {"type": "scenario", "name": "同名", "status": "passed", "steps": []},
+]}]
+
+
+def test_duplicate_scenario_is_a_report_error():
+    with pytest.raises(behave_gate.ReportError):
+        behave_gate.scenario_outcomes(_DUP_REPORT)
+
+
+def test_gate_duplicate_scenario_exits_2(behave_sample, tmp_path, monkeypatch):
+    _dry_expected(monkeypatch, {"features/s.feature::同名"})
+    p = tmp_path / "dup.json"
+    p.write_text(json.dumps(_DUP_REPORT), encoding="utf-8")
+    assert _gate(behave_sample, monkeypatch, "", report=str(p)) == 2
 
 
 def test_real_behave_ids_are_feature_path_and_name(collected):
