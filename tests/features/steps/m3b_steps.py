@@ -311,7 +311,8 @@ def step_stdio_error(context, code):
     out = context.m3b_stdio
     assert out.init is None and out.error is not None, (out.init, out.error)
     assert isinstance(out.error.data, dict) and out.error.data.get("code") == code, out.error
-    assert code in out.stderr, redact_tokens(out.stderr, _secrets(context))
+    # spec 8.1.2:被閘道拒絕時 data 帶 http_status(403 與 recursion_blocked 成對);stderr 文字不屬契約(14.3.1,驗收修正 V1)
+    assert out.error.data.get("http_status") == 403, out.error
     leaked = context.m3b_token in out.stderr
     assert not leaked, "mcp-stdio stderr 含 token 明文"
 

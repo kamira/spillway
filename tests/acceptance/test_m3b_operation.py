@@ -471,7 +471,8 @@ async def test_m3b_operation_stdio(op: Op):
                "returncode": ok.returncode},
         "depth_rejected": {"error_data": denied.error.data if denied.error else None,
                            "returncode": denied.returncode,
-                           "stderr_has_code": "recursion_blocked" in denied.stderr},
+                           # spec 8.1.2 的 http_status;stderr 文字不屬契約(14.3.1,驗收修正 V1)
+                           "http_status": (denied.error.data or {}).get("http_status") if denied.error else None},
         "bridge_created_data_dir": bridge_home.exists(),
         "stderr_token_free": all(t not in ok.stderr + denied.stderr for t in op.tokens),
     }
@@ -480,7 +481,7 @@ async def test_m3b_operation_stdio(op: Op):
     assert denied.init is None and denied.error is not None and isinstance(denied.error.data, dict), \
         (denied.error, denied.returncode)
     assert denied.error.data["code"] == "recursion_blocked", denied.error
-    assert obs["depth_rejected"]["returncode"] == 3 and obs["depth_rejected"]["stderr_has_code"], obs
+    assert obs["depth_rejected"]["returncode"] == 3 and obs["depth_rejected"]["http_status"] == 403, obs
     assert obs["bridge_created_data_dir"] is False and obs["stderr_token_free"]
     obs["token_leaks"] = op.assert_no_token_leak()
     record("stdio", obs)

@@ -35,7 +35,8 @@
   斷言:結束碼符合 spec 14.1(SIGTERM → `-15`、SIGINT → `130`;行程已先結束時比對 `expect_code`);
   stderr 沒有 `Traceback`、沒有 ERROR/CRITICAL 行(`stderr_problems`;`allow_stderr` 與建構時的
   `allow_stderr` 為例外);未在 `timeout`(預設停機上限 + 20 秒)內結束時 SIGKILL 並失敗。冪等。
-- `kill()`:不做任何斷言,SIGKILL 行程群組(測試已失敗時的收尾)。
+- `kill()`:不做任何斷言(測試已失敗時的收尾):先對行程群組送 SIGTERM,讓 ② 型包裝程式轉送給另一個群組
+  的實作,至多等 `KILL_GRACE` 秒,仍未結束再 SIGKILL 群組(驗收修正 V2)。
 - `signal(sig)`、`wait_exit(timeout) -> 經過秒數`、`returncode`。
 - 位址與 HTTP:`port`、`base_url`、`url(path)`、`mcp_url(group)`、`auth_headers(token=None)`、
   `http(**kw)`(同步 `httpx.Client`,`trust_env=False`)、`async_http(**kw)`、`request(method, path, **kw)`。
@@ -60,7 +61,7 @@
 
 就緒:開啟控制介面時,先在 stderr 看到 14.3.3 的警告行(spec 規定在開始監聽前寫出)才開始輪詢
 `/api/settings/context`,避免連到恰好佔用同一埠的其他伺服器。存活中的 `Serve` 登記在模組層的 `_LIVE`,
-行程結束時(atexit)對其行程群組 SIGKILL;測試行程本身被 SIGKILL 時無法處理(已知限制)。
+行程結束時(atexit)對其行程群組先 SIGTERM、逾時再 SIGKILL(同 `kill()`);測試行程本身被 SIGKILL 時無法處理(已知限制)。
 
 stderr 問題掃描(`stderr_problems`):`SPILLWAY-LOG` 行以外的字樣(Python 的 `Traceback`、uvicorn 的
 `ERROR:`、Rust 的 `panicked at`)是盡力而為,不是契約(spec 14.3.1)。
@@ -298,11 +299,24 @@ def _group_alive(pgid: int) -> bool:
     return True
 
 
+# kill() 與 atexit 收尾:SIGTERM 後等待的秒數。② 型包裝程式無法轉送 SIGKILL,直接 SIGKILL 只會殺掉包裝程式
+# 所在的群組,另一個群組的實作成為孤兒(驗收修正 V2);先 SIGTERM 讓包裝程式轉送,逾時才 SIGKILL。
+KILL_GRACE = 10.0
+
+
+def _terminate_group(proc: subprocess.Popen, grace: float = KILL_GRACE) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, _signal.SIGTERM)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(grace)
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, _signal.SIGKILL)   # 群組內的子孫行程一併
+
+
 def _kill_live() -> None:
     for s in list(_LIVE):
-        if s.proc is not None:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(s.proc.pid, _signal.SIGKILL)
+        if s.proc is not None and s.proc.poll() is None:
+            _terminate_group(s.proc)
     _LIVE.clear()
 
 
@@ -501,8 +515,7 @@ class Serve:
 
     def kill(self) -> None:
         if self.proc is not None:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(self.proc.pid, _signal.SIGKILL)   # 群組內的子孫行程一併
+            _terminate_group(self.proc)
             with contextlib.suppress(Exception):
                 self.proc.wait(15)
         self._finish()

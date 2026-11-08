@@ -233,7 +233,7 @@ SPILLWAY_CMD="/path/to/spillway" .venv/bin/python -m pytest -q tests/acceptance 
 1. 以 exec 取代自己成為實作；
 2. 讓實作另開行程群組、轉送 SIGINT/SIGTERM，在實作結束後以相同結束狀態結束——實作以訊號結束時，重設該訊號為預設處置後對自己重送同一訊號（不可改成 `exit 128+n`）。
 
-包裝程式與實作的所有子孫行程在停機後不得殘留，也不得繼續持有 stderr；harness 的 `stop()` 會檢查這兩點（同段文字也寫在 `tests/blackbox/harness.py` 的 docstring）。
+包裝程式與實作的所有子孫行程在停機後不得殘留，也不得繼續持有 stderr；harness 的 `stop()` 會檢查這兩點（同段文字也寫在 `tests/blackbox/harness.py` 的 docstring）。測試失敗時的收尾 `kill()` 先送 SIGTERM（② 型包裝程式要轉送），10 秒內未結束才 SIGKILL；包裝程式在 10 秒內沒有結束時，另一個群組的實作仍可能殘留。
 
 ### 本機閘
 

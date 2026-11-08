@@ -361,7 +361,7 @@ def test_kill_live_registry(tmp_path):
     assert s in harness._LIVE
     harness._kill_live()
     s.proc.wait(15)
-    assert s.returncode == -signal.SIGKILL and s not in harness._LIVE
+    assert s.returncode == -signal.SIGTERM and s not in harness._LIVE   # 先 SIGTERM(驗收修正 V2)
     s.kill()
 
 
@@ -380,7 +380,7 @@ def test_ready_waits_for_control_warning_line(tmp_path, monkeypatch):
     s = Serve(tmp_path / "home")
     with pytest.raises(RuntimeError, match="未在 3 秒內就緒"):
         s.start(timeout=3)
-    assert s.returncode == -signal.SIGKILL
+    assert s.returncode == -signal.SIGTERM   # kill() 先 SIGTERM(驗收修正 V2)
     s_off = Serve(tmp_path / "home2", control=False)   # 未開啟控制介面時不要求警告行
     s_off.start(timeout=10)
     s_off.kill()
@@ -406,7 +406,23 @@ def test_stderr_problems():
 def test_kill_on_failure_has_no_assertions(tmp_path):
     s = Serve(tmp_path / "home").start()
     s.kill()
-    assert s.returncode == -signal.SIGKILL
+    assert s.returncode == -signal.SIGTERM   # 先 SIGTERM(驗收修正 V2);實作即時結束,不必 SIGKILL
+
+
+def test_kill_reaches_impl_behind_forwarding_wrapper(tmp_path, monkeypatch):
+    """驗收修正 V2:② 型包裝程式讓實作另開群組;kill() 先 SIGTERM 讓包裝程式轉送,實作不得成為孤兒。"""
+    pidfile = tmp_path / "impl.pid"
+    monkeypatch.setenv("SPILLWAY_CMD", _py_wrapper(tmp_path, "fwdkill", _FORWARD.replace(
+        "rc = child.wait()\n",
+        f"open({str(pidfile)!r}, 'w').write(str(child.pid))\nrc = child.wait()\n") + _REEMIT))
+    s = Serve(tmp_path / "home").start()
+    impl = int(pidfile.read_text())
+    assert impl != s.proc.pid and harness._group_alive(impl)
+    s.kill()
+    deadline = time.monotonic() + 5
+    while harness._group_alive(impl) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not harness._group_alive(impl), "包裝程式後的實作在 kill() 後仍存活"
 
 
 # ================================================================ 子行程 PATH、唯讀資料庫
