@@ -36,6 +36,19 @@ serve:
   force_exit 的 `_cancel_inflight` 也取消 `app.state.drain_tasks`。寬限小於約 1.2 秒(僅測試用範圍)時,
   uvicorn 的期滿取消可能早於 drain 收尾。
 - uvicorn access log 保留(只有方法、路徑、狀態碼,不含 body)。
+- 測試控制介面(CHG-20261107-03 決策 5、6;spec「測試控制介面(僅測試模式)」「行程契約」):**只有**
+  `_run_server` 讀 `SPILLWAY_TEST_CONTROL` 與啟動期旋鈕(`TEST_KNOB_ENVS`),再以明確參數傳給
+  `create_app(test_control=True, start_time=…, rng_seed=…, extra_adapter_paths=…,
+  retention_poll_seconds=…, retention_stepped=…, issue_token=…)`。
+  - `SPILLWAY_TEST_CONTROL=1`(只認字面 `1`)時 `SPILLWAY_HOME` 必須明確設定,且解析後不等於
+    `platformdirs.user_data_dir("spillway")`;否則印錯誤、回 `EXIT_USAGE`(2),不建資料目錄、不開資料庫。
+    旋鈕的值不合法時同樣回 2(訊息只含變數名,不含值)。通過後在 stderr 印一行 `TEST_CONTROL_WARNING`。
+  - 未開啟時旋鈕一律不讀;有設定的旋鈕在 stderr 印一行 `TEST_KNOBS_IGNORED` + 名稱(以「, 」相接),不印值。
+    只比對 `TEST_KNOB_ENVS` 列舉的名稱(`SPILLWAY_TEST_*` 不是保留前綴);`SPILLWAY_TEST_GRACEFUL_TIMEOUT`、
+    `SPILLWAY_TEST_MCP_MAX_SESSIONS` 是有意的例外,不受 CONTROL 限制、行為不變。
+  - `SPILLWAY_TEST_LOG_LEVEL`(`DEBUG`/`INFO`):root logger 掛一個 stderr StreamHandler(等級即該值,root
+    等級同步設定),每筆紀錄 `SPILLWAY-LOG <levelname> <name> <message>` 一行(args 已代入),多行內容
+    (含 exc_info 與 stack)以 `SPILLWAY-LOG-CONT ` 前綴續行;不加遮罩 filter。在 uvicorn 設定 logging 之後安裝。
 
 init(決策 14、15):建立資料目錄與 `work/claude`、`work/codex`;在資料目錄鎖內開啟資料庫(執行
 migration,含舊版庫的備份;不做埠檢查)並產生存取 token。token 明文只印到 stdout 一次(單獨一行),
@@ -51,17 +64,31 @@ import argparse
 import asyncio
 import atexit
 import contextlib
+import logging
+import math
 import os
+import re
 import socket
 import sqlite3
 import sys
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from types import FrameType
 from typing import TYPE_CHECKING
 
+import platformdirs
+
 from spillway import settings
 from spillway.adapters.base import CLI_WORK_SUBDIRS
+from spillway.adapters.base.cli_runner import TEST_CONTROL_ENV_NAMES
+from spillway.api.test_control import parse_time
+
+try:   # POSIX;Windows 沒有 pwd,只比對目前環境下的預設目錄
+    import pwd
+except ImportError:   # pragma: no cover
+    pwd = None   # type: ignore[assignment]
 # 期滿取消後等被取消的請求走完 CliRunner 取消路徑的上限(單一定義在 api/drain.py;模組屬性保留)
 from spillway.api.drain import CANCELLED_DRAIN_TIMEOUT
 if TYPE_CHECKING:   # uvicorn 延遲 import(init 不需要它)
@@ -86,6 +113,21 @@ WORK_SUBDIRS = CLI_WORK_SUBDIRS   # 決策 10、11、20(CHG-20261102-01):CLI 模
 GRACEFUL_TIMEOUT = 30.0   # 決策 16 ②:停機時等待進行中請求的上限(秒)
 TEST_GRACEFUL_TIMEOUT_ENV = "SPILLWAY_TEST_GRACEFUL_TIMEOUT"   # 僅供測試,見 _test_graceful_timeout
 TEST_MCP_MAX_SESSIONS_ENV = "SPILLWAY_TEST_MCP_MAX_SESSIONS"   # 僅供測試,見 _test_mcp_max_sessions
+
+# CHG-20261107-03 決策 5、6:測試控制介面開關與啟動期旋鈕(名稱單一定義在 CliRunner,子行程一律移除)
+TEST_CONTROL_ENV = TEST_CONTROL_ENV_NAMES[0]          # "SPILLWAY_TEST_CONTROL"
+TEST_KNOB_ENVS = TEST_CONTROL_ENV_NAMES[1:]
+(TEST_START_TIME_ENV, TEST_RNG_SEED_ENV, TEST_ADAPTER_PATHS_ENV, TEST_RETENTION_POLL_ENV,
+ TEST_RETENTION_STEPPED_ENV, TEST_NO_TOKEN_ENV, TEST_LOG_LEVEL_ENV) = TEST_KNOB_ENVS
+TEST_LOG_LEVELS = ("DEBUG", "INFO")
+LOG_PREFIX = "SPILLWAY-LOG"
+LOG_CONT_PREFIX = "SPILLWAY-LOG-CONT"
+TEST_CONTROL_WARNING = ("spillway: 警告:測試控制介面已開啟(SPILLWAY_TEST_CONTROL=1),"
+                        "/__test__/* 可改寫狀態;僅供測試,正式使用請勿設定")
+TEST_KNOBS_IGNORED = "spillway: 未設 SPILLWAY_TEST_CONTROL=1,已忽略測試旋鈕: "
+_SEED_RE = re.compile(r"-?[0-9]+")                 # 施工審議 F4:ASCII 十進位整數,i64 範圍
+_POLL_RE = re.compile(r"[0-9]+(\.[0-9]+)?")        # 施工審議 F4:ASCII 十進位,不接受指數、底線、inf
+_I64_MIN, _I64_MAX = -(2**63), 2**63 - 1
 
 
 def _port(value: str) -> int:
@@ -262,7 +304,170 @@ def _test_mcp_max_sessions() -> int | None:
     return value if value > 0 else None
 
 
+@dataclass(frozen=True)
+class _TestControl:
+    """`SPILLWAY_TEST_CONTROL=1` 時解析出的旋鈕(CHG-20261107-03 決策 6)。"""
+
+    start_time: datetime | None = None
+    rng_seed: int | None = None
+    adapter_paths: tuple[str, ...] = ()
+    retention_poll_seconds: float | None = None
+    retention_stepped: bool = False
+    no_token: bool = False
+    log_level: str | None = None
+
+
+class _KnobError(ValueError):
+    """旋鈕的值不合法;訊息只含變數名與原因,不含值。"""
+
+
+def _flag(env: Mapping[str, str], name: str) -> bool:
+    raw = env.get(name, "")
+    if raw == "":
+        return False
+    if raw != "1":
+        raise _KnobError(f"{name} 只接受 1")
+    return True
+
+
+def _read_test_control(env: Mapping[str, str]) -> _TestControl | None:
+    """讀測試控制開關與旋鈕(決策 5 ①、6)。未開啟時回 None,並在 stderr 只印有設定的旋鈕名稱;
+    開啟時回 `_TestControl`;值不合法丟 `_KnobError`。"""
+    if env.get(TEST_CONTROL_ENV) != "1":
+        ignored = [name for name in TEST_KNOB_ENVS if env.get(name)]   # 空字串等同未設定(F7)
+        if ignored:
+            print(TEST_KNOBS_IGNORED + ", ".join(ignored), file=sys.stderr, flush=True)
+        return None
+    start_time = rng_seed = poll = level = None
+    if raw := env.get(TEST_START_TIME_ENV, ""):
+        try:
+            start_time = parse_time(raw)   # 與控制端點同一文法(F4)
+        except ValueError:
+            raise _KnobError(f"{TEST_START_TIME_ENV} 必須是 YYYY-MM-DDTHH:MM:SSZ") from None
+    if raw := env.get(TEST_RNG_SEED_ENV, ""):
+        if not _SEED_RE.fullmatch(raw) or not _I64_MIN <= int(raw) <= _I64_MAX:
+            raise _KnobError(f"{TEST_RNG_SEED_ENV} 必須是 -2^63 到 2^63-1 的十進位整數")
+        rng_seed = int(raw)
+    if raw := env.get(TEST_RETENTION_POLL_ENV, ""):
+        poll = float(raw) if _POLL_RE.fullmatch(raw) else math.nan
+        if not math.isfinite(poll) or poll <= 0:
+            raise _KnobError(f"{TEST_RETENTION_POLL_ENV} 必須是正的十進位數(秒)")
+    if raw := env.get(TEST_LOG_LEVEL_ENV, ""):
+        if raw not in TEST_LOG_LEVELS:
+            raise _KnobError(f"{TEST_LOG_LEVEL_ENV} 只接受 {'、'.join(TEST_LOG_LEVELS)}")
+        level = raw
+    paths = tuple(p for p in env.get(TEST_ADAPTER_PATHS_ENV, "").split(os.pathsep) if p)
+    return _TestControl(start_time=start_time, rng_seed=rng_seed, adapter_paths=paths,
+                        retention_poll_seconds=poll,
+                        retention_stepped=_flag(env, TEST_RETENTION_STEPPED_ENV),
+                        no_token=_flag(env, TEST_NO_TOKEN_ENV), log_level=level)
+
+
+_CASE_INSENSITIVE_FS = sys.platform in ("darwin", "win32")
+
+
+def _default_data_dirs() -> list[Path]:
+    """施工審議 F1:可能是擁有者預設資料目錄的位置。(a) 目前環境下的 `platformdirs.user_data_dir`;
+    (b) 把 (a) 相對於 `Path.home()` 的部分接到帳號家目錄(`pwd` 的 `pw_dir`)底下——`$HOME` 被覆寫
+    時仍找得到真正的預設目錄;(c) Linux 另加 `pw_dir/.local/share/spillway`(非 XDG 的預設位置)。"""
+    current = Path(platformdirs.user_data_dir("spillway"))
+    dirs = [current]
+    if pwd is not None:
+        pw_dir = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        try:
+            dirs.append(pw_dir / current.relative_to(Path.home()))
+        except ValueError:   # (a) 不在 $HOME 底下(例如 XDG_DATA_HOME 指到別處)
+            pass
+        if sys.platform.startswith("linux"):
+            dirs.append(pw_dir / ".local" / "share" / "spillway")
+    return dirs
+
+
+def _existing_ancestor(p: Path) -> tuple[Path, tuple[str, ...]]:
+    """`p` 最近一個存在的上層目錄(含 `p` 本身),與其下尚不存在的各段。"""
+    tail: list[str] = []
+    while not p.exists() and p.parent != p:
+        tail.append(p.name)
+        p = p.parent
+    return p, tuple(reversed(tail))
+
+
+def _same_dir(a: Path, b: Path) -> bool:
+    """同一目錄:兩者都存在且 `samefile`,或 `resolve()` 後字串相等(macOS、Windows 先 casefold);
+    都不成立時,改比最近存在的上層目錄(`samefile`)加其下各段(終審 F2:目錄尚不存在時,同一位置的
+    其他寫法——例如 macOS 的 `/System/Volumes/Data` firmlink 前綴——也判為同一目錄)。"""
+    try:
+        if a.exists() and b.exists() and os.path.samefile(a, b):
+            return True
+    except OSError:
+        pass
+    ra, rb = a.resolve(), b.resolve()
+    sa, sb = str(ra), str(rb)
+    if _CASE_INSENSITIVE_FS:
+        sa, sb = sa.casefold(), sb.casefold()
+    if sa == sb:
+        return True
+    try:
+        (pa, ta), (pb, tb) = _existing_ancestor(ra), _existing_ancestor(rb)
+        if _CASE_INSENSITIVE_FS:
+            ta, tb = tuple(s.casefold() for s in ta), tuple(s.casefold() for s in tb)
+        return ta == tb and os.path.samefile(pa, pb)
+    except OSError:
+        return False
+
+
+def _test_home_problem(env: Mapping[str, str]) -> str | None:
+    """決策 5 ②:測試模式的資料目錄必須明確設定,且不與預設(擁有者)資料目錄是同一個目錄(含大小寫
+    變體、符號連結與以帳號家目錄推得的位置,F1;目錄尚不存在時的其他寫法,終審 F2);符合時回 None。不讀寫 `os.environ`。"""
+    raw = env.get(settings.ENV_HOME, "")
+    if not raw:
+        return f"{TEST_CONTROL_ENV}=1 時必須明確設定 {settings.ENV_HOME}(測試模式不使用預設資料目錄)"
+    home = Path(raw)
+    if any(_same_dir(home, d) for d in _default_data_dirs()):
+        return f"{TEST_CONTROL_ENV}=1 時 {settings.ENV_HOME} 不可為預設資料目錄"
+    return None
+
+
+class _TestLogFormatter(logging.Formatter):
+    """`SPILLWAY-LOG <levelname> <name> <message>`;多行內容以 `SPILLWAY-LOG-CONT ` 續行(決策 6)。"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = record.getMessage()
+        if record.exc_info and not record.exc_text:
+            record.exc_text = self.formatException(record.exc_info)
+        if record.exc_text:
+            text = f"{text}\n{record.exc_text}"
+        if record.stack_info:
+            text = f"{text}\n{self.formatStack(record.stack_info)}"
+        first, *rest = text.splitlines() or [""]
+        lines = [f"{LOG_PREFIX} {record.levelname} {record.name} {first}"]
+        lines.extend(f"{LOG_CONT_PREFIX} {line}" for line in rest)
+        return "\n".join(lines)
+
+
+def _install_test_log_handler(level: str) -> logging.Handler:
+    """root logger 掛 stderr handler(等級即 `level`,root 等級同步設定);回傳 handler。"""
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(level)
+    handler.setFormatter(_TestLogFormatter())
+    root = logging.getLogger()
+    root.setLevel(level)
+    root.addHandler(handler)
+    return handler
+
+
 def _run_server(host: str, port: int, graceful_timeout: float = GRACEFUL_TIMEOUT) -> int:
+    # CHG-20261107-03 決策 5 ①②:測試控制只在這裡讀環境變數;HOME 檢查在建資料目錄與開資料庫之前
+    try:
+        control = _read_test_control(os.environ)
+    except _KnobError as exc:
+        _err(f"{exc};未啟動")
+        return EXIT_USAGE
+    if control is not None:
+        if problem := _test_home_problem(os.environ):
+            _err(f"{problem};未建立資料目錄、未開啟資料庫")
+            return EXIT_USAGE
+        print(TEST_CONTROL_WARNING, file=sys.stderr, flush=True)
     if rc := _preflight(host, port, settings.data_dir()):
         return rc
 
@@ -271,12 +476,22 @@ def _run_server(host: str, port: int, graceful_timeout: float = GRACEFUL_TIMEOUT
     from spillway import app as app_module
 
     mcp_kwargs = {} if (n := _test_mcp_max_sessions()) is None else {"mcp_max_sessions": n}
-    app = app_module.create_app(issue_token=True, port=port, **mcp_kwargs)
+    control_kwargs: dict[str, object] = {}
+    if control is not None:
+        control_kwargs = {"test_control": True, "start_time": control.start_time,
+                          "rng_seed": control.rng_seed, "extra_adapter_paths": control.adapter_paths,
+                          "retention_stepped": control.retention_stepped}
+        if control.retention_poll_seconds is not None:
+            control_kwargs["retention_poll_seconds"] = control.retention_poll_seconds
+    issue_token = control is None or not control.no_token
+    app = app_module.create_app(issue_token=issue_token, port=port, **mcp_kwargs, **control_kwargs)
     runner = app.state.cli_runner
     # 決策 16 ④:第二次 Ctrl-C(force_exit)會略過 lifespan;finally 與 atexit 是子行程清理的最後防線
     atexit.register(runner.kill_all_sync)
     config = uvicorn.Config(app, host=host, port=port, lifespan="on", log_level="info",
                             access_log=True, timeout_graceful_shutdown=graceful_timeout)
+    if control is not None and control.log_level is not None:
+        _install_test_log_handler(control.log_level)   # uvicorn.Config 已設定 logging,之後才掛
     server = _graceful_server(config, app)
     # 決策 14 ①:只關 GET 串流由 shutdown_hooks 負責;sse-starlette 的 auto-drain 會關掉所有 SSE(含 POST 回應)
     from sse_starlette.sse import AppStatus   # pyproject 明列 sse-starlette>=3.5.0(CHG-20261102-01 T2)

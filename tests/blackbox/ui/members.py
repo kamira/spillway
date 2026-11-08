@@ -1,13 +1,15 @@
-"""UI-2 成員與 UI-3 群組的頁面操作與種資料(CHG-20261103-01 T5;T9 的 behave 步驟可直接匯入)。
+"""UI-2 成員與 UI-3 群組的頁面操作與種資料(CHG-20261103-01 T5;behave 步驟可直接匯入)。
 
-只用 Playwright **sync** API 與同步 `gw.http()`(經 `tests.helpers.ui.api`),不在主 thread 使用 asyncio。
+(CHG-20261107-03 T2 由 `tests/helpers/ui_members.py` 複製改寫成黑箱版;原檔已於 T5 改用本模組後刪除,4e2ce46)
+只用 Playwright **sync** API 與同步 `gw.http()`(經 `tests.blackbox.ui.api`),不在主 thread 使用 asyncio。
 
 - `member_body(dep_id, **kw)`:本畫面的預設成員(openai `gpt-5.5`、上游 `127.0.0.1:9`、tag `chat`、`budget: null`),
-  以 `tests.helpers.ui.member_body` 組出。
+  以 `tests.blackbox.ui.member_body` 組出。
 - `seed_member(gw, dep_id, **kw) -> dict`、`seed_route(gw, name, target, mode="chat")`(經 `ui.add_route`);
-  群組用 `tests.helpers.ui.seed_group`。
+  群組用 `tests.blackbox.ui.seed_group`。
 - `broken_adapter_dir(root) -> Path`:在 `root` 寫出無法 import 的模組 `broken`(provider `broken-p`;
   同 `tests/integration/admin/test_admin_adapters.py` 的 `pre_import="import not_a_real_pkg_xyz\\n"`)。
+  以 `Serve(adapter_paths=[root], allowed_unavailable_adapters={BROKEN_MODULE})` 啟動。
 - `MemberForm(page)`:成員表單的定位器與常用操作(類型、供應商、模型、欄位、送出)。
 - `open_members(page, gw, member_id=None)`、`open_groups(page, gw)`。
 - `requests_of(guard, method, path_part)`:guard 記錄的請求中方法與路徑相符者。
@@ -19,15 +21,16 @@ from typing import Any
 
 from playwright.sync_api import Locator, Page, expect
 
-from tests.contract.fakemods import write_module
-from tests.helpers import TEST_KEY_ENV
-from tests.helpers import ui
-from tests.helpers.ui import api, goto
+from tests.blackbox import ui
+from tests.blackbox.fakemods import write_module
+from tests.blackbox.mask import TEST_KEY_ENV
+from tests.blackbox.ui import api, goto
 
-__all__ = ["MemberForm", "broken_adapter_dir", "member_body", "open_groups", "open_members", "requests_of",
+__all__ = ["BROKEN_MODULE", "BROKEN_PROVIDER", "MemberForm", "broken_adapter_dir", "member_body", "open_groups", "open_members", "requests_of",
            "seed_member", "seed_route"]
 
 BROKEN_PROVIDER = "broken-p"
+BROKEN_MODULE = "broken"
 
 
 def member_body(dep_id: str, **kw: Any) -> dict[str, Any]:
@@ -52,7 +55,7 @@ def seed_route(gw: Any, name: str, target: dict[str, Any], mode: str = "chat") -
 
 
 def broken_adapter_dir(root: Path) -> Path:
-    write_module(root, "broken", pre_import="import not_a_real_pkg_xyz\n", providers=(BROKEN_PROVIDER,))
+    write_module(root, BROKEN_MODULE, pre_import="import not_a_real_pkg_xyz\n", providers=(BROKEN_PROVIDER,))
     return root
 
 

@@ -4,7 +4,11 @@
 - 清除真實的 API key 環境變數,`env:` 只讀測試專用變數。
 - `anyio_backend`:全測試唯一的定義,固定 `"asyncio"`(CHG-20261101-02 T11);非同步測試加
   `pytestmark = pytest.mark.anyio`。
-- `fake_key_env`:見 `tests/helpers.py`(非 autouse)。
+- `fake_key_env`:把 `SPILLWAY_TEST_KEY` 設為 `sk-test-0000`(非 autouse;值同 `tests/helpers.TEST_KEY`)。
+- 延遲 import(CHG-20261107-03 T2;決策 9 ⑤):本檔與它載入的 plugin 在 import 時不載入 `spillway`
+  (`clock` fixture 在 fixture 內才 import `FakeClock`;`fake_key_env` 直接定義在本檔,不再經
+  `tests.helpers` 註冊)。黑箱測試只跑本檔與 `tests/blackbox` 時,行程內不會出現 `spillway*`
+  (`tests/blackbox/plugin.py` 的執行期守門)。
 - 真實 CLI 護欄(CHG-20261101-03 T3;決策 19):`pytest_configure` 在收集之前先清理一次 `os.environ["PATH"]`
   (收集時的 import 與 session fixture 也看不到真實 CLI);autouse fixture 再於每個測試開始前把 PATH 中含真實 `claude`、`codex`
   的目錄移除並斷言 `shutil.which` 只找得到假執行檔(或找不到);測試結束時再斷言一次,測試中把真實
@@ -21,14 +25,17 @@ import os
 os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
-from spillway.clock import FakeClock
+from tests.blackbox.mask import TEST_KEY, TEST_KEY_ENV
 from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install, sanitize_path
-from tests.helpers import fake_key_env  # noqa: F401 — fixture 註冊(非 autouse)
 
-pytest_plugins = ["tests.fakes.plugin"]
+if TYPE_CHECKING:
+    from spillway.clock import FakeClock
+
+pytest_plugins = ["tests.fakes.plugin", "tests.blackbox.plugin"]
 
 REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
@@ -53,7 +60,15 @@ def _spillway_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def clock() -> FakeClock:
+    from spillway.clock import FakeClock   # 延遲 import(決策 9 ⑤)
+
     return FakeClock()
+
+
+@pytest.fixture
+def fake_key_env(monkeypatch: pytest.MonkeyPatch) -> str:
+    monkeypatch.setenv(TEST_KEY_ENV, TEST_KEY)
+    return TEST_KEY
 
 
 @pytest.fixture

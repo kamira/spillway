@@ -1,12 +1,14 @@
 """L4 操作驗收的自動部分(CHG-20261101-03「### Acceptance operation」;T9;macOS)。
 
 operate:
-- 暫存 `SPILLWAY_HOME`,放入一份 v1 測試資料庫(DDL 取自 `git show d89118c:src/spillway/store/schema.sql`,
-  取不到時用套件內 `schema.sql`,兩者逐字相同由測試斷言);內含一個冷卻中的 api 成員(帳本最近一筆
+- 暫存 `SPILLWAY_HOME`,serve 啟動前以 sqlite3 放入一份 v1 測試資料庫(CHG-20261107-03 AM-2;DDL 為凍結的
+  `tests/blackbox/golden/schema_v1.sql`,它與套件內 `schema.sql`、d89118c 版本逐字相同由 Python 合約測試
+  `tests/contract/test_schema_python.py` 斷言);內含一個冷卻中的 api 成員(帳本最近一筆
   `rate_limited`)與一個決策 59 暫行列(`type=none, window=none, limit_amount=NULL`)。
-- 每個子行程的環境一律經 `tests.fakes.cli_upstream.safe_subprocess_env`(PATH 清理、假 CLI 目錄在最前面、
-  斷言找不到真實 claude/codex);serve 的環境另放入決策 9 清單內全部變數的假值。
-- `python -m spillway init`(stdout 只印 token)→ `python -m spillway serve` + 假 API 上游子行程。
+- 每個子行程的環境一律經 `tests.blackbox.harness.child_env`(內部為 `safe_subprocess_env`:PATH 清理、假 CLI
+  目錄在最前面、斷言找不到真實 claude/codex);serve 的環境另放入決策 9 清單內全部變數的假值。
+- `SPILLWAY_CMD init`(`run_cli`;stdout 只印 token)→ `SPILLWAY_CMD serve`(`tests.blackbox.harness.Serve`,
+  未開啟測試控制介面)+ 假 API 上游子行程。本檔不 import spillway;資料庫一律唯讀開啟(`read_db`)。
 - 管理 API 建 claude-sub(claude-cli,credit_pool 10 美元每月,`max_concurrency` 1)、codex-sub(codex-cli,
   budget none)、deepseek-api(api)與 task route `review`;10 次 task 請求(預設順序);把 deepseek-api
   排到 slot 1 再 10 次;建第二個 claude-cli 成員;控制檔讓假 claude 停住並送 2 個 task 請求;假 claude
@@ -25,9 +27,7 @@ import json
 import os
 import shutil
 import signal
-import sqlite3
 import subprocess
-import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -37,11 +37,12 @@ from typing import Any
 import httpx
 import pytest
 
-from spillway import cli
-from spillway.store import db as store_db
 from tests.acceptance import procs
-from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install, safe_subprocess_env
-from tests.helpers import redact_tokens
+from tests.acceptance.seed import seed_nfr_dataset
+from tests.blackbox.db import build_db, read_db
+from tests.blackbox.harness import EXIT_SIGTERM, Serve, child_env, drain_expire_delay, run_cli
+from tests.blackbox.mask import redact_tokens
+from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install
 
 pytestmark = pytest.mark.skipif(not procs.HAS_LSOF, reason="需要 lsof(macOS 驗收平台)")
 
@@ -50,6 +51,8 @@ ARTIFACTS = REPO_ROOT / "artifacts" / "m3a"
 HTTP_LOG = ARTIFACTS / "http-log.jsonl"
 RESULTS = ARTIFACTS / "operation-results.json"
 V1_COMMIT = "d89118c"
+# 凍結的 v1 DDL(與套件內 schema.sql、d89118c 版本相同:tests/contract/test_schema_python.py)
+V1_SQL = REPO_ROOT / "tests" / "blackbox" / "golden" / "schema_v1.sql"
 GRACEFUL = 5.0          # 測試用停機上限(秒)
 TERM_GRACE = 5.0        # CliRunner SIGTERM→SIGKILL
 SLACK = 5.0
@@ -68,7 +71,7 @@ class LoggedClient:
     """對閘道的 httpx client;每次請求只記 method、path、status、elapsed_ms(不記 body)。"""
 
     def __init__(self, base_url: str) -> None:
-        self.client = httpx.Client(base_url=base_url, timeout=60)
+        self.client = httpx.Client(base_url=base_url, timeout=60, trust_env=False)
         self.lines: list[dict[str, Any]] = []
         self._lock = threading.Lock()
 
@@ -104,49 +107,35 @@ class LoggedClient:
 
 
 def _v1_schema() -> tuple[str, str]:
-    """v1 DDL:`git show d89118c:src/spillway/store/schema.sql`(與套件內 schema.sql 必須相同)。"""
-    packaged = store_db.MIGRATIONS[0][1]
-    r = subprocess.run(["git", "show", f"{V1_COMMIT}:src/spillway/store/schema.sql"],
-                       cwd=str(REPO_ROOT), capture_output=True, text=True)
-    if r.returncode == 0:
-        assert r.stdout == packaged, "d89118c 的 schema.sql 與套件內 v1 DDL 不同"
-        return r.stdout, f"git show {V1_COMMIT}"
-    return packaged, "package schema.sql(git 不可用)"
+    """v1 DDL:凍結的 `tests/blackbox/golden/schema_v1.sql`(檔案讀取;它與 d89118c 的套件 schema.sql 相同由
+    Python 合約測試斷言,黑箱測試不讀產品原始碼)。"""
+    sql = V1_SQL.read_text(encoding="utf-8")
+    assert "exhausted_until" in sql, "凍結的 v1 DDL 應含 budgets.exhausted_until(遷移的前提)"
+    return sql, f"tests/blackbox/golden/schema_v1.sql(= {V1_COMMIT})"
 
 
 def _make_v1_db(path: Path) -> str:
+    """serve 啟動前以 sqlite3 建出 v1 舊庫(AM-2 允許的例外;`build_db`)。"""
     sql, source = _v1_schema()
-    c = sqlite3.connect(str(path), isolation_level=None)
-    try:
-        c.execute("BEGIN")
-        for stmt in store_db._split_statements(sql):
-            c.execute(stmt)
-        c.execute("PRAGMA user_version = 1")
-        for dep in (LEGACY_COOL, LEGACY_PLACEHOLDER):
-            c.execute("INSERT INTO deployments(id, model_name, kind, provider, model) "
-                      "VALUES (?, ?, 'api', 'openai', 'gpt-4o-mini')", (dep, dep))
-            c.execute("INSERT INTO deployment_tags(deployment_id, tag) VALUES (?, 'legacy')", (dep,))
-        c.executemany(
-            "INSERT INTO budgets(deployment_id, type, limit_amount, window, reset_anchor, exhausted_until) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            [(LEGACY_COOL, "usd", 5.0, "daily", None, "2099-01-01T00:00:00Z"),
-             (LEGACY_PLACEHOLDER, "none", None, "none", None, "2026-10-30T13:00:00Z")])   # 決策 59 暫行列
-        c.executemany(
-            "INSERT INTO usage_ledger(ts, deployment_id, status) VALUES (?, ?, ?)",
-            [("2026-10-30T11:00:00Z", LEGACY_COOL, "quota_exhausted"),
-             ("2026-10-30T12:00:00Z", LEGACY_COOL, "rate_limited")])   # 最近一筆 → rate_limited
-        c.execute("COMMIT")
-    finally:
-        c.close()
+    rows = [
+        *(f"INSERT INTO deployments(id, model_name, kind, provider, model) "
+          f"VALUES ('{dep}', '{dep}', 'api', 'openai', 'gpt-4o-mini');\n"
+          f"INSERT INTO deployment_tags(deployment_id, tag) VALUES ('{dep}', 'legacy');"
+          for dep in (LEGACY_COOL, LEGACY_PLACEHOLDER)),
+        "INSERT INTO budgets(deployment_id, type, limit_amount, window, reset_anchor, exhausted_until) VALUES "
+        f"('{LEGACY_COOL}', 'usd', 5.0, 'daily', NULL, '2099-01-01T00:00:00Z'), "
+        f"('{LEGACY_PLACEHOLDER}', 'none', NULL, 'none', NULL, '2026-10-30T13:00:00Z');",   # 決策 59 暫行列
+        "INSERT INTO usage_ledger(ts, deployment_id, status) VALUES "
+        f"('2026-10-30T11:00:00Z', '{LEGACY_COOL}', 'quota_exhausted'), "
+        f"('2026-10-30T12:00:00Z', '{LEGACY_COOL}', 'rate_limited');",                   # 最近一筆 → rate_limited
+    ]
+    build_db(path, "BEGIN;\n" + sql + "\n" + "\n".join(rows) + "\nCOMMIT;", user_version=1)
     return source
 
 
 def _q(path: Path, sql: str, *args: Any) -> list[tuple]:
-    c = sqlite3.connect(str(path))
-    try:
+    with read_db(path) as c:
         return [tuple(r) for r in c.execute(sql, args)]
-    finally:
-        c.close()
 
 
 def _cli_member(dep_id: str, provider: str, model: str, budget: dict[str, Any]) -> dict[str, Any]:
@@ -231,25 +220,17 @@ def _files_containing(root: Path, needle: str) -> list[str]:
 # ---------------------------------------------------------------- 驗收
 
 
-def test_seed_has_two_cli_members(tmp_path):
+def test_seed_has_two_cli_members(serve_factory):
     """NFR-1/2 種子(T9):100 個成員中有 2 個 cli 成員(claude-cli、codex-cli)。"""
-    from datetime import datetime, timezone
-
-    from spillway.store import repo
-    from spillway.store.db import connect
-    from tests.acceptance.seed import seed_nfr_dataset
-
-    conn = connect(tmp_path / "seed.db")
-    try:
-        ds = seed_nfr_dataset(conn, datetime(2026, 11, 15, tzinfo=timezone.utc), "http://127.0.0.1:9")
-        deps = repo.list_deployments(conn)
+    s = serve_factory()
+    ds = seed_nfr_dataset(s, datetime(2026, 11, 15, tzinfo=timezone.utc), "http://127.0.0.1:9")
+    deps = s.request("GET", "/api/deployments").json()["deployments"]
+    with s.db() as conn:
         n_codex_cost = conn.execute(
             "SELECT COUNT(*) FROM usage_ledger WHERE deployment_id = ? AND cost_usd IS NOT NULL",
             (ds.cli_ids[1],)).fetchone()[0]
-    finally:
-        conn.close()
     assert len(deps) == 100 and len(ds.local_ids) == 10
-    cli = sorted((d.id, d.provider) for d in deps if d.kind == "cli")
+    cli = sorted((d["id"], d["provider"]) for d in deps if d["kind"] == "cli")
     assert cli == [("m000", "claude-cli"), ("m001", "codex-cli")]
     assert ds.cli_ids == ("m000", "m001")
     assert n_codex_cost == 0
@@ -265,18 +246,17 @@ def test_m3a_acceptance_operation(tmp_path):
 
     fake = FakeCli(home, install(tmp_path / "fake-cli-bin"))
     run_started = time.time()
-    base = procs.child_env(home)
+    extra = {"SPILLWAY_TEST_KEY": procs.TEST_KEY}
     for var in (*CLAUDE_VARS, *CODEX_VARS):
-        base[var] = f"fake-{var.lower()}-m3a"           # 決策 9 清單的假值:CLI 子行程不可看到
-    env = safe_subprocess_env(base, fake_bin=fake.bin_dir)
-    env[cli.TEST_GRACEFUL_TIMEOUT_ENV] = str(GRACEFUL)
+        extra[var] = f"fake-{var.lower()}-m3a"          # 決策 9 清單的假值:CLI 子行程不可看到
+    env = child_env(home, fake_bin=fake.bin_dir, extra=extra)
+    assert all(env[var] == extra[var] for var in (*CLAUDE_VARS, *CODEX_VARS))
     assert env["SPILLWAY_TEST_KEY"]                     # deepseek-api 的 env:SPILLWAY_TEST_KEY;CLI 子行程不可看到
     resolved = assert_only_fakes(env["PATH"])
     assert resolved == {"claude": str(fake.path("claude")), "codex": str(fake.path("codex"))}
 
     # ---- init(子行程):migration + 備份 + token(stdout 只印 token)
-    r = subprocess.run([sys.executable, "-m", "spillway", "init"], env=env, cwd=str(REPO_ROOT),
-                       capture_output=True, text=True, timeout=120)
+    r = run_cli("init", home=home, fake_bin=fake.bin_dir, extra_env=extra, timeout=120)
     assert r.returncode == 0, redact_tokens(r.stderr, [r.stdout.strip()])
     token = r.stdout.strip()
     assert token and r.stdout.count(token) == 1 and len(r.stdout.splitlines()) == 1
@@ -306,14 +286,13 @@ def test_m3a_acceptance_operation(tmp_path):
     port = procs.free_port()
     fake_proc, fake_base = procs.start_fake_upstream(tmp_path)
     serve_log = tmp_path / "serve.log"
-    serve: subprocess.Popen | None = None
+    serve: Serve | None = None
     gw: LoggedClient | None = None
     try:
-        with open(serve_log, "w", encoding="utf-8") as log:
-            serve = subprocess.Popen(
-                [sys.executable, "-m", "spillway", "serve", "--port", str(port)],
-                env=env, cwd=str(REPO_ROOT), stdout=log, stderr=subprocess.STDOUT, text=True,
-                start_new_session=True)
+        # 停機上限以測試用變數 SPILLWAY_TEST_GRACEFUL_TIMEOUT 設為 GRACEFUL 秒(spec 13.2.2,不受 CONTROL 限制)
+        serve = Serve(home, control=False, port=port, fake_bin=fake.bin_dir, graceful_timeout=GRACEFUL,
+                      extra_env=extra, log_path=serve_log)
+        serve.start(timeout=120)
         procs.wait_listening(serve)
         gw = LoggedClient(f"http://127.0.0.1:{port}")
         deps = gw.ok(gw.request("GET", "/api/deployments"))["deployments"]
@@ -461,7 +440,7 @@ def test_m3a_acceptance_operation(tmp_path):
         obs["rotate"] = {"new_token_returned": True, "hash_updated": True}
 
         # ---- 監聽位址
-        addrs = procs.listening(serve.pid)
+        addrs = procs.listening(port)
         obs["listening"] = addrs
         assert addrs == [f"127.0.0.1:{port}"], addrs
 
@@ -473,10 +452,10 @@ def test_m3a_acceptance_operation(tmp_path):
         held = recs[-1]
         assert _pid_alive(held["pid"])
         t0 = time.monotonic()
-        serve.send_signal(signal.SIGTERM)
+        serve.signal(signal.SIGTERM)
         limit = GRACEFUL + TERM_GRACE + SLACK
         try:
-            serve.wait(timeout=limit)
+            serve.wait_exit(limit)
         except subprocess.TimeoutExpired:
             pytest.fail(f"serve 未在 {limit} 秒內結束")
         elapsed = round(time.monotonic() - t0, 2)
@@ -490,20 +469,18 @@ def test_m3a_acceptance_operation(tmp_path):
                           "returncode": serve.returncode, "leftover_fake_pids": leftovers,
                           "last_codex_ledger": shutdown_rows,
                           "in_flight_status": box["resp"].status_code if "resp" in box else "connection closed"}
-        assert elapsed >= cli.drain_expire_delay(GRACEFUL) - 0.5, elapsed   # 先等進行中請求
+        assert elapsed >= drain_expire_delay(GRACEFUL) - 0.5, elapsed   # 先等進行中請求(spec 14.1 正常關閉)
         assert leftovers == []
         assert shutdown_rows == [("error", "shutdown")]
         assert len(fake.records("codex")) == n_codex + 1     # 停機期間沒有再啟動假 codex
+        assert serve.returncode == EXIT_SIGTERM, serve.returncode
+        serve.stop()                                         # 已結束:斷言結束碼、stderr、行程群組已清空
     finally:
         if gw is not None:
             gw.write_log(HTTP_LOG)
             gw.close()
-        if serve is not None and serve.poll() is None:
-            try:
-                os.killpg(serve.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            serve.wait(timeout=15)
+        if serve is not None and serve.returncode is None:
+            serve.kill()
         procs.stop(fake_proc)
         for rec in _unfinished(fake, run_started):   # 只處理本次啟動、尚未結束的假 CLI
             if _group_alive(rec["pid"]):
@@ -514,7 +491,7 @@ def test_m3a_acceptance_operation(tmp_path):
         # 控制目錄消失 → 仍在等待的假 CLI 自行結束
         shutil.rmtree(fake.control_dir, ignore_errors=True)
 
-    assert serve is not None and serve.poll() is not None and fake_proc.poll() is not None
+    assert serve is not None and serve.returncode is not None and fake_proc.poll() is not None
 
     # ---- 產物與 token 明文
     log_lines = HTTP_LOG.read_text(encoding="utf-8").splitlines()
@@ -523,11 +500,13 @@ def test_m3a_acceptance_operation(tmp_path):
     obs["http_log_lines"] = len(log_lines)
     RESULTS.write_text(json.dumps(obs, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                        encoding="utf-8")
-    serve_text = serve_log.read_text(encoding="utf-8")
+    # 原始 stderr 與 stdout(未遮罩;stdout 含 uvicorn access log,施工審議 T3 F1)
+    serve_text = (serve.stderr_bytes() + serve.stdout_bytes()).decode("utf-8", errors="replace")
     leaks = {}
     for name, secret in (("init_token", token), ("rotated_token", token2)):
         leaks[name] = (_files_containing(ARTIFACTS, secret) + _files_containing(home, secret)
-                       + ([str(serve_log)] if secret in serve_text else []))
+                       + _files_containing(tmp_path, secret)
+                       + (["serve stderr/stdout"] if secret in serve_text else []))
     assert leaks == {"init_token": [], "rotated_token": []}, leaks
     ledger_text = json.dumps(_q(db_path, "SELECT * FROM usage_ledger"), ensure_ascii=False)
     assert token not in ledger_text and token2 not in ledger_text

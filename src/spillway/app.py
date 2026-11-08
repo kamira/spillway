@@ -1,7 +1,21 @@
 """FastAPI app 組裝(CHG-20261030-02 T13 擁有;design D1、D2、D4;spec 2.4.5、7.6.6)。
 
 `create_app(*, clock=None, rng=None, extra_adapter_paths=(), db_path=None,
-retention_interval_seconds=3600, retention_poll_seconds=30.0, issue_token=False, port=8787) -> FastAPI`
+retention_interval_seconds=3600, retention_poll_seconds=30.0, issue_token=False, port=8787,
+mcp_max_sessions=MAX_SESSIONS, test_control=False, start_time=None, rng_seed=None,
+retention_stepped=False) -> FastAPI`
+
+測試控制介面(CHG-20261107-03 決策 5–7;spec「測試控制介面(僅測試模式)」):
+- `test_control=True` 時以 `include_in_schema=False` 掛載 `api.test_control.make_router(...)`(`/__test__/*`);
+  預設 False 不掛載,所有 `/__test__/*` 與其他不存在的路徑一樣回 404。本函式**不讀環境變數**:
+  只有 `cli._run_server` 讀 `SPILLWAY_TEST_CONTROL` 與各旋鈕,再以這裡的參數傳入。
+- `start_time`(帶時區的 datetime):未給 `clock` 時以 `FakeClock(start_time)` 作為可控時鐘(凍結,只有
+  控制介面的 `set`/`advance_seconds` 會讓它前進)。
+- `rng_seed`(int):未給 `rng` 時以 `SystemRng(rng_seed)`;此值只交給控制介面(`GET /__test__/rng`)。
+- 不新增 `app.state` 屬性(屬性集合由 `tests/integration/admin/test_admin_app_state.py` 釘住):時鐘是否可控
+  由控制介面以 `isinstance(app.state.clock, FakeClock)` 判斷,seed 由 `test_control.make_router` 的閉包持有。
+- `retention_stepped=True`(只在 `test_control=True` 時允許,否則 `ValueError`):保存排程 `_loop` 的
+  sleep 換成一道閘,只有 `RetentionScheduler.step()`(`POST /__test__/retention/tick`)會放行一次。
 
 `port`(CHG-20261102-01 T1,決策 4):serve 綁定的埠,存為 `app.state.port`,供 Host/Origin 檢查
 比對 `Origin`;`spillway serve` 以實際埠傳入。最外層掛 `HostOriginMiddleware`(純 ASGI):每個
@@ -24,11 +38,13 @@ lifespan 啟動依序:
    CHG-20261101-02 決策 14):輪詢抖動(sleep 超時、清理耗時)≤ poll 時,兩次清理的間隔 ≤ interval
    (NFR-5:1 小時內),最多提早 2 × poll;清理本身耗時超過 poll 的情況不在此上界內。
    清理失敗或讀 Clock 失敗只記例外型別,排程繼續。
+   STEPPED 模式(`retention_stepped=True`)下輪詢的 sleep 換成閘:`_loop` 停在閘前,`step()` 放行一次,
+   `_loop` 走完 `due()`→`run_once()` 回到閘前,`step()` 才回傳 `(ran, deleted)`。
 關閉時停止排程工作。
 
 `app.state`(T14 管理端點與 T15 使用):
-- `clock`:`Clock`(預設 `SystemClock()`)
-- `rng`:`Rng`(預設 `SystemRng()`)
+- `clock`:`Clock`(預設 `SystemClock()`;給 `start_time` 時為 `FakeClock`)
+- `rng`:`Rng`(預設 `SystemRng()`;給 `rng_seed` 時為 `SystemRng(rng_seed)`)
 - `db_path`:`pathlib.Path`
 - `conn_factory`:零參數函式,每次呼叫開一條**新**連線(已 migration;呼叫端負責 `close()`)
 - `registry`:已 `discover()` 的 `AdapterRegistry`
@@ -65,6 +81,7 @@ from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -81,12 +98,13 @@ from spillway.api import admin
 from spillway.api import openai as openai_api
 from spillway.api.host_origin import HostOriginMiddleware
 from spillway.api.http_headers import SecurityHeadersMiddleware
+from spillway.api import test_control as test_control_api
 from spillway.api.mcp import McpEndpoint, McpRuntime, SpillwayServer
 from spillway.api.mcp.events import McpEvents
 from spillway.api.mcp.sdk_logging import install_sdk_root_log_filter
 from spillway.api.mcp.server import MAX_SESSIONS, install_shutdown_hook
 from spillway.api.drain import CANCELLED_DRAIN_TIMEOUT, SECOND_CANCEL_WAIT, ShutdownHooks
-from spillway.clock import Clock, Rng, SystemClock, SystemRng
+from spillway.clock import Clock, FakeClock, Rng, SystemClock, SystemRng
 from spillway.ledger import RetentionJob
 from spillway.routing import Router
 from spillway.store.db import connect
@@ -102,6 +120,7 @@ _log = logging.getLogger(__name__)
 
 DEFAULT_RETENTION_INTERVAL_SECONDS = 3600     # spec 2.4.5「每小時」
 DEFAULT_RETENTION_POLL_SECONDS = 30.0         # 真實時間的檢查間隔;到期判斷提前 2 × poll,延遲 ≤ 1 小時
+RETENTION_STEP_TIMEOUT = 30.0                 # STEPPED:`step()` 等 `_loop` 到閘前/回到閘前的上限(秒)
 
 ConnFactory = Callable[[], sqlite3.Connection]
 
@@ -126,11 +145,15 @@ class RetentionScheduler:
     背景輪詢在 `now >= next_due - 2 × poll_seconds` 時清理(`due()`);輪詢抖動 ≤ poll 時,
     兩次清理的間隔 ≤ interval。
     輪詢中的任何例外(含 Clock 失敗)只記例外型別,排程繼續;`stop()` 吞掉非取消的例外。
+
+    `stepped=True`(CHG-20261107-03 決策 6、7 ⑥):`_loop` 每一輪的 sleep 換成一道閘;`step()` 放行一次,
+    等 `_loop` 跑完該輪(`due()` 為真才 `run_once()`)並回到閘前,回傳 `(ran, deleted)`。
     """
 
     def __init__(self, conn_factory: ConnFactory, clock: Clock, *,
                  interval_seconds: float = DEFAULT_RETENTION_INTERVAL_SECONDS,
-                 poll_seconds: float = DEFAULT_RETENTION_POLL_SECONDS) -> None:
+                 poll_seconds: float = DEFAULT_RETENTION_POLL_SECONDS,
+                 stepped: bool = False) -> None:
         if interval_seconds <= 0 or poll_seconds <= 0:
             raise ValueError("retention 間隔必須為正數")
         self._factory = conn_factory
@@ -140,6 +163,13 @@ class RetentionScheduler:
         self.runs = 0
         self.next_due: datetime | None = None
         self.task: asyncio.Task[None] | None = None
+        self.stepped = stepped
+        # STEPPED 的閘:`_parked` 表示 `_loop` 停在閘前;`_go` 放行一次;`_step_result` 由 `_loop` 回到閘前時填入
+        self._parked = asyncio.Event()
+        self._go = asyncio.Event()
+        self._step_lock = asyncio.Lock()
+        self._step_result: asyncio.Future[tuple[bool, int | None]] | None = None
+        self._last_pass: tuple[bool, int | None] = (False, None)
 
     def run_once(self) -> int | None:
         """清理一次;回傳刪除列數,失敗時回 None(只記例外型別)。無論成敗都排定下一次。"""
@@ -166,14 +196,65 @@ class RetentionScheduler:
             return True
         return self._clock.now() >= self.next_due - timedelta(seconds=2 * self.poll_seconds)
 
+    async def _wait_poll(self) -> None:
+        """一輪輪詢之前的等待:一般模式 sleep `poll_seconds`;STEPPED 模式停在閘前,先把上一輪的結果交給
+        等待中的 `step()`,再等下一次放行。"""
+        if not self.stepped:
+            await asyncio.sleep(self.poll_seconds)
+            return
+        self._parked.set()
+        fut, self._step_result = self._step_result, None
+        if fut is not None and not fut.done():
+            fut.set_result(self._last_pass)
+        await self._go.wait()
+        self._go.clear()
+
     async def _loop(self) -> None:
         while True:
-            await asyncio.sleep(self.poll_seconds)
+            await self._wait_poll()
+            ran, deleted = False, None
             try:
                 if self.due():
-                    self.run_once()
+                    ran = True
+                    deleted = self.run_once()
             except Exception as exc:  # noqa: BLE001 — 例如 Clock 失敗;排程不可因此終止
                 _log.error("RetentionScheduler 輪詢失敗:%s", type(exc).__name__)
+            self._last_pass = (ran, deleted)
+
+    async def step(self, timeout: float = RETENTION_STEP_TIMEOUT, *,
+                   before: Callable[[], None] | None = None) -> tuple[bool, int | None]:
+        """STEPPED 模式:放行 `_loop` 一輪並等它回到閘前;回傳該輪的 `(ran, deleted)`(`deleted` 為 None 表示
+        沒有清理或清理失敗)。`before`(例如推進時鐘)在 `_loop` 停在閘前之後、放行之前於同一把鎖內呼叫,
+        它丟出的例外原樣往外丟、不放行。並行呼叫依序執行。非 STEPPED、排程未執行或等待中排程結束時丟
+        `RuntimeError`;逾時丟 `TimeoutError`。"""
+        if not self.stepped:
+            raise RuntimeError("RetentionScheduler 不是 STEPPED 模式")
+        async with self._step_lock:
+            task = self.task
+            if task is None or task.done():
+                raise RuntimeError("RetentionScheduler 未執行")
+            await self._wait_or_stopped(self._parked.wait(), task, timeout)
+            if before is not None:
+                before()
+            fut: asyncio.Future[tuple[bool, int | None]] = asyncio.get_running_loop().create_future()
+            self._step_result = fut
+            self._parked.clear()
+            self._go.set()
+            return await self._wait_or_stopped(fut, task, timeout)
+
+    @staticmethod
+    async def _wait_or_stopped(aw: Any, task: asyncio.Task[None], timeout: float) -> Any:
+        """等 `aw` 完成,同時與排程 task 競速(施工審議 F2):task 先結束丟 `RuntimeError`,逾時丟
+        `TimeoutError`;兩者都會取消 `aw`。"""
+        waiter = asyncio.ensure_future(aw)
+        done, _ = await asyncio.wait({waiter, task}, timeout=timeout,
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if waiter in done:
+            return waiter.result()
+        waiter.cancel()
+        if task.done():
+            raise RuntimeError("RetentionScheduler 未執行")
+        raise TimeoutError("RetentionScheduler 未在時限內回到閘前")
 
     def start(self) -> None:
         self.run_once()
@@ -216,9 +297,23 @@ def create_app(
     issue_token: bool = False,
     port: int = 8787,
     mcp_max_sessions: int = MAX_SESSIONS,   # CHG-20261102-02 決策 19:MCP session 上限
+    test_control: bool = False,              # CHG-20261107-03 決策 5:掛載 `/__test__/*`
+    start_time: datetime | None = None,      # 決策 6:可控時鐘的起點
+    rng_seed: int | None = None,             # 決策 6:亂數種子
+    retention_stepped: bool = False,         # 決策 6:保存排程以閘代替 sleep
 ) -> FastAPI:
-    clk: Clock = clock if clock is not None else SystemClock()
-    rnd: Rng = rng if rng is not None else SystemRng()
+    if retention_stepped and not test_control:
+        raise ValueError("retention_stepped 只能與 test_control 一起使用(否則保存排程永遠不會執行)")
+    if clock is not None:
+        clk: Clock = clock
+    elif start_time is not None:
+        clk = FakeClock(start_time)
+    else:
+        clk = SystemClock()
+    if rng is not None:
+        rnd: Rng = rng
+    else:
+        rnd = SystemRng(rng_seed) if rng_seed is not None else SystemRng()
     # CHG-20261102-01 終審修正 A:SDK 直接寫 root logger 的驗證失敗紀錄含 request 片段(可能是 prompt)
     install_sdk_root_log_filter()
     path = Path(db_path) if db_path is not None else settings.db_path()
@@ -243,7 +338,8 @@ def create_app(
         app.state.router = Router(conn_factory, registry, clk, rnd, close_conn=True, cli_runner=runner,
                                   shutdown_flag=lambda: app.state.shutting_down)
         retention = RetentionScheduler(conn_factory, clk, interval_seconds=retention_interval_seconds,
-                                       poll_seconds=retention_poll_seconds)
+                                       poll_seconds=retention_poll_seconds,
+                                       stepped=retention_stepped)
         app.state.retention = retention
         retention.start()
         # CHG-20261102-01 T2(決策 9、AM-4):每次 lifespan 新建 MCP session manager 與專用持有 task
@@ -291,6 +387,10 @@ def create_app(
     # ---- T15(CHG-20261030-02)只在此處追加下一行掛載管理端點,其餘不動 ----
     app.include_router(admin.router)
     # ---- T15 追加處結束 ----
+    # CHG-20261107-03 決策 5 ③④:只有明確傳入 test_control=True 才掛載;不列入 OpenAPI
+    if test_control:
+        app.include_router(test_control_api.make_router(rng_seed=rng_seed if rng is None else None),
+                           include_in_schema=False)
     # CHG-20261102-01 T2(決策 9、10):`/mcp/<group>`(depth → Bearer → 停機 → 群組 → SDK session manager)
     app.mount("/mcp", McpEndpoint(app))
     # CHG-20261103-01 T3(決策 5–7):`/ui` 靜態檔與 `/` 轉址

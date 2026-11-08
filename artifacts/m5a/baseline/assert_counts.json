@@ -1,0 +1,3788 @@
+{
+  "functions": {
+    "tests/acceptance/conftest.py::artifacts_dir": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/conftest.py::test_key_env": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/perf.py::_measure_dry_run": {
+      "asserts": 4,
+      "expects": 0
+    },
+    "tests/acceptance/perf.py::dashboard_measurement": {
+      "asserts": 2,
+      "expects": 0
+    },
+    "tests/acceptance/perf.py::dry_run_measurement": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/perf.py::prepare": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/perf.py::summary": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/procs.py::child_env": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/procs.py::free_port": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/procs.py::lan_ip": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/procs.py::listening": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/procs.py::start_fake_upstream": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/procs.py::start_serve": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/procs.py::stop": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/procs.py::wait_listening": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/results.py::p95": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/results.py::record_result": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/seed.py::_budget": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/seed.py::_members": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/seed.py::seed_nfr_dataset": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_ac07_dry_run_p95.py::test_ac07_dry_run_p95_under_20ms": {
+      "asserts": 3,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::LoggedClient.__init__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::LoggedClient.chat": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::LoggedClient.close": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::LoggedClient.ledger": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::LoggedClient.ok": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::LoggedClient.request": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::LoggedClient.write_log": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_api_member": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_cli_member": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_files_containing": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_group_alive": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_make_v1_db": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_next_monthly_reset": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_order": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_pid_alive": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_q": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_route": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_served": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_start_request": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_start_request.<locals>.go": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_unfinished": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::_v1_schema": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::test_m3a_acceptance_operation": {
+      "asserts": 62,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3a_operation.py::test_seed_has_two_cli_members": {
+      "asserts": 4,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::HttpLog._line": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::HttpLog.async_hooks": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::HttpLog.async_hooks.<locals>.req": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::HttpLog.async_hooks.<locals>.resp": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::HttpLog.sync_hooks": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::HttpLog.sync_hooks.<locals>.req": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::Op.__init__": {
+      "asserts": 4,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::Op.assert_no_token_leak": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::Op.close": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::Op.ledger": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::Op.mcp": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::Op.ok": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::Op.raw_mcp": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::Op.register": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::Op.seed": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::Op.start_serve": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::Op.token_hash": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::_drain": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::_error": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::_files_containing": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::_fresh_artifacts": {
+      "asserts": 7,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::_parse": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::_prove_get_stream": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::op": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::record": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::test_m3b_operation_auth_and_tools": {
+      "asserts": 16,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::test_m3b_operation_list_changed": {
+      "asserts": 3,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::test_m3b_operation_list_changed.<locals>.handler": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::test_m3b_operation_shutdown": {
+      "asserts": 10,
+      "expects": 0
+    },
+    "tests/acceptance/test_m3b_operation.py::test_m3b_operation_stdio": {
+      "asserts": 8,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Env.__init__": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Env.assert_all_stopped": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Env.close": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Env.node": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::HttpLog._line": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::HttpLog.async_hooks": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::HttpLog.async_hooks.<locals>.req": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::HttpLog.async_hooks.<locals>.resp": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::HttpLog.sync_hooks": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::HttpLog.sync_hooks.<locals>.req": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Node.__init__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Node._init_token": {
+      "asserts": 2,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Node.backups": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Node.config_rows": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Node.conn": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Node.dry_run_first": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Node.dump": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Node.export": {
+      "asserts": 2,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Node.import_": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Node.ledger_total": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::Node.ok": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::_chat": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::_doc": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::_err": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::_files_containing": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::_fresh_artifacts": {
+      "asserts": 7,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::_safe": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::_seed": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::env": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::record": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::test_m4a_operation_config": {
+      "asserts": 31,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4a_operation.py::test_m4a_operation_mcp_stdio_max_sessions": {
+      "asserts": 5,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::Screens.__init__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::Screens._on_response": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::Screens.close": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::Screens.html": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::Screens.shot": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::ServeGw.__init__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::ServeGw._init_token": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::ServeGw.db": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::ServeGw.get": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::ServeGw.http": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::ServeGw.url": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::_check_disabled_providers": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::_download": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::_expected_variants": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::_fresh_artifacts": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::_local": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::_new_member": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::_no_event_loop_leak": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::_safe": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::_submit_member": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::_task": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::_wait_step": {
+      "asserts": 0,
+      "expects": 2
+    },
+    "tests/acceptance/test_m4b_operation.py::browser": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::env": {
+      "asserts": 2,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::playwright": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::record": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_m4b_operation.py::test_m4b_operation": {
+      "asserts": 41,
+      "expects": 32
+    },
+    "tests/acceptance/test_nfr1_dry_run_p95.py::test_nfr1_routing_decision_p95_under_20ms": {
+      "asserts": 4,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr1_dry_run_p95.py::test_nfr1_task_route_with_cli_members_p95_under_20ms": {
+      "asserts": 11,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr2_dashboard_p95.py::test_nfr2_dashboard_p95_under_200ms": {
+      "asserts": 3,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr2_dashboard_p95.py::test_seed_generator_exact_volume": {
+      "asserts": 4,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr3_bind.py::test_nfr3_default_bind_is_loopback_only": {
+      "asserts": 3,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr3_bind.py::test_nfr3_non_loopback_host_refused": {
+      "asserts": 2,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr4_prescan.py::_hits_in_tree": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr4_prescan.py::test_nfr4_known_key_prescan": {
+      "asserts": 32,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr4_prescan.py::test_nfr4_known_key_prescan.<locals>.rec_hits": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr5_payload_expiry.py::_AppAsyncio.__getattr__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr5_payload_expiry.py::_AppAsyncio.__init__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr5_payload_expiry.py::_SteppedSleep.__init__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr5_payload_expiry.py::_SteppedSleep.sleep": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr5_payload_expiry.py::_SteppedSleep.step": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr5_payload_expiry.py::_SteppedSleep.wait_parked": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr5_payload_expiry.py::test_nfr5_payload_deleted_within_one_hour_of_expiry": {
+      "asserts": 11,
+      "expects": 0
+    },
+    "tests/acceptance/test_nfr5_payload_expiry.py::test_nfr5_payload_expiry_and_ledger_has_no_content": {
+      "asserts": 11,
+      "expects": 0
+    },
+    "tests/acceptance/test_operation.py::LoggedClient.__init__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_operation.py::LoggedClient.chat": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_operation.py::LoggedClient.close": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_operation.py::LoggedClient.request": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_operation.py::LoggedClient.write_log": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_operation.py::_fake_requests": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_operation.py::_ledger": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/acceptance/test_operation.py::_member": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/acceptance/test_operation.py::test_acceptance_operation": {
+      "asserts": 32,
+      "expects": 0
+    },
+    "tests/features/environment.py::_is_m4b_ui": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/environment.py::_run_scenario_teardown": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/environment.py::after_all": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/environment.py::after_feature": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/environment.py::after_scenario": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/environment.py::before_all": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/environment.py::before_feature": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/environment.py::before_scenario": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/adapters_steps.py::_adapters": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/adapters_steps.py::_harness_dir": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/adapters_steps.py::_mods_dir": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/adapters_steps.py::_module_for": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/adapters_steps.py::_tree_digest": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/cleanup_admin_steps.py::_admin_error": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/cleanup_admin_steps.py::_create_api_member": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/common_steps.py::_parse_slots": {
+      "asserts": 2,
+      "expects": 0
+    },
+    "tests/features/steps/common_steps.py::_parse_utc": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/context_steps.py::_payload_rows": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/estimate_steps.py::_nearest_rank": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::_assert_env": {
+      "asserts": 2,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::_cli_body": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::_create_task_route": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::_estimate_entry": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::_ids": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::_last_record": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::_task_chat": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::_wait_started": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::step_env_fake_values.<locals>.restore": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::step_first_held.<locals>.spawn": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::step_max_concurrency_hold.<locals>.release_if_present": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3a_steps.py::step_release.<locals>.finish": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::_contents": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::_live": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::_loop": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::_mcp_post": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::_secrets": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::_serve": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::_teardown": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::_token_hash": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::_tools": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::_with_session": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::_with_session.<locals>.go": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::step_ask.<locals>.fn": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::step_background_ask.<locals>.call": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::step_list_routes.<locals>.fn": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::step_list_tools.<locals>.fn": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/m3b_steps.py::step_wait_list_changed.<locals>.wait": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_api_doc": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_backups": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_create_group": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_dep": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_dump": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_ensure_token": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_export": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_export_text": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_exported": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_import": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_other": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_safe": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_secrets": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_target": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4a_steps.py::_teardown": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_adapters": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_api_base": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_catalog": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_changed_config": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_close_all": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_detail": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_export_via_screen": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_gw": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_local": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_monthly_10": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_open_screen": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_page": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_page_facts": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_query": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_row": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_show_item": {
+      "asserts": 0,
+      "expects": 1
+    },
+    "tests/features/steps/m4b_steps.py::_start_gateway": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/m4b_steps.py::_wait_step": {
+      "asserts": 0,
+      "expects": 2
+    },
+    "tests/features/steps/m4b_steps.py::step_open_all.<locals>.on_response": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/steps/quota_steps.py::_estimate_for": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.__init__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.api_body": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.chat": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.close": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.create_member": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.create_route": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.dashboard_row": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.db": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.deployment": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.dry_run": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.ensure_started": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.fake_requests": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.get": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.latest_ledger": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.ledger": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.ledger_total": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.local_body": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.model_of": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.ok": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.plain_body": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.plan_entry": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.post": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.put": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.request": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.run_cleanup": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.start": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.started": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.stop": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.update_member": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/gateway.py::Gateway.update_route": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::HeldSession.call": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::HeldSession.close": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::HeldSession.open": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::HeldSession.open.<locals>.handler": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::HeldSession.open.<locals>.hold": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::LoopThread.__init__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::LoopThread.close": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::LoopThread.close.<locals>._cancel_rest": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::LoopThread.run": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::LoopThread.submit": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::ServeProc.__init__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::ServeProc.log_text": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::ServeProc.safe_log": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::ServeProc.stop": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::ServeProc.wait_exit": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::ServeProc.wait_ready": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::ask_route_enum": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::child_env": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::group_alive": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::is_list_changed": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::mcp_http_session": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::pid_alive": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::raw_get_stream": {
+      "asserts": 3,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::redact": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/features/support/mcp_proc.py::stdio_session": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::PageGuard._on_console": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::PageGuard._on_dialog": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::PageGuard._on_request": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::PageGuard.assert_clean": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::PageGuard.attach": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::PageGuard.block": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::PageGuard.manual_dialogs": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::PageGuard.take": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::PageGuard.violations": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::PageSpec.path": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::Violation.__str__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::_origin": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::add_member": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::add_route": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::api": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::close_and_collect": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::confirm_dialog": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::db_execute": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::db_snapshot": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::drag": {
+      "asserts": 1,
+      "expects": 2
+    },
+    "tests/helpers/ui.py::goto": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::guard_of": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::import_module": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::is_local_url": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::member_body": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::open_context": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::query_of": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::seed_group": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui.py::wait_loaded": {
+      "asserts": 0,
+      "expects": 1
+    },
+    "tests/helpers/ui_ledger.py::bulk_ledger": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_ledger.py::insert_ledger": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/helpers/ui_ledger.py::insert_payload": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_mcp.py::_wait_mcp": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/helpers/ui_mcp.py::mcp_catalog": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/helpers/ui_mcp.py::mcp_config": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/helpers/ui_mcp.py::mcp_variants": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_mcp.py::open_mcp": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_mcp.py::open_reference": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_mcp.py::select_mcp": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.__init__": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.add_tag": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.caps": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.error": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.field": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.kind": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.model": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.option_texts": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.option_values": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.provider": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.set_budget": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.submit": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::MemberForm.wait_ready": {
+      "asserts": 0,
+      "expects": 1
+    },
+    "tests/helpers/ui_members.py::broken_adapter_dir": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::member_body": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::open_groups": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::open_members": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::requests_of": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::seed_member": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_members.py::seed_route": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_overview.py::set_cooldown": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::_entry": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::add_members": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::api_body": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::card": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::create_route": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::drag_card": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::drag_slot": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::editor_slots": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::effective_slots": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::local_body": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::new_slot_zone": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::open_editor": {
+      "asserts": 0,
+      "expects": 1
+    },
+    "tests/helpers/ui_routes.py::put_order": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::route_order": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::route_order_full": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::set_cooldown": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::set_enabled": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::slot": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_routes.py::slot_head": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_settings.py::choose_import": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_settings.py::export_yaml": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_settings.py::import_dialog": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_settings.py::import_requests": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_settings.py::open_settings": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_settings.py::open_wizard": {
+      "asserts": 0,
+      "expects": 1
+    },
+    "tests/helpers/ui_settings.py::page_leaks": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_settings.py::token_hash": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/helpers/ui_settings.py::wizard_step": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/conftest.py::_no_event_loop_leak": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/conftest.py::browser": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/conftest.py::fake_api": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/conftest.py::make_ui_gateway": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/conftest.py::make_ui_gateway.<locals>.make": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/conftest.py::new_page": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/conftest.py::new_page.<locals>.factory": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/conftest.py::playwright": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/conftest.py::pytest_configure": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_api_reference.py::_detail": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_api_reference.py::gw": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_api_reference.py::test_categories_in_order_and_collapsible": {
+      "asserts": 0,
+      "expects": 5
+    },
+    "tests/ui/test_api_reference.py::test_click_ask_shows_description_and_schema": {
+      "asserts": 2,
+      "expects": 4
+    },
+    "tests/ui/test_api_reference.py::test_group_query_opens_that_group": {
+      "asserts": 0,
+      "expects": 2
+    },
+    "tests/ui/test_api_reference.py::test_hash_change_and_back_navigation": {
+      "asserts": 1,
+      "expects": 3
+    },
+    "tests/ui/test_api_reference.py::test_hash_deep_link_opens_item": {
+      "asserts": 0,
+      "expects": 1
+    },
+    "tests/ui/test_api_reference.py::test_index_items_match_catalog": {
+      "asserts": 2,
+      "expects": 3
+    },
+    "tests/ui/test_api_reference.py::test_page_text_has_no_admin_or_v1_paths": {
+      "asserts": 4,
+      "expects": 2
+    },
+    "tests/ui/test_api_reference.py::test_switch_group_shows_that_groups_catalog": {
+      "asserts": 1,
+      "expects": 6
+    },
+    "tests/ui/test_api_reference.py::test_unknown_group_with_markup_shows_error_as_text": {
+      "asserts": 1,
+      "expects": 5
+    },
+    "tests/ui/test_groups.py::add": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_groups.py::api_preview": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_groups.py::expect_preview": {
+      "asserts": 1,
+      "expects": 1
+    },
+    "tests/ui/test_groups.py::gw": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_groups.py::preview_ids": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_groups.py::test_create_group_and_422": {
+      "asserts": 3,
+      "expects": 7
+    },
+    "tests/ui/test_groups.py::test_delete_referenced_group_409": {
+      "asserts": 3,
+      "expects": 4
+    },
+    "tests/ui/test_groups.py::test_group_names_and_tags_rendered_as_text": {
+      "asserts": 2,
+      "expects": 3
+    },
+    "tests/ui/test_groups.py::test_mcp_link_carries_group": {
+      "asserts": 0,
+      "expects": 2
+    },
+    "tests/ui/test_groups.py::test_preview_debounce_300ms_clock": {
+      "asserts": 3,
+      "expects": 0
+    },
+    "tests/ui/test_groups.py::test_preview_error_clears_stale_result": {
+      "asserts": 1,
+      "expects": 5
+    },
+    "tests/ui/test_groups.py::test_preview_is_debounced": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_groups.py::test_save_commits_pending_tag_input": {
+      "asserts": 3,
+      "expects": 3
+    },
+    "tests/ui/test_groups.py::test_selector_rows_live_preview": {
+      "asserts": 7,
+      "expects": 2
+    },
+    "tests/ui/test_groups.py::test_tag_list_links_to_member_editor": {
+      "asserts": 2,
+      "expects": 5
+    },
+    "tests/ui/test_ledger.py::_fail_500": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_ledger.py::change": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_ledger.py::gw": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_ledger.py::ids": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_ledger.py::is_list": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_ledger.py::open_ledger": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_ledger.py::test_date_boundaries_asia_taipei": {
+      "asserts": 5,
+      "expects": 2
+    },
+    "tests/ui/test_ledger.py::test_double_click_next_moves_one_page": {
+      "asserts": 4,
+      "expects": 1
+    },
+    "tests/ui/test_ledger.py::test_error_html_is_text": {
+      "asserts": 3,
+      "expects": 4
+    },
+    "tests/ui/test_ledger.py::test_export_disabled_over_limit": {
+      "asserts": 2,
+      "expects": 8
+    },
+    "tests/ui/test_ledger.py::test_export_link_disabled_when_list_fails": {
+      "asserts": 2,
+      "expects": 4
+    },
+    "tests/ui/test_ledger.py::test_filters_sync_url_api_and_export": {
+      "asserts": 17,
+      "expects": 7
+    },
+    "tests/ui/test_ledger.py::test_member_list_failure_does_not_mark_orphans": {
+      "asserts": 0,
+      "expects": 5
+    },
+    "tests/ui/test_ledger.py::test_orphan_rows_show_original_id": {
+      "asserts": 0,
+      "expects": 4
+    },
+    "tests/ui/test_ledger.py::test_page_out_of_range_clamps_to_last": {
+      "asserts": 3,
+      "expects": 3
+    },
+    "tests/ui/test_ledger.py::test_paging": {
+      "asserts": 8,
+      "expects": 5
+    },
+    "tests/ui/test_ledger.py::test_payload_expired_and_not_recorded": {
+      "asserts": 2,
+      "expects": 4
+    },
+    "tests/ui/test_ledger.py::test_payload_panel": {
+      "asserts": 10,
+      "expects": 15
+    },
+    "tests/ui/test_mcp.py::_expected": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_mcp.py::gw": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_mcp.py::test_command_variant_has_no_download": {
+      "asserts": 0,
+      "expects": 3
+    },
+    "tests/ui/test_mcp.py::test_copy_denied_selects_text_and_shows_hint": {
+      "asserts": 1,
+      "expects": 4
+    },
+    "tests/ui/test_mcp.py::test_copy_writes_variant_content_to_clipboard": {
+      "asserts": 1,
+      "expects": 2
+    },
+    "tests/ui/test_mcp.py::test_download_strips_slashes_from_filename": {
+      "asserts": 2,
+      "expects": 1
+    },
+    "tests/ui/test_mcp.py::test_download_strips_slashes_from_filename.<locals>.tamper": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_mcp.py::test_download_uses_filename_and_plain_blob": {
+      "asserts": 6,
+      "expects": 0
+    },
+    "tests/ui/test_mcp.py::test_failed_load_clears_previous_content": {
+      "asserts": 0,
+      "expects": 4
+    },
+    "tests/ui/test_mcp.py::test_query_selects_initial_group_and_tool": {
+      "asserts": 1,
+      "expects": 1
+    },
+    "tests/ui/test_mcp.py::test_unknown_group_shows_error_as_text": {
+      "asserts": 1,
+      "expects": 2
+    },
+    "tests/ui/test_mcp.py::test_variants_match_api_for_every_tool_and_group": {
+      "asserts": 2,
+      "expects": 8
+    },
+    "tests/ui/test_members.py::adapters": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_members.py::get_member": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_members.py::gw": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_members.py::new_form": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_members.py::test_adapters_loading_and_models_error": {
+      "asserts": 2,
+      "expects": 6
+    },
+    "tests/ui/test_members.py::test_autocomplete_off": {
+      "asserts": 1,
+      "expects": 5
+    },
+    "tests/ui/test_members.py::test_bad_number_input_not_sent": {
+      "asserts": 3,
+      "expects": 1
+    },
+    "tests/ui/test_members.py::test_budget_none_sends_null_and_anchor": {
+      "asserts": 2,
+      "expects": 4
+    },
+    "tests/ui/test_members.py::test_cascade_kind_provider_model": {
+      "asserts": 8,
+      "expects": 5
+    },
+    "tests/ui/test_members.py::test_create_edit_test_call_and_budget": {
+      "asserts": 13,
+      "expects": 8
+    },
+    "tests/ui/test_members.py::test_delete_with_confirm": {
+      "asserts": 1,
+      "expects": 8
+    },
+    "tests/ui/test_members.py::test_dot_id_member_not_managed": {
+      "asserts": 1,
+      "expects": 6
+    },
+    "tests/ui/test_members.py::test_dot_ids_rejected_on_create": {
+      "asserts": 1,
+      "expects": 1
+    },
+    "tests/ui/test_members.py::test_hash_opens_member_form": {
+      "asserts": 0,
+      "expects": 7
+    },
+    "tests/ui/test_members.py::test_hash_stale_response_ignored": {
+      "asserts": 1,
+      "expects": 3
+    },
+    "tests/ui/test_members.py::test_hash_unknown_member_no_request": {
+      "asserts": 1,
+      "expects": 2
+    },
+    "tests/ui/test_members.py::test_litellm_member_create_and_edit": {
+      "asserts": 2,
+      "expects": 7
+    },
+    "tests/ui/test_members.py::test_model_name_required_and_params_json": {
+      "asserts": 1,
+      "expects": 4
+    },
+    "tests/ui/test_members.py::test_mount_member_form_contract": {
+      "asserts": 4,
+      "expects": 5
+    },
+    "tests/ui/test_members.py::test_mount_member_form_edit_and_cancel": {
+      "asserts": 3,
+      "expects": 1
+    },
+    "tests/ui/test_members.py::test_network_error_message": {
+      "asserts": 0,
+      "expects": 3
+    },
+    "tests/ui/test_members.py::test_provider_single_409_message": {
+      "asserts": 1,
+      "expects": 1
+    },
+    "tests/ui/test_members.py::test_removed_cli_module_member": {
+      "asserts": 0,
+      "expects": 5
+    },
+    "tests/ui/test_members.py::test_server_rejections_shown": {
+      "asserts": 1,
+      "expects": 2
+    },
+    "tests/ui/test_members.py::test_single_module_with_member_disabled": {
+      "asserts": 0,
+      "expects": 7
+    },
+    "tests/ui/test_members.py::test_toggle_get_then_put": {
+      "asserts": 3,
+      "expects": 3
+    },
+    "tests/ui/test_members.py::test_toggle_updates_open_editor": {
+      "asserts": 1,
+      "expects": 4
+    },
+    "tests/ui/test_members.py::test_unavailable_module_disabled_ac21": {
+      "asserts": 1,
+      "expects": 3
+    },
+    "tests/ui/test_members.py::test_upstream_conflict_upstream_wins_with_note": {
+      "asserts": 2,
+      "expects": 3
+    },
+    "tests/ui/test_members.py::test_upstream_kept_when_params_fixed": {
+      "asserts": 2,
+      "expects": 2
+    },
+    "tests/ui/test_members.py::test_upstream_params_sync": {
+      "asserts": 2,
+      "expects": 3
+    },
+    "tests/ui/test_members.py::test_user_data_rendered_as_text": {
+      "asserts": 2,
+      "expects": 3
+    },
+    "tests/ui/test_overview.py::gw": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_overview.py::local": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_overview.py::row": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_overview.py::seeded": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_overview.py::test_clear_cooldown": {
+      "asserts": 2,
+      "expects": 4
+    },
+    "tests/ui/test_overview.py::test_first_run_redirects_to_wizard": {
+      "asserts": 3,
+      "expects": 4
+    },
+    "tests/ui/test_overview.py::test_html_in_user_data_is_text": {
+      "asserts": 4,
+      "expects": 1
+    },
+    "tests/ui/test_overview.py::test_member_id_links_to_members_page": {
+      "asserts": 1,
+      "expects": 3
+    },
+    "tests/ui/test_overview.py::test_resume_banner_when_members_but_no_routes": {
+      "asserts": 0,
+      "expects": 6
+    },
+    "tests/ui/test_overview.py::test_rows_and_summary_match_dashboard": {
+      "asserts": 3,
+      "expects": 19
+    },
+    "tests/ui/test_overview.py::test_skip_wizard_stays_on_overview": {
+      "asserts": 0,
+      "expects": 6
+    },
+    "tests/ui/test_overview.py::test_usage_meter_matches_dashboard": {
+      "asserts": 4,
+      "expects": 5
+    },
+    "tests/ui/test_overview.py::usd": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_routes.py::gw": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_routes.py::page": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_routes.py::route_targets": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_routes.py::test_apply_move_pure": {
+      "asserts": 17,
+      "expects": 0
+    },
+    "tests/ui/test_routes.py::test_beforeunload_prompts_when_dirty": {
+      "asserts": 2,
+      "expects": 2
+    },
+    "tests/ui/test_routes.py::test_beforeunload_prompts_when_dirty.<locals>.accept": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_routes.py::test_cli_card_marked_when_mode_chat": {
+      "asserts": 0,
+      "expects": 5
+    },
+    "tests/ui/test_routes.py::test_disabled_cooling_unsorted_cards_are_kept": {
+      "asserts": 5,
+      "expects": 7
+    },
+    "tests/ui/test_routes.py::test_drag_and_drop_then_save": {
+      "asserts": 9,
+      "expects": 6
+    },
+    "tests/ui/test_routes.py::test_dry_run_panel": {
+      "asserts": 1,
+      "expects": 5
+    },
+    "tests/ui/test_routes.py::test_dry_run_slot_labels_match_editor": {
+      "asserts": 3,
+      "expects": 4
+    },
+    "tests/ui/test_routes.py::test_editor_initial_state_and_header": {
+      "asserts": 5,
+      "expects": 14
+    },
+    "tests/ui/test_routes.py::test_editor_missing_or_unknown_route": {
+      "asserts": 0,
+      "expects": 4
+    },
+    "tests/ui/test_routes.py::test_empty_slots_go_through_restore_confirm": {
+      "asserts": 5,
+      "expects": 5
+    },
+    "tests/ui/test_routes.py::test_keyboard_alternatives_match_drag": {
+      "asserts": 5,
+      "expects": 4
+    },
+    "tests/ui/test_routes.py::test_member_not_in_target_shows_422": {
+      "asserts": 4,
+      "expects": 6
+    },
+    "tests/ui/test_routes.py::test_restore_default": {
+      "asserts": 4,
+      "expects": 3
+    },
+    "tests/ui/test_routes.py::test_routes_list_create_conflict_shows_message": {
+      "asserts": 0,
+      "expects": 3
+    },
+    "tests/ui/test_routes.py::test_routes_list_create_delete_and_record_tristate": {
+      "asserts": 3,
+      "expects": 18
+    },
+    "tests/ui/test_routes.py::test_settings_save_does_not_revert_external_target": {
+      "asserts": 4,
+      "expects": 4
+    },
+    "tests/ui/test_routes.py::test_settings_save_without_freezing_order": {
+      "asserts": 4,
+      "expects": 6
+    },
+    "tests/ui/test_routes.py::test_stale_members_hidden_and_cleared_on_save": {
+      "asserts": 4,
+      "expects": 1
+    },
+    "tests/ui/test_routes.py::test_stored_effort_outside_capabilities_is_kept": {
+      "asserts": 2,
+      "expects": 3
+    },
+    "tests/ui/test_settings.py::changed_config": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_settings.py::dry_run": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_settings.py::gw": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_settings.py::query": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_settings.py::record_import_bodies": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_settings.py::record_import_bodies.<locals>.on_request": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_settings.py::sha": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_settings.py::test_context_below_1kb_shows_422": {
+      "asserts": 3,
+      "expects": 3
+    },
+    "tests/ui/test_settings.py::test_context_client_validation": {
+      "asserts": 1,
+      "expects": 2
+    },
+    "tests/ui/test_settings.py::test_context_form_roundtrip_kb": {
+      "asserts": 3,
+      "expects": 11
+    },
+    "tests/ui/test_settings.py::test_export_422_shows_message_without_download": {
+      "asserts": 3,
+      "expects": 1
+    },
+    "tests/ui/test_settings.py::test_export_download_matches_api": {
+      "asserts": 3,
+      "expects": 0
+    },
+    "tests/ui/test_settings.py::test_import_409_shown_without_dialog": {
+      "asserts": 1,
+      "expects": 2
+    },
+    "tests/ui/test_settings.py::test_import_422_lists_all_errors": {
+      "asserts": 4,
+      "expects": 2
+    },
+    "tests/ui/test_settings.py::test_import_change_invalidates_preview": {
+      "asserts": 4,
+      "expects": 6
+    },
+    "tests/ui/test_settings.py::test_import_change_invalidates_preview.<locals>.hold_first": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_settings.py::test_import_merge_no_backup_and_escape_cancels": {
+      "asserts": 2,
+      "expects": 11
+    },
+    "tests/ui/test_settings.py::test_import_replace_preview_cancel_then_import": {
+      "asserts": 11,
+      "expects": 17
+    },
+    "tests/ui/test_settings.py::test_import_too_large_not_sent": {
+      "asserts": 2,
+      "expects": 4
+    },
+    "tests/ui/test_settings.py::test_overview_matches_api_and_copy_serve": {
+      "asserts": 5,
+      "expects": 9
+    },
+    "tests/ui/test_settings.py::test_overview_token_not_issued": {
+      "asserts": 1,
+      "expects": 3
+    },
+    "tests/ui/test_settings.py::test_token_first_generate_copy_and_wipe": {
+      "asserts": 8,
+      "expects": 18
+    },
+    "tests/ui/test_settings.py::test_token_rotate_reprompt_when_not_copied": {
+      "asserts": 4,
+      "expects": 12
+    },
+    "tests/ui/test_settings.py::test_token_unknown_state_uses_rotate_wording": {
+      "asserts": 0,
+      "expects": 5
+    },
+    "tests/ui/test_settings.py::test_token_wiped_on_pagehide_and_back": {
+      "asserts": 4,
+      "expects": 5
+    },
+    "tests/ui/test_settings.py::token_dialog": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::_group_select": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::_is_error": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::_msg": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::gw": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::page": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_api_js_bad_2xx_body": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_api_js_errors": {
+      "asserts": 6,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_api_js_mutations_pass_host_origin": {
+      "asserts": 2,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_api_js_uses_no_store": {
+      "asserts": 2,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_async_tests_after_ui_module_pass": {
+      "asserts": 2,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_close_and_collect_catches_late_events": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_confirm_dialog_focus_escape_and_confirm": {
+      "asserts": 3,
+      "expects": 8
+    },
+    "tests/ui/test_shell.py::test_csp_violation_is_reported": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_expect_http_errors_only_skips_same_origin_api": {
+      "asserts": 7,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_fake_fixtures_available": {
+      "asserts": 3,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_fill_group_select": {
+      "asserts": 5,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_fill_group_select_clears_its_error": {
+      "asserts": 2,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_fill_group_select_clears_its_error.<locals>.handler": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_formatters_and_labels": {
+      "asserts": 7,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_h_allows_safe_multi_url_attrs": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_h_allows_safe_urls": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_h_injection_strings_create_no_elements": {
+      "asserts": 3,
+      "expects": 1
+    },
+    "tests/ui/test_shell.py::test_h_rejects": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_h_string_children_are_text": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_h_value_stringified_once": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_latest_and_fmt_usd": {
+      "asserts": 3,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_manual_dialogs_beforeunload": {
+      "asserts": 3,
+      "expects": 2
+    },
+    "tests/ui/test_shell.py::test_manual_dialogs_beforeunload.<locals>.accept": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_message_bar_and_errors": {
+      "asserts": 1,
+      "expects": 5
+    },
+    "tests/ui/test_shell.py::test_nav_links_reach_pages": {
+      "asserts": 0,
+      "expects": 3
+    },
+    "tests/ui/test_shell.py::test_navigate_helper": {
+      "asserts": 1,
+      "expects": 2
+    },
+    "tests/ui/test_shell.py::test_non_local_request_blocked_and_recorded": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_pages_load_clean": {
+      "asserts": 3,
+      "expects": 5
+    },
+    "tests/ui/test_shell.py::test_playwright_uses_cached_chromium_1248": {
+      "asserts": 4,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_query_and_hash_send_only_get": {
+      "asserts": 1,
+      "expects": 0
+    },
+    "tests/ui/test_shell.py::test_root_redirects_to_ui": {
+      "asserts": 0,
+      "expects": 2
+    },
+    "tests/ui/test_shell.py::test_sticky_errors": {
+      "asserts": 7,
+      "expects": 1
+    },
+    "tests/ui/test_shell.py::test_tag_input": {
+      "asserts": 6,
+      "expects": 2
+    },
+    "tests/ui/test_shell.py::test_trusted_types_enforced_and_playwright_ops_work": {
+      "asserts": 6,
+      "expects": 2
+    },
+    "tests/ui/test_wizard.py::fill_api_member": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_wizard.py::gw": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_wizard.py::reach_step4_with_existing_chat": {
+      "asserts": 1,
+      "expects": 2
+    },
+    "tests/ui/test_wizard.py::step_card": {
+      "asserts": 0,
+      "expects": 0
+    },
+    "tests/ui/test_wizard.py::test_back_double_click_one_form_and_tag_order_kept": {
+      "asserts": 0,
+      "expects": 4
+    },
+    "tests/ui/test_wizard.py::test_cli_member_defaults_task_mode": {
+      "asserts": 1,
+      "expects": 3
+    },
+    "tests/ui/test_wizard.py::test_empty_db_full_flow_ac8": {
+      "asserts": 9,
+      "expects": 22
+    },
+    "tests/ui/test_wizard.py::test_existing_chat_route_with_member_reused_quietly": {
+      "asserts": 0,
+      "expects": 2
+    },
+    "tests/ui/test_wizard.py::test_existing_chat_route_without_member_warns": {
+      "asserts": 2,
+      "expects": 4
+    },
+    "tests/ui/test_wizard.py::test_resume_from_step3_via_overview_banner": {
+      "asserts": 1,
+      "expects": 5
+    },
+    "tests/ui/test_wizard.py::test_resume_step3_reused_route_without_member_warns": {
+      "asserts": 0,
+      "expects": 2
+    },
+    "tests/ui/test_wizard.py::test_resume_step4_when_member_and_route_exist": {
+      "asserts": 1,
+      "expects": 1
+    },
+    "tests/ui/test_wizard.py::test_skip_link": {
+      "asserts": 0,
+      "expects": 5
+    },
+    "tests/ui/test_wizard.py::test_tags_required_and_order_and_preview": {
+      "asserts": 5,
+      "expects": 7
+    },
+    "tests/ui/test_wizard.py::test_test_call_failure_then_back_and_fix": {
+      "asserts": 2,
+      "expects": 7
+    },
+    "tests/ui/test_wizard.py::wait_step": {
+      "asserts": 0,
+      "expects": 3
+    }
+  },
+  "steps": {
+    "\"([^\"]+)\" 被選為第一順位的比例介於 ([0-9.]+) 與 ([0-9.]+)": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/routing_steps.py",
+      "function": "step_first_ratio"
+    },
+    "(\\d+) 次回應的 header \"([^\"]+)\" 皆為 \"([^\"]*)\"": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_all_headers"
+    },
+    "CLI 成員 \"([^\"]+)\" 冷卻至 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_cli_cooling"
+    },
+    "CLI 成員 \"([^\"]+)\" 的 credit_pool 剩餘 ([0-9.]+) 美元且本次請求預估 P90 花費為 ([0-9.]+) 美元": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_cli_remaining_and_estimate"
+    },
+    "CLI 成員 \"([^\"]+)\" 的 params\\.extra_args 設為 (\\[.*\\])": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_extra_args"
+    },
+    "CLI 成員 \"([^\"]+)\",provider \"(claude-cli)\",額度 credit_pool (\\d+) 美元每月重置": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_cli_member_credit"
+    },
+    "CLI 成員 \"([^\"]+)\",provider \"(claude-cli)\",額度類型 none": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_claude_member_none"
+    },
+    "CLI 成員 \"([^\"]+)\",provider \"(codex-cli)\",額度類型 none": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_cli_member_none"
+    },
+    "CSV 不含任何請求或回應內容": {
+      "asserts": 4,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_csv_no_payload"
+    },
+    "CSV 有標題列與 (\\d+) 列資料": {
+      "asserts": 4,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_csv_rows"
+    },
+    "GET /api/adapters 列出 provider \"([^\"]+)\"": {
+      "asserts": 4,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_adapters_lists"
+    },
+    "GET /api/adapters 顯示 provider \"([^\"]+)\" 不可用並附原因": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_adapters_unavailable"
+    },
+    "HTTP 回應狀態為 (\\d+) 且錯誤碼為 \"([^\"]+)\"": {
+      "asserts": 6,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_http_status_code"
+    },
+    "MCP 用戶端以正確 token 連線 \"([^\"]+)\" 並以 route \"([^\"]+)\" 呼叫 ask": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_ask"
+    },
+    "MCP 用戶端以正確 token 連線 \"([^\"]+)\" 並列出工具": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_list_tools"
+    },
+    "MCP 用戶端以正確 token 連線 \"([^\"]+)\" 並呼叫 list_routes": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_list_routes"
+    },
+    "MCP 用戶端以正確 token 連線 \"([^\"]+)\" 並在背景以 route \"([^\"]+)\" 呼叫 ask": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_background_ask"
+    },
+    "MCP 用戶端以正確 token 連線 \"([^\"]+)\" 並開啟通知串流": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_open_stream"
+    },
+    "MCP 用戶端在 (\\d+) 秒內收到 \"notifications/tools/list_changed\"": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_wait_list_changed"
+    },
+    "ask 結果不是錯誤且 served_by 為 \"([^\"]+)\"、slot 為 (\\d+)": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_ask_ok"
+    },
+    "ask 結果帶 cost_usd 欄位": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_ask_cost"
+    },
+    "ask 結果為錯誤且 structuredContent 的錯誤碼為 \"([^\"]+)\"": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_ask_error"
+    },
+    "context 保存天數為 (\\d+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/context_steps.py",
+      "function": "step_retention_days"
+    },
+    "dry-run route \"([^\"]+)\" 的第一順位為 \"([^\"]+)\"": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_dry_run_first"
+    },
+    "list_routes 結果只含 route \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_list_routes_only"
+    },
+    "local 成員 \"([^\"]+)\",provider \"([^\"]+)\",api_base 指向一個沒有服務的埠": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_health_steps.py",
+      "function": "step_local_member_dead_port"
+    },
+    "local 成員 \"([^\"]+)\",provider \"([^\"]+)\",api_base 指向假 API 上游": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_local_member"
+    },
+    "mcp-stdio 的結束碼為 (\\d+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_stdio_rc"
+    },
+    "route \"([^\"]+)\" 勾選預估額度檢查": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_route_precheck"
+    },
+    "route \"([^\"]+)\" 的 record_context 為 0": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_route_record_off"
+    },
+    "route \"([^\"]+)\" 的 slot 與成員順序與 \"GET /api/routes/([^\"]+)\" 的 order 相同": {
+      "asserts": 4,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_list_routes_order"
+    },
+    "route \"([^\"]+)\" 的 target 含 (.+),採預設順序": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_chat_route_default"
+    },
+    "route \"([^\"]+)\" 的 targets 依序為 (slot .+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_export_targets"
+    },
+    "route \"([^\"]+)\" 的手動順序 slot 1 為 \"([^\"]+)\"": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_route_first"
+    },
+    "route \"([^\"]+)\" 與成員 \"([^\"]+)\" 已有 (\\d+) 筆 ok 帳本紀錄": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/estimate_steps.py",
+      "function": "step_seed_history"
+    },
+    "serve 在寬限期內結束且沒有殘留的假 claude 行程": {
+      "asserts": 6,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_serve_exited"
+    },
+    "stdio 用戶端收到 JSON-RPC 錯誤且 error\\.data\\.code 為 \"([^\"]+)\"": {
+      "asserts": 4,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_stdio_error"
+    },
+    "target 只含所列成員的 route \"([^\"]+)\" 順序為 (.+)": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_route"
+    },
+    "task route \"([^\"]+)\" 的 target 只含 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_task_route_only"
+    },
+    "task route \"([^\"]+)\" 的 target 含 (.+),採預設順序": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_task_route_default"
+    },
+    "task route \"([^\"]+)\" 的 target 含 (.+),順序為 (slot .+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_task_route_ordered"
+    },
+    "task route \"([^\"]+)\" 的 target 為群組 \"([^\"]+)\",順序為 (slot .+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_task_route_group"
+    },
+    "task route \"([^\"]+)\" 的手動順序為 slot 1 \"([^\"]+)\"、slot 2 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_route_manual"
+    },
+    "usage_ledger 有 (\\d+) 列": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/context_steps.py",
+      "function": "step_ledger_rows"
+    },
+    "usage_ledger 沒有任何 prompt 或回應內容欄位": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/context_steps.py",
+      "function": "step_ledger_no_content"
+    },
+    "usage_payloads 有 (\\d+) 列": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/context_steps.py",
+      "function": "step_payload_rows"
+    },
+    "一個以假 API 上游啟動的閘道與瀏覽器": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_gateway_and_browser"
+    },
+    "一個空的閘道資料目錄與假 API 上游": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_empty_home"
+    },
+    "以 header \"([^\"]+)\" 為 \"([^\"]*)\" 送 (GET|POST) 到 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_header_request"
+    },
+    "以 mode \"(merge|replace)\" 且 dry_run 匯入把成員 \"([^\"]+)\" 的 params\\.api_base 改為 \"([^\"]+)\" 的設定": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_import_dry_run"
+    },
+    "以 mode \"(merge|replace)\" 匯入兩個 provider 為 \"(claude-cli)\" 的成員": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_import_two_single"
+    },
+    "以 mode \"(merge|replace)\" 匯入第二個成員的 kind 為 \"([^\"]+)\" 的設定": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_import_bad_kind"
+    },
+    "以 mode \"merge\" 匯入只含成員 \"([^\"]+)\" 且其 tags 為 (\\[.*\\]) 的設定": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_import_merge_tags"
+    },
+    "以 mode \"replace\" 匯入只含成員 \"([^\"]+)\" 的設定": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_import_replace_only"
+    },
+    "以 provider \"([^\"]+)\" 建立成員 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_member"
+    },
+    "以 provider \"([^\"]+)\" 建立成員 \"([^\"]+)\" 並建立 target 只含它的 route \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_member_and_route"
+    },
+    "以 rotate 前的 token 送到 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_old_token"
+    },
+    "以不帶 Authorization 的請求送到 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_no_auth"
+    },
+    "以正確 token 且 header \"([^\"]+)\" 為 \"([^\"]*)\" 送到 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_token_and_header"
+    },
+    "以環境變數 SPILLWAY_DEPTH 為 \"(\\d+)\" 執行 mcp-stdio --group ([^,\\s]+),stdio 用戶端送出 initialize": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_stdio_depth"
+    },
+    "以管理 API rotate 存取 token": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_rotate"
+    },
+    "以管理 API 匯出 route 為 \"([^\"]+)\" 的帳本 CSV": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_export_csv"
+    },
+    "以管理 API 匯出設定": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_export"
+    },
+    "以管理 API 取得群組 \"([^\"]+)\" 的 MCP 設定,工具依序為 (.+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_mcp_config"
+    },
+    "以管理 API 取得設定總覽": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_settings_overview"
+    },
+    "以管理 API 建立 CLI 成員 \"([^\"]+)\",provider \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_admin_create_cli"
+    },
+    "以管理 API 建立 api 成員 \"([^\"]+)\",params 為 (\\{.*\\})": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_admin_steps.py",
+      "function": "step_create_with_params"
+    },
+    "以管理 API 建立 api 成員 \"([^\"]+)\",params\\.signals 含未知類別鍵 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_admin_steps.py",
+      "function": "step_create_with_unknown_signal_kind"
+    },
+    "以管理 API 建立 api 成員 \"([^\"]+)\",params\\.signals 覆寫 \"(quota|rate_limit)\" 規則為 HTTP 狀態 (\\d+)": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_admin_steps.py",
+      "function": "step_create_with_signals"
+    },
+    "以管理 API 建立 task route \"([^\"]+)\",target 為群組 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_create_route_live"
+    },
+    "以管理 API 把成員 \"([^\"]+)\" 的 api_base 改為指向假 API 上游": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_admin_steps.py",
+      "function": "step_update_api_base"
+    },
+    "以管理 API 的請求 body 建立名為 \"([^\"]+)\" 的群組": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_group_named"
+    },
+    "以管理 API 的請求 body 建立名稱含 U\\+([0-9A-Fa-f]{4}) 的群組": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_group_codepoint"
+    },
+    "以該範例的 model 呼叫 \"(/v1/chat/completions)\" 回應狀態為 200": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_call_example"
+    },
+    "以錯誤的 token 送到 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_bad_token"
+    },
+    "使用 provider \"([^\"]+)\" 的成員於候選篩選的原因為 \"([^\"]+)\"": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_unavailable_reason"
+    },
+    "供應商選單只列出支援 \"([^\"]+)\" 的模組": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_providers_for_kind"
+    },
+    "依序開啟全部 8 個畫面": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_open_all"
+    },
+    "依序開啟畫面 \"總覽\"、\"成員\"、\"帳本\"": {
+      "asserts": 0,
+      "expects": 3,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_open_three"
+    },
+    "假 (claude|codex) 的情境設為(額度用完|成功|限流)": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_fake_cli_scenario"
+    },
+    "假 (claude|codex) 的情境設為(額度用完|成功|限流)且系統時間推進至 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_fake_cli_scenario_and_time"
+    },
+    "假 CLI 執行檔在 PATH 最前面且 PATH 上沒有真實的 claude 與 codex": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_fake_cli_on_path"
+    },
+    "假 claude 已啟動後對 serve 送出 SIGTERM": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_sigterm"
+    },
+    "假 claude 收到 prompt 後持續執行不結束": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_fake_hold"
+    },
+    "假 claude 收到的參數含 \"([^\"]+)\" 與 \"([^\"]+)\",prompt 由 stdin 傳入": {
+      "asserts": 4,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_claude_args"
+    },
+    "假 claude 收到的環境沒有 (.+),且 \"SPILLWAY_DEPTH\" 為 \"(\\d+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_claude_env"
+    },
+    "假 codex 收到的參數含 \"([^\"]+)\" 與 \"([^\"]+)\",倒數第二個參數為 \"([^\"]+)\"": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_codex_args"
+    },
+    "假 codex 收到的環境沒有 (.+),且 \"SPILLWAY_DEPTH\" 為 \"(\\d+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_codex_env"
+    },
+    "假上游對 \"([^\"]+)\" 回傳 HTTP (\\d+)": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_fake_member_status"
+    },
+    "假上游對所有請求回傳 HTTP (\\d+)": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_fake_all_status"
+    },
+    "假上游恢復正常且系統時間推進 (\\d+) 秒": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_fake_reset_advance"
+    },
+    "假上游恢復正常且系統時間推進至 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_fake_reset_set"
+    },
+    "假上游總共收到 (\\d+) 次請求": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/routing_steps.py",
+      "function": "step_fake_total"
+    },
+    "儲存的請求內容不含 \"([^\"]+)\"": {
+      "asserts": 4,
+      "expects": 0,
+      "file": "tests/features/steps/context_steps.py",
+      "function": "step_payload_no_secret"
+    },
+    "再次匯出的內容與檔案 A 相同": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_reexport_same"
+    },
+    "再次按下 \"預覽匯入\" 並在確認對話框按下 \"匯入\"": {
+      "asserts": 1,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_import_confirm"
+    },
+    "加權抽選使用固定 seed 的亂數來源": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_fixed_seed"
+    },
+    "加權抽選使用未給 seed 的亂數來源": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_ac4_steps.py",
+      "function": "step_unseeded_rng"
+    },
+    "匯入回應狀態為 (\\d+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_import_status"
+    },
+    "匯入回應的 dry_run 為 true 且 backup 為空": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_dry_run_flags"
+    },
+    "匯入回應的 privileged 為 (\\[.*\\])": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_privileged"
+    },
+    "匯出檔不含該環境變數的值,也不含存取 token 明文": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_export_no_secret"
+    },
+    "匯出檔含成員 (.+),群組 \"([^\"]+)\",route \"([^\"]+)\"": {
+      "asserts": 5,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_export_contains"
+    },
+    "另外放入一個 __init__.py 無法 import 的測試模組資料夾,宣告 provider \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_put_broken_module"
+    },
+    "另外放入一個宣告 provider \"([^\"]+)\" 且 cardinality 為 single 的測試模組資料夾": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_put_single_module"
+    },
+    "另外放入一個宣告 provider \"([^\"]+)\" 的測試模組資料夾,未修改任何既有檔案": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_put_module"
+    },
+    "合約測試對該模組通過": {
+      "asserts": 4,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_contract"
+    },
+    "啟動閘道": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_start"
+    },
+    "回應 header \"([^\"]+)\" 為 \"([^\"]*)\"": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_header"
+    },
+    "回應為 YAML 且 version 為 (\\d+)": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_export_yaml"
+    },
+    "回應狀態為 (\\d+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_status"
+    },
+    "在另一個空的閘道資料目錄以 mode \"(merge|replace)\" 匯入檔案 A": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_import_a_other"
+    },
+    "在另一個空資料目錄的閘道開啟畫面 \"設定\",以 mode \"replace\" 預覽匯入檔案 A 並在確認對話框按下 \"匯入\"": {
+      "asserts": 2,
+      "expects": 2,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_import_a_elsewhere"
+    },
+    "在成員 \"([^\"]+)\" 的列按下 \"清除冷卻\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_clear_cooldown"
+    },
+    "在畫面 \"設定\" 匯出設定為檔案 A": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_export_a"
+    },
+    "在畫面 \"設定\" 按下 \"重新產生 token\" 並確認": {
+      "asserts": 0,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_rotate"
+    },
+    "在確認對話框按下 \"取消\"": {
+      "asserts": 0,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_import_cancel"
+    },
+    "在精靈中依序選類型 \"([^\"]+)\"、供應商 \"([^\"]+)\"、第一個模型,上游網址填假上游,憑證參照填 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_wizard_member"
+    },
+    "在精靈中建立 route \"([^\"]+)\" 並完成精靈": {
+      "asserts": 0,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_wizard_route"
+    },
+    "在精靈中按下 \"測試呼叫\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_wizard_test"
+    },
+    "在該閘道的畫面 \"設定\" 匯出設定為檔案 B": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_export_b"
+    },
+    "存取 token 的雜湊未改變": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_hash_unchanged"
+    },
+    "客戶端以 model \"([^\"]+)\" 送出 (\\d+) 次 task 請求": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_send_task"
+    },
+    "客戶端以 model \"([^\"]+)\" 送出 (\\d+) 次請求": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_send"
+    },
+    "客戶端以 model \"([^\"]+)\" 送出 1 次請求,系統時間不前進": {
+      "asserts": 4,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_health_steps.py",
+      "function": "step_send_once_clock_frozen"
+    },
+    "客戶端以 model \"([^\"]+)\" 送出 prompt \"([^\"]*)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_send_prompt"
+    },
+    "客戶端以 model \"([^\"]+)\" 送出第 1 次 task 請求並等到假 claude 已開始": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_first_held"
+    },
+    "客戶端以 model \"([^\"]+)\" 送出第 2 次 task 請求": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_second"
+    },
+    "對 route \"([^\"]+)\" 以 max_tokens (\\d+) 執行 1 次 dry-run": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_dry_run_max_tokens"
+    },
+    "對 route \"([^\"]+)\" 執行 (\\d+) 次 dry-run": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_dry_run"
+    },
+    "對話框顯示新 token 一次;關閉對話框後頁面 DOM 與輸入欄位都不含新 token": {
+      "asserts": 2,
+      "expects": 4,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_token_once"
+    },
+    "工具 \"ask\" 的 route 選項只有 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_enum_only"
+    },
+    "工具 \"ask\" 的 route 選項為 (.+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_enum_is"
+    },
+    "已匯出目前設定為檔案 A": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_exported_file_a"
+    },
+    "已有 2 個成員、1 個群組與 1 條有手動順序的 route": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_seed_config"
+    },
+    "已產生存取 token": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_token"
+    },
+    "已產生過存取 token,且成員 \"([^\"]+)\" 的憑證參照指向值為假金鑰的環境變數": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_token_and_key"
+    },
+    "帳本中 \"([^\"]+)\" 只有 (\\d+) 列": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_ledger_rows_for"
+    },
+    "帳本列數與 dry-run 之前相同": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_ledger_unchanged"
+    },
+    "帳本列數與匯入前相同": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_ledger_same"
+    },
+    "帳本最新一列的 (route_name|error) 為 \"([^\"]+)\"": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_ledger_latest"
+    },
+    "帳本有 (\\d+) 列,其中 (\\d+) 列屬於 route \"([^\"]+)\"": {
+      "asserts": 5,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_ledger_rows"
+    },
+    "帳本有一列的 error 為 \"(<script>alert\\(1\\)</script>)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_xss_ledger"
+    },
+    "從開啟精靈到呼叫成功的時間不超過 10 分鐘": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_wizard_time"
+    },
+    "成員 \"([^\"]+)\" 不在冷卻中": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_not_cooling"
+    },
+    "成員 \"([^\"]+)\" 冷卻至 \"([^\"]+)\"": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_cooling_until"
+    },
+    "成員 \"([^\"]+)\" 冷卻至現在加 (\\d+) 秒": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_cooling_plus"
+    },
+    "成員 \"([^\"]+)\" 剩餘額度為 ([0-9.]+) 美元且本次請求預估 P90 花費為 ([0-9.]+) 美元": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/quota_steps.py",
+      "function": "step_remaining_and_estimate"
+    },
+    "成員 \"([^\"]+)\" 最新一列帳本的 cost_usd 為 NULL 且 tokens_out 有值": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_cost_null"
+    },
+    "成員 \"([^\"]+)\" 的 credential_ref 為 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_export_credential"
+    },
+    "成員 \"([^\"]+)\" 的 credential_ref 為 \"([^\"]+)\" 且該環境變數為測試假值": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_member_credential"
+    },
+    "成員 \"([^\"]+)\" 的 max_concurrency 為 (\\d+),假 claude 會等到放行訊號才回應": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_max_concurrency_hold"
+    },
+    "成員 \"([^\"]+)\" 的 params\\.api_base 不變,且沒有送出非 dry_run 的匯入請求": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_import_unchanged"
+    },
+    "成員 \"([^\"]+)\" 的 params\\.signals 與送出的內容相同": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_admin_steps.py",
+      "function": "step_signals_read_back"
+    },
+    "成員 \"([^\"]+)\" 的 tags 含 \"(<img src=x onerror=alert\\(1\\)>)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_xss_tag"
+    },
+    "成員 \"([^\"]+)\" 的 tags 為 (\\[.*\\])": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_member_tags"
+    },
+    "成員 \"([^\"]+)\" 的列不再顯示冷卻": {
+      "asserts": 1,
+      "expects": 2,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_row_not_cooling"
+    },
+    "成員 \"([^\"]+)\" 的列顯示冷卻至的時間": {
+      "asserts": 0,
+      "expects": 2,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_row_cooling"
+    },
+    "成員 \"([^\"]+)\" 的列顯示剩餘額度 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_row_remaining"
+    },
+    "成員 \"([^\"]+)\" 的帳本列狀態為 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_member_ledger_status"
+    },
+    "成員 \"([^\"]+)\" 的預估 P50 為 (\\d+) 且 P90 為 (\\d+)": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_estimate_values"
+    },
+    "成員 \"([^\"]+)\" 的預估 P50 與 P90 等於由帳本最近 (\\d+) 筆 ok 的 tokens_out 計算的值": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/estimate_steps.py",
+      "function": "step_estimate_matches_ledger"
+    },
+    "成員 \"([^\"]+)\" 的額度為每月重置、重置日為 (\\d+) 日": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/quota_steps.py",
+      "function": "step_monthly_budget"
+    },
+    "成員 \"([^\"]+)\" 與 \"([^\"]+)\" 在冷卻中": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/routing_steps.py",
+      "function": "step_two_cooling"
+    },
+    "成員 \"([^\"]+)\" 與 route \"([^\"]+)\" 不變": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_member_route_unchanged"
+    },
+    "成員 \"([^\"]+)\" 額度為每月 10 美元且冷卻至 1 小時後": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_member_cooling"
+    },
+    "成員 \"([^\"]+)\" 額度為每月 10 美元且已花費 4 美元": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_member_spent"
+    },
+    "成員 \"([^\"]+)\" 類型 \"api\" 優先權重 \"(high|medium|low)\" 額度比例 1": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_api_member"
+    },
+    "成員、群組與 route 皆與匯入前相同": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_unchanged"
+    },
+    "把 slot 2 整列拖到 slot 1 之前": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_drag_slot"
+    },
+    "按下 \"儲存\"": {
+      "asserts": 1,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_save_route"
+    },
+    "收合 \"工具\" 之後其項目不再顯示,再展開後恢復": {
+      "asserts": 0,
+      "expects": 3,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_ref_collapse"
+    },
+    "放行假 claude": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_release"
+    },
+    "查詢該次 payload 回應狀態為 (\\d+) 且錯誤碼為 \"([^\"]+)\"": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/context_steps.py",
+      "function": "step_payload_status"
+    },
+    "模型選單的項目與 \"claude_cli\" 模組的 models\\.yaml 一致,最後一項為 \"([^\"]+)\"": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_models_match_yaml"
+    },
+    "檔案 A 與 B 逐位元組相同,且 A 不含假金鑰值": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_a_equals_b"
+    },
+    "每份設定的 content 不含存取 token 明文": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_config_no_token"
+    },
+    "每份設定的 env 為 \\[\"SPILLWAY_TOKEN\"\\] 且 content 含 \"SPILLWAY_TOKEN\"": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_config_env"
+    },
+    "每個畫面的 HTML 與畫面呼叫的 API 回應都不含該 token 與假金鑰值": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_no_secrets"
+    },
+    "環境變數 (.+) 設為測試假值": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_env_fake_values"
+    },
+    "畫面上以文字顯示這兩個字串": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_xss_as_text"
+    },
+    "畫面上的工具名稱、通知與錯誤碼與 mcp_catalog 的內容一致": {
+      "asserts": 5,
+      "expects": 2,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_ref_matches_catalog"
+    },
+    "畫面不含 \"/api/\" 與 \"/v1\" 字樣": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_ref_no_paths"
+    },
+    "畫面導向首次設定精靈": {
+      "asserts": 0,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_redirected_to_wizard"
+    },
+    "畫面頂端標示有未儲存的變更": {
+      "asserts": 0,
+      "expects": 2,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_dirty"
+    },
+    "畫面顯示備份檔名,成員 \"([^\"]+)\" 的 params\\.api_base 已改變": {
+      "asserts": 3,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_import_done"
+    },
+    "確認對話框列出計數與 privileged 成員 \"([^\"]+)\",資料尚未改變": {
+      "asserts": 2,
+      "expects": 3,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_import_dialog"
+    },
+    "第 1 次由 \"([^\"]+)\" 處理、第 2 次由 \"([^\"]+)\" 處理": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m3a_steps.py",
+      "function": "step_first_second_served"
+    },
+    "第二次建立回應狀態為 (\\d+) 且錯誤碼為 \"([^\"]+)\"": {
+      "asserts": 5,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_second_create"
+    },
+    "管理 API 回應狀態為 (\\d+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_admin_steps.py",
+      "function": "step_admin_status"
+    },
+    "管理 API 回應狀態為 (\\d+) 且錯誤碼為 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_admin_steps.py",
+      "function": "step_admin_status_code"
+    },
+    "精靈顯示可複製的呼叫範例": {
+      "asserts": 2,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_wizard_example"
+    },
+    "精靈顯示測試結果為成功,且假上游收到該模型的請求": {
+      "asserts": 2,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_wizard_test_ok"
+    },
+    "系統時間推進 (\\d+) 天並執行清理": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/context_steps.py",
+      "function": "step_advance_cleanup"
+    },
+    "系統時間為 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_set_time"
+    },
+    "索引有 \"連線\"、\"工具\"、\"通知\"、\"錯誤碼\" 四大類": {
+      "asserts": 0,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_ref_categories"
+    },
+    "編輯頁的 slot 依序為 \"([^\"]+)\"、\"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_editor_slots"
+    },
+    "總覽不含存取 token 明文": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_overview_no_token"
+    },
+    "總覽含 port、data_dir、token_issued、first_run 與 counts": {
+      "asserts": 5,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_overview_shape"
+    },
+    "群組 \"([^\"]+)\" 的選擇器含 (.+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_group"
+    },
+    "能力欄位帶入該模型的 capabilities": {
+      "asserts": 1,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_caps_filled"
+    },
+    "記錄目前存取 token 的雜湊": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_record_hash"
+    },
+    "該列 redacted 為 1": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/context_steps.py",
+      "function": "step_payload_redacted"
+    },
+    "該列含請求內容與回應內容": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/context_steps.py",
+      "function": "step_payload_content"
+    },
+    "該模組的供應商選項為停用並顯示原因": {
+      "asserts": 0,
+      "expects": 3,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_broken_disabled"
+    },
+    "該次帳本列的 slot 為 NULL": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/routing_steps.py",
+      "function": "step_ledger_slot_null"
+    },
+    "該次的 usage_payloads 列已刪除": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/context_steps.py",
+      "function": "step_payload_deleted"
+    },
+    "資料庫中 provider \"([^\"]+)\" 只有 (\\d+) 個成員": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_db_count"
+    },
+    "資料庫中沒有成員 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_admin_steps.py",
+      "function": "step_db_no_member"
+    },
+    "資料目錄的 backups 下有一個備份檔,內容等於匯入前的匯出": {
+      "asserts": 5,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_backup_equals"
+    },
+    "資料目錄的 backups 下沒有備份檔": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_no_backup"
+    },
+    "送出 3 次 task 請求皆由 \"([^\"]+)\" 處理": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_three_tasks"
+    },
+    "選供應商 \"([^\"]+)\" 與第一個模型": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_pick_provider_model"
+    },
+    "選該模組宣告的類型": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_pick_broken_kind"
+    },
+    "選類型 \"(cli|api|local)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_pick_kind"
+    },
+    "重新列出工具後工具 \"ask\" 的 route 選項為 (.+)": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_relist"
+    },
+    "重新整理後畫面只顯示 \"已產生\"": {
+      "asserts": 1,
+      "expects": 2,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_after_reload"
+    },
+    "錯誤內容依序列出 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/routing_steps.py",
+      "function": "step_error_attempts"
+    },
+    "錯誤碼為 \"([^\"]+)\"": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/common_steps.py",
+      "function": "step_error_code"
+    },
+    "錯誤訊息含 \"([^\"]+)\" 且不含 \"([^\"]+)\"": {
+      "asserts": 2,
+      "expects": 0,
+      "file": "tests/features/steps/cleanup_admin_steps.py",
+      "function": "step_error_message"
+    },
+    "錯誤訊息含欄位路徑 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4a_steps.py",
+      "function": "step_error_path"
+    },
+    "開啟 route \"([^\"]+)\" 的編輯頁": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_open_editor"
+    },
+    "開啟畫面 \"([^\"]+)\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_open_screen"
+    },
+    "開啟畫面 \"成員\" 並按下 \"新增成員\"": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_open_new_member"
+    },
+    "開啟畫面 \"設定\",選擇一份把成員 \"([^\"]+)\" 的 params\\.api_base 改掉的設定檔與 mode \"(merge|replace)\",按下 \"預覽匯入\"": {
+      "asserts": 2,
+      "expects": 1,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_import_preview"
+    },
+    "閘道以含一個 __init__\\.py 無法 import 的 adapter 模組的 extra_adapter_paths 啟動": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_gateway_with_broken"
+    },
+    "閘道以子行程 serve 啟動且寬限期為 (\\d+) 秒": {
+      "asserts": 0,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_serve_grace"
+    },
+    "閘道正常啟動": {
+      "asserts": 4,
+      "expects": 0,
+      "file": "tests/features/steps/adapters_steps.py",
+      "function": "step_started_ok"
+    },
+    "閘道行程的環境變數 \"([^\"]+)\" 已設定為假金鑰": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_env_fake_key"
+    },
+    "除 \"stdio\" 外每份設定的 content 含 \"([^\"]+)\"": {
+      "asserts": 1,
+      "expects": 0,
+      "file": "tests/features/steps/m3b_steps.py",
+      "function": "step_config_url"
+    },
+    "頁面沒有執行任何對話框,也沒有新增 img 或 script 元素": {
+      "asserts": 3,
+      "expects": 0,
+      "file": "tests/features/steps/m4b_steps.py",
+      "function": "step_xss_inert"
+    }
+  }
+}

@@ -1,23 +1,25 @@
-"""MCP 用戶端與子行程的共用驅動(CHG-20261102-01 T8;m3b_mcp.feature 與 tests/acceptance/test_m3b_operation.py)。
+"""MCP 用戶端與 `mcp-stdio` 子行程的共用驅動(CHG-20261107-03 T2;決策 8 ⑦;AM-15)。
 
-為什麼另寫一份:`tests/helpers/live_gateway.py` 的 `mcp_session` 綁在行程內的 `LiveGateway`;子行程 serve
-(停機、stdio 情境需要真實訊號)與 behave 的同步步驟需要一個不依附 `LiveGateway` 的版本。
+由 `tests/features/support/mcp_proc.py` 複製改寫成黑箱版(T4 改用本模組後刪除原檔,3dae22c):
+子行程 serve 一律用 `tests.blackbox.harness.Serve`;`mcp-stdio` 經 `SPILLWAY_CMD` 執行;
+GET 通知串流是否就緒經 `GET /__test__/mcp/sessions/{id}`(`Serve.wait_stream_open`)。不 import spillway。
 
 - `LoopThread`:背景 thread 的事件迴圈;同步程式(behave 步驟)以 `run(coro, timeout)` 送入協程。
   SDK 用戶端的 anyio cancel scope 必須在同一個 task 進出,所以「跨步驟持有的 session」一律由
-  `HeldSession` 在迴圈上的單一 task 內進出(AM-4 的同一個問題)。
+  `HeldSession` 在迴圈上的單一 task 內進出。
 - `mcp_http_session(url, token, ...)`:官方 SDK `streamable_http_client` + 自建 `httpx.AsyncClient`
-  (`trust_env=False`,系統代理收不到 Bearer);`event_hooks` 原樣交給 httpx(驗收的 `http-log.jsonl`)。
-  yield `(session, init, session_id)`。伺服器先結束時,只吞「離開 context 時的收尾例外」。
+  (`trust_env=False`,系統代理收不到 Bearer);`event_hooks` 原樣交給 httpx。yield
+  `(session, init, session_id)`。伺服器先結束時,只吞「離開 context 時的收尾例外」。
+- `McpClient(session, init, session_id)`:`Serve.mcp_session` yield 的物件(同 `tests/helpers/live_gateway`)。
 - `HeldSession`:跨步驟持有一個 session;`inbox` 收 `notifications/tools/list_changed`。
-- `ServeProc`:子行程 `python -m spillway serve --port <隨機>`(環境經 `safe_subprocess_env`;
-  `SPILLWAY_TEST_GRACEFUL_TIMEOUT`;`start_new_session=True`;stdout/stderr 寫入檔案)。
-- `stdio_session(...)`:官方 SDK `stdio_client` 經子行程 `python -m spillway mcp-stdio` 送出
-  `initialize`(成功時再 `tools/list`,可再呼叫一個工具),回傳 `StdioOutcome`;bridge 的結束碼由一層透明的
-  包裝行程寫入暫存檔(先寫 `.tmp` 再 `os.replace`)取得(SDK 的 stdio 用戶端不提供結束碼;包裝行程的
-  stdin/stdout 直接繼承給 bridge,不轉送、不解析)。
-- `is_list_changed(message)`:用戶端 `message_handler` 收到的訊息是否為 `notifications/tools/list_changed`。
-- `redact(text, secrets)`:斷言訊息與錯誤中顯示日誌/stderr 前把 token 換成 `<token>`。
+- `raw_get_stream(url, token, *, on_open, event_hooks=None)`:原生 httpx 建 session 後開 GET 通知串流並讀到
+  結束,回傳結束時的 `time.monotonic()`。
+- `stdio_session(*, group, port, token, depth=None, call=None, bridge_home, fake_bin=None, timeout=60)`:
+  SDK 的 stdio 用戶端經 `SPILLWAY_CMD mcp-stdio --group <g> --port <p>` 送出 `initialize`(成功時再
+  `tools/list`,可再呼叫一個工具),回傳 `StdioOutcome`;bridge 的結束碼由一層透明的包裝行程寫入暫存檔
+  (先寫 `.tmp` 再 `os.replace`)取得。
+- `is_list_changed(message)`、`ask_route_enum(tools)`、`pid_alive(pid)`、`group_alive(pgid)`、
+  `redact(text, secrets)`。
 
 token 明文只存在呼叫端記憶體與子行程環境變數,不寫入任何檔案,也不出現在斷言訊息。
 """
@@ -26,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-import signal
 import subprocess
 import sys
 import tempfile
@@ -43,20 +44,19 @@ from mcp import ClientSession, McpError, types
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
-from tests.acceptance.procs import free_port, listening
-from tests.fakes.cli_upstream import safe_subprocess_env
+from tests.blackbox.harness import child_env, spillway_cmd
+from tests.blackbox.mask import redact
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SRC = REPO_ROOT / "src"
-REAL_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
-GRACEFUL_ENV = "SPILLWAY_TEST_GRACEFUL_TIMEOUT"
+__all__ = ["INIT_BODY", "MCP_ACCEPT", "HeldSession", "LoopThread", "McpClient", "StdioOutcome", "ask_route_enum",
+           "group_alive", "is_list_changed", "mcp_http_session", "pid_alive", "raw_get_stream", "redact",
+           "stdio_session"]
+
 MCP_ACCEPT = "application/json, text/event-stream"
 INIT_BODY = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
     "protocolVersion": "2025-06-18", "capabilities": {},
-    "clientInfo": {"name": "spillway-m3b", "version": "0"}}}
+    "clientInfo": {"name": "spillway-blackbox", "version": "0"}}}
 
-# bridge 的透明包裝:stdin/stdout/stderr 直接繼承;結束後把 bridge 的結束碼寫入 argv[1](先寫暫存檔再
-# os.replace,讀取端不會讀到寫一半的內容)
+# bridge 的透明包裝:stdin/stdout/stderr 直接繼承;結束後把 bridge 的結束碼寫入 argv[1]
 _RC_WRAPPER = ("import os, subprocess, sys\n"
                "rc = subprocess.call(sys.argv[2:])\n"
                "tmp = sys.argv[1] + '.tmp'\n"
@@ -64,11 +64,6 @@ _RC_WRAPPER = ("import os, subprocess, sys\n"
                "    f.write(str(rc))\n"
                "os.replace(tmp, sys.argv[1])\n"
                "sys.exit(rc)\n")
-
-
-def redact(text: str, secrets: Any) -> str:
-    from tests.helpers import redact_tokens
-    return redact_tokens(text, secrets)
 
 
 def is_list_changed(message: Any) -> bool:
@@ -103,7 +98,7 @@ def group_alive(pgid: int) -> bool:
 class LoopThread:
     def __init__(self) -> None:
         self.loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self.loop.run_forever, name="m3b-loop", daemon=True)
+        self._thread = threading.Thread(target=self.loop.run_forever, name="blackbox-mcp-loop", daemon=True)
         self._thread.start()
 
     def run(self, coro: Awaitable[Any], timeout: float = 60.0) -> Any:
@@ -131,6 +126,13 @@ class LoopThread:
 
 
 # ---------------------------------------------------------------------------- Streamable HTTP
+
+
+@dataclass
+class McpClient:
+    session: ClientSession
+    init: types.InitializeResult
+    session_id: str | None
 
 
 @asynccontextmanager
@@ -223,82 +225,6 @@ class HeldSession:
             self._task = None
 
 
-# ---------------------------------------------------------------------------- 子行程 serve
-
-
-def child_env(home: Path, *, fake_bin: Path | None, graceful: float | None = None,
-              extra: Mapping[str, str] | None = None) -> dict[str, str]:
-    base = {k: v for k, v in os.environ.items()
-            if k not in REAL_KEY_VARS and k not in ("SPILLWAY_TOKEN", "SPILLWAY_DEPTH")
-            and not k.lower().endswith("_proxy")}
-    base["SPILLWAY_HOME"] = str(home)
-    base["PYTHONPATH"] = os.pathsep.join([str(SRC), str(REPO_ROOT)])
-    base["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"
-    if graceful is not None:
-        base[GRACEFUL_ENV] = str(graceful)
-    base.update(extra or {})
-    return safe_subprocess_env(base, fake_bin=fake_bin)
-
-
-class ServeProc:
-    """`python -m spillway serve --port <port>`(資料目錄由呼叫端準備;token 已產生時 serve 不印)。"""
-
-    def __init__(self, home: Path, *, fake_bin: Path | None, graceful: float,
-                 log_path: Path, extra_env: Mapping[str, str] | None = None,
-                 secrets: Any = ()) -> None:
-        self.home = home
-        self.secrets = secrets          # 錯誤訊息顯示日誌前遮掉(呼叫端持有的 token 清單)
-        self.port = free_port()
-        self.url = f"http://127.0.0.1:{self.port}"
-        self.log_path = log_path
-        self.env = child_env(home, fake_bin=fake_bin, graceful=graceful, extra=extra_env)
-        self._log = open(log_path, "w", encoding="utf-8")  # noqa: SIM115 — stop() 關閉
-        self.proc = subprocess.Popen(
-            [sys.executable, "-m", "spillway", "serve", "--port", str(self.port)], env=self.env,
-            cwd=str(REPO_ROOT), stdout=self._log, stderr=subprocess.STDOUT, text=True,
-            start_new_session=True)
-
-    def wait_ready(self, timeout: float = 60.0) -> None:
-        """行程仍在、本埠的監聽者是這個 serve 行程(lsof),且 HTTP 回 200。"""
-        deadline = time.monotonic() + timeout
-        want = f"127.0.0.1:{self.port}"
-        while time.monotonic() < deadline:
-            if self.proc.poll() is not None:
-                raise RuntimeError(f"serve 提前結束 rc={self.proc.returncode}\n{self.safe_log()}")
-            if want not in listening(self.proc.pid):
-                time.sleep(0.2)
-                continue
-            try:
-                r = httpx.get(f"{self.url}/api/settings/context", timeout=2, trust_env=False)
-                if r.status_code == 200:
-                    return
-            except httpx.TransportError:
-                pass
-            time.sleep(0.2)
-        raise RuntimeError("serve 未在時限內就緒")
-
-    def wait_exit(self, timeout: float) -> float:
-        start = time.monotonic()
-        self.proc.wait(timeout)
-        return time.monotonic() - start
-
-    def log_text(self) -> str:
-        self._log.flush()
-        return self.log_path.read_text(encoding="utf-8", errors="replace")
-
-    def safe_log(self) -> str:
-        return redact(self.log_text(), self.secrets)
-
-    def stop(self) -> None:
-        if self.proc.poll() is None:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(self.proc.pid, signal.SIGKILL)
-            with contextlib.suppress(Exception):
-                self.proc.wait(15)
-        with contextlib.suppress(Exception):
-            self._log.close()
-
-
 async def raw_get_stream(url: str, token: str, *, on_open: Callable[[], None],
                          event_hooks: Mapping[str, list[Any]] | None = None) -> float:
     """以原生 httpx 建立一個 MCP session(initialize + initialized),再開 GET 通知串流並讀到結束;
@@ -346,8 +272,9 @@ async def stdio_session(
     fake_bin: Path | None = None,
     timeout: float = 60.0,
 ) -> StdioOutcome:
-    """SDK 的 stdio 用戶端 → 子行程 `mcp-stdio`:initialize;成功時 `tools/list` 並(選擇性)呼叫一個工具。"""
-    with tempfile.TemporaryDirectory(prefix="m3b-stdio-") as tmp:
+    """SDK 的 stdio 用戶端 → 子行程 `SPILLWAY_CMD mcp-stdio`:initialize;成功時 `tools/list` 並(選擇性)
+    呼叫一個工具。"""
+    with tempfile.TemporaryDirectory(prefix="bb-stdio-") as tmp:
         rc_file = Path(tmp) / "rc"
         err_path = Path(tmp) / "stderr"
         extra: dict[str, str] = {}
@@ -358,9 +285,9 @@ async def stdio_session(
         env = child_env(bridge_home, fake_bin=fake_bin, extra=extra)
         params = StdioServerParameters(
             command=sys.executable,
-            args=["-c", _RC_WRAPPER, str(rc_file), sys.executable, "-m", "spillway", "mcp-stdio",
-                  "--group", group, "--port", str(port)],
-            env=env, cwd=str(REPO_ROOT))
+            args=["-c", _RC_WRAPPER, str(rc_file), *spillway_cmd(), "mcp-stdio", "--group", group,
+                  "--port", str(port)],
+            env=env, cwd=tmp)
         error = init = result = None
         tools: list[types.Tool] = []
         with open(err_path, "w", encoding="utf-8") as errlog:

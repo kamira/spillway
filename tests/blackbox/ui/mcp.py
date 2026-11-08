@@ -1,8 +1,9 @@
 """UI-5 MCP 設定與 UI-8 API 參考的頁面操作 helper(CHG-20261103-01 T7;決策 15、19、22)。
 
-只用 Playwright **sync** API 與同步 httpx(`gw.http()`);T9 的 behave 步驟可直接匯入。
+(CHG-20261107-03 T2 由 `tests/helpers/ui_mcp.py` 複製改寫成黑箱版;原檔已於 T5 改用本模組後刪除,4e2ce46)
+只用 Playwright **sync** API 與同步 httpx(`gw.http()`);behave 步驟可直接匯入。
 
-- 群組以 `tests.helpers.ui.seed_group` 建立。
+- 群組以 `tests.blackbox.ui.seed_group` 建立。
 - `mcp_config(gw, group, tool)`、`mcp_catalog(gw, group="all")`:同步讀取伺服端的期望值。
 - `open_mcp(page, gw, group="all", tool="claude-code")`:開啟 UI-5 並等到該組合載入完成。
 - `select_mcp(page, *, group=None, tool=None)`:切換群組或工具分頁並等待載入完成。
@@ -20,7 +21,7 @@ from urllib.parse import quote
 
 from playwright.sync_api import Page
 
-from tests.helpers.ui import goto
+from tests.blackbox.ui import goto
 
 __all__ = ["BLOB_SPY", "DENY_CLIPBOARD", "TOOLS", "mcp_catalog", "mcp_config", "mcp_variants", "open_mcp",
            "open_reference", "select_mcp"]

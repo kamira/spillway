@@ -1,6 +1,7 @@
-"""UI-7 設定與首次設定精靈的頁面操作(CHG-20261103-01 T8;T9 的 behave 步驟可直接匯入)。
+"""UI-7 設定與首次設定精靈的頁面操作(CHG-20261103-01 T8;behave 步驟可直接匯入)。
 
-只用 Playwright **sync** API 與同步 `gw.http()`(經 `tests.helpers.ui.api`),不在主 thread 使用 asyncio。
+(CHG-20261107-03 T2 由 `tests/helpers/ui_settings.py` 複製改寫成黑箱版;原檔已於 T5 改用本模組後刪除,4e2ce46)
+只用 Playwright **sync** API 與同步 `gw.http()`(經 `tests.blackbox.ui.api`),不在主 thread 使用 asyncio。
 
 - `open_settings(page, gw, hash_="")`:開啟 `settings.html`,等總覽與 context 表單載入完成。
 - `open_wizard(page, gw)`:開啟 `wizard.html`,等到某一步出現(`main[data-step]`)。
@@ -9,7 +10,8 @@
 - `choose_import(page, data, *, mode="merge", name="spillway.yaml")`:選檔(bytes)並選 mode。
 - `import_dialog(page) -> Locator`:匯入確認對話框(`confirmDialog`)。
 - `export_yaml(gw) -> str`:`GET /api/config/export` 的內容。
-- `token_hash(gw) -> str | None`:資料庫中的存取 token 雜湊。
+- `token_hash(gw) -> str | None`:資料庫中的存取 token 雜湊(唯讀連線讀 `settings` 的字面鍵
+  `access_token_sha256`;AM-9)。
 - `page_leaks(page, secret) -> list[str]`:`document.documentElement.outerHTML`、全部 `input.value`/
   `textarea.value`、`localStorage`、`sessionStorage`、`location.href` 中含 `secret` 的位置(空清單 = 乾淨)。
 """
@@ -19,8 +21,8 @@ from typing import Any
 
 from playwright.sync_api import Locator, Page, expect
 
-from spillway import settings
-from tests.helpers.ui import api, goto, wait_loaded
+from tests.blackbox.db import ACCESS_TOKEN_KEY, setting
+from tests.blackbox.ui import api, goto, wait_loaded
 
 __all__ = ["choose_import", "export_yaml", "import_dialog", "import_requests", "open_settings", "open_wizard",
            "page_leaks", "token_hash", "wizard_step"]
@@ -60,7 +62,7 @@ def export_yaml(gw: Any) -> str:
 
 def token_hash(gw: Any) -> str | None:
     with gw.db() as conn:
-        return settings.get_access_token_hash(conn)
+        return setting(conn, ACCESS_TOKEN_KEY)
 
 
 def page_leaks(page: Page, secret: str) -> list[str]:

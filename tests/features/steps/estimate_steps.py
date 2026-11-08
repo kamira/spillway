@@ -1,13 +1,16 @@
-"""m2_estimate.feature 專用步驟(CHG-20261030-02 T15;AC-18、5.4.3)。"""
+"""m2_estimate.feature 專用步驟(CHG-20261030-02 T15;AC-18、5.4.3)。
+
+(CHG-20261107-03 T4)歷史帳本經 `POST /__test__/ledger` 種入(spec 13.4.3)。
+"""
 from __future__ import annotations
 
 import math
+import random
 from datetime import timedelta
 
 from behave import step, use_step_matcher
 
-from spillway.clock import SystemRng
-from spillway.store import repo
+from tests.blackbox.control import iso
 
 use_step_matcher("re")
 
@@ -22,25 +25,24 @@ def _nearest_rank(values: list[int], p: int) -> int:
 
 @step(r'route "([^"]+)" 與成員 "([^"]+)" 已有 (\d+) 筆 ok 帳本紀錄')
 def step_seed_history(context, route, dep_id, n):
-    """前置條件:以 repo 寫入 n 筆同 route、同成員的 ok 列(tokens_out 由固定 seed 的亂數產生),
-    另夾雜不應計入的列:同成員的 error 列、他 route 的 ok 列(tokens_out 極大,誤算會明顯偏移)。"""
+    """前置條件:經 `POST /__test__/ledger` 種入 n 筆同 route、同成員的 ok 列(tokens_out 由固定 seed 的
+    亂數產生),另夾雜不應計入的列:同成員的 error 列、他 route 的 ok 列(tokens_out 極大,誤算會明顯偏移)。"""
     gw = context.gw
     gw.ensure_started()
-    rng = SystemRng(seed=HISTORY_SEED)
+    rng = random.Random(HISTORY_SEED)
     now = gw.clock.now()
-    with gw.db() as conn:
-        for i in range(int(n)):
-            ts = now - timedelta(hours=2) + timedelta(seconds=i * 60)
-            repo.insert_ledger(conn, repo.LedgerRow(
-                ts=ts, status="ok", route_name=route, deployment_id=dep_id, slot=1,
-                tokens_in=10, tokens_out=50 + int(rng.random() * 3000), cost_usd=0.0001))
-            if i % 10 == 0:
-                repo.insert_ledger(conn, repo.LedgerRow(
-                    ts=ts, status="error", route_name=route, deployment_id=dep_id, slot=1,
-                    tokens_out=99999, error="upstream error"))
-                repo.insert_ledger(conn, repo.LedgerRow(
-                    ts=ts, status="ok", route_name="other-route", deployment_id=dep_id,
-                    tokens_out=88888, cost_usd=0.0))
+    rows = []
+    for i in range(int(n)):
+        ts = iso(now - timedelta(hours=2) + timedelta(seconds=i * 60))
+        rows.append({"ts": ts, "status": "ok", "route_name": route, "deployment_id": dep_id, "slot": 1,
+                     "tokens_in": 10, "tokens_out": 50 + int(rng.random() * 3000), "cost_usd": 0.0001})
+        if i % 10 == 0:
+            rows.append({"ts": ts, "status": "error", "route_name": route, "deployment_id": dep_id, "slot": 1,
+                         "tokens_out": 99999, "error": "upstream error"})
+            rows.append({"ts": ts, "status": "ok", "route_name": "other-route", "deployment_id": dep_id,
+                         "tokens_out": 88888, "cost_usd": 0.0})
+    ids = gw.control.ledger(rows)
+    assert len(ids) == len(rows), ids
 
 
 @step(r'成員 "([^"]+)" 的預估 P50 與 P90 等於由帳本最近 (\d+) 筆 ok 的 tokens_out 計算的值')

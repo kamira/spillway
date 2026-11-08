@@ -14,6 +14,8 @@
 
 修訂：2026-11-03 CHG-20261103-01（3.1.12、3.1.14 `privileged` 加入既有成員的 `provider` 變更；9.2 新增 `POST /api/groups/preview`、`GET /api/routes/{name}/effective-order`、`GET /api/mcp/catalog`，`/api/ledger` 與 `/api/ledger/export.csv` 加參數 `min_depth`，`/api/dashboard` 加近 7 天日均花費；新增 9.2.8；第 10 節首段改寫為靜態頁經 `/api` 取資料、網址 `/ui/`、安全標頭與不連外；UI-1 不提供期間切換；UI-3 編輯 tag 不做改名；UI-7 匯入確認流程、token 只顯示一次與精靈網址；UI-8 版面；10.2.2 LiteLLM provider 欄位與已移除模組的顯示；10.2.6 保留能力清單外的既有 effort）
 
+修訂：2026-11-07 CHG-20261107-03（第 12 節註明黑箱驗收方式；新增第 13 節「測試控制介面（僅測試模式）」：開啟條件與資料目錄條件、啟動期旋鈕、`/__test__/*` 端點、形狀與錯誤碼、保存排程 STEPPED 與到期判斷式、seed 為不透明值；新增第 14 節「行程契約」：`serve`／`init` 結束碼、SIGINT／SIGTERM、`TOKEN_NOTICE` 單行的位元組格式、stderr 承諾的行、就緒判定）
+
 ## 1 範圍與名詞定義
 
 本規格定義單人使用的 LLM 路由閘道之資料模型、路由規則、介面與驗收標準；目的、選型與風險見企劃書。
@@ -923,6 +925,8 @@ Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>
 
 每條驗收項對應企劃書第三節的目標編號；全部通過才算完成。
 
+自動驗收以黑箱方式執行（CHG-20261107-03）：behave、acceptance 與畫面測試只經 HTTP（`/v1`、`/api`、`/mcp`）、子行程（`serve`、`init`、`mcp-stdio`，依第 14 節）與唯讀開啟的資料庫檔案操作 spillway；時間、亂數與資料種入經第 13 節的測試控制介面。驗證遮罩的驗收項（AC-15、NFR-4）只走真實請求，不使用種入。
+
 | 編號 | 對應 | 前置條件 | 操作 | 預期結果 |
 | --- | --- | --- | --- | --- |
 | AC-1 | G1 | route `review` 為預設順序，claude-sub 有額度 | 送出 10 次 task 請求 | 10 次皆由 claude-sub 處理 |
@@ -962,3 +966,154 @@ Web UI 共 8 個畫面，左側固定導覽，網址為 `http://127.0.0.1:<port>
 | 編號 | 對應 | 前置條件 | 操作 | 預期結果 |
 | --- | --- | --- | --- | --- |
 | AC-22 | 10（UI-8） | M4 Web UI 已啟動 | 開啟 UI-8 | 顯示四大類（連線、工具、通知、錯誤碼）與可折疊索引；內容與 `mcp_catalog(app)` 一致；不含 `/api/*` 與 `/v1` |
+
+## 13 測試控制介面（僅測試模式）
+
+本節為跨實作契約（CHG-20261107-03 決策 5–7）：黑箱測試以它控制時間、亂數與資料種入，任何 spillway 實作都必須提供同一組介面。**僅供測試，正式使用不得設定本節的環境變數。**
+
+### 13.1 開啟條件
+
+13.1.1 只有 `spillway serve` 在環境變數 `SPILLWAY_TEST_CONTROL` 的值為字面 `1` 時開啟控制介面；其他值（含空字串、`true`、`0`）視為未開啟。設定檔、管理 API、`init`、`mcp-stdio` 都無法開啟。實作中只有 serve 的啟動程序讀取本節的環境變數，再以明確參數交給 app。
+
+13.1.2 開啟時 `SPILLWAY_HOME` 必須明確設定（非空），且不得與預設資料目錄 `platformdirs.user_data_dir("spillway")` 是同一個目錄（包括大小寫不同、符號連結、同一位置的其他寫法（例如 macOS 的 `/System/Volumes/Data` 前綴；目錄尚不存在時以最近存在的上層目錄比對），以及以帳號的家目錄推得的預設位置——`$HOME` 被覆寫時仍以帳號家目錄比對；Linux 另含 `~/.local/share/spillway`）；不符時在 stderr 印錯誤、以結束碼 2 結束，不建立資料目錄、不開啟資料庫。
+
+13.1.3 開啟時 serve 在 stderr 印一行警告（14.3.2），控制介面掛在 `/__test__/` 之下，不列入 OpenAPI（serve 有提供 `/openapi.json` 時其中不得含 `/__test__`）。控制介面照舊經 9.1.4 的 Host／Origin 檢查、只綁 127.0.0.1，回應帶 `Cache-Control: no-store` 與 `X-Content-Type-Options: nosniff`。
+
+13.1.4 未開啟時不掛載：所有 `/__test__`、`/__test__/*`（任何方法、結尾斜線、以 `%5F` 編碼底線的變形）回傳 HTTP 404，body 與不存在的路徑相同（`{"error": {"code": "not_found", "message": "Not Found"}}`）。
+
+13.1.5 serve 啟動的 CLI 子行程（7.3、7.4）一律移除 `SPILLWAY_TEST_CONTROL` 與 13.2 列舉的旋鈕，不論是否開啟。
+
+### 13.2 啟動期旋鈕
+
+只在 `SPILLWAY_TEST_CONTROL=1` 時讀取；值不合法時 stderr 印錯誤（只含變數名與原因，不含值）並以結束碼 2 結束，不開啟資料庫。未設定或為空字串時取預設行為。
+
+| 環境變數 | 值 | 作用 |
+| --- | --- | --- |
+| `SPILLWAY_TEST_START_TIME` | `YYYY-MM-DDTHH:MM:SSZ`（與 13.3.2 同一文法） | 以可控時鐘從該時刻開始（13.4.1）；未設定時用系統時鐘 |
+| `SPILLWAY_TEST_RNG_SEED` | 完全符合 `-?[0-9]+` 的十進位整數，範圍 −2^63 到 2^63−1 | 路由抽選（4.4）的亂數種子（13.4.2） |
+| `SPILLWAY_TEST_ADAPTER_PATHS` | 以作業系統路徑分隔字元（POSIX 為 `:`）分隔的路徑 | 額外載入的 adapter 模組所在目錄（Python 版為內含 7.6.1 模組資料夾的目錄；實作相依） |
+| `SPILLWAY_TEST_RETENTION_POLL_SECONDS` | 完全符合 `[0-9]+(\.[0-9]+)?` 且大於 0（秒；不接受指數、底線、`inf`） | 保存排程的輪詢間隔 `poll`（預設 30） |
+| `SPILLWAY_TEST_RETENTION_STEPPED` | `1` | 保存排程改為 STEPPED 模式（13.4.6） |
+| `SPILLWAY_TEST_NO_TOKEN` | `1` | 不簽發存取 token：不印 `TOKEN_NOTICE`，`token_issued` 為 false，`/mcp/*` 回 401 |
+| `SPILLWAY_TEST_LOG_LEVEL` | `DEBUG` 或 `INFO` | 把日誌以 `SPILLWAY-LOG` 行輸出到 stderr（14.3.5），等級即該值 |
+
+13.2.1 未開啟時設定了上表的變數：serve 在 stderr 印一行 `spillway: 未設 SPILLWAY_TEST_CONTROL=1,已忽略測試旋鈕: ` 加上有設定的名稱（依上表順序，以 `, ` 相接），不印值，其餘行為與未設定相同。只比對上表列舉的名稱，`SPILLWAY_TEST_` 不是保留前綴。
+
+13.2.2 `SPILLWAY_TEST_GRACEFUL_TIMEOUT`（停機等待上限，秒）與 `SPILLWAY_TEST_MCP_MAX_SESSIONS`（MCP session 上限）是有意的例外：不受 `SPILLWAY_TEST_CONTROL` 限制，行為不變。
+
+### 13.3 通用規則
+
+13.3.1 請求與回應皆為 JSON；錯誤格式依 9.1.2。body 不接受未知欄位；欄位型別不符、缺少必要欄位回傳 HTTP 422，錯誤碼 `validation_error`。整數欄位不接受字串、小數或布林。
+
+13.3.2 時間一律為 `YYYY-MM-DDTHH:MM:SSZ`（UTC，到秒，2.1.2；數字只限 ASCII `0-9`，每欄位數固定）；其他格式（含全形數字、時區位移、小數秒、只有日期）與不存在的日期回傳 HTTP 422，錯誤碼 `validation_error`。
+
+13.3.3 所有 `/__test__/*` 的 GET 不改變資料庫狀態。
+
+13.3.4 body 中值為 `null` 的欄位等同未給。請求先檢查 body 格式（422），再檢查成員或列是否存在（404），最後檢查狀態（409）。不支援的方法回 405（9.1.2 格式）。帶結尾斜線的路徑不屬於契約，測試不得使用。整數欄位的範圍是 −2^63 到 2^63−1，超出範圍回 422；推進後超出時鐘可表示的範圍同樣回 422。數值欄位接受 JSON 數字，不接受字串與布林，且必須是有限值。
+
+13.3.5 錯誤碼：
+
+| 狀態碼 | 錯誤碼 | 情況 |
+| --- | --- | --- |
+| 404 | `not_found` | 成員不存在（cooldowns、raw）；成員不存在或不是 `cli`（cli-slots） |
+| 409 | `clock_not_controllable` | 系統時鐘模式下要求設定或推進時鐘（`clock`、`retention/tick` 的 `advance_seconds` > 0） |
+| 409 | `retention_not_stepped` | 非 STEPPED 模式呼叫 `retention/tick` |
+| 409 | `retention_not_running` | 保存排程未執行，或 tick 等待期間排程停止 |
+| 409 | `retention_tick_timeout` | tick 等排程回到閘前逾時 |
+| 409 | `cli_slots_exceeded` | `acquire` 後進行中數量會超過上限 |
+| 409 | `cli_slots_underflow` | `release` 數量多於進行中數量 |
+| 422 | `validation_error` | 13.3.1、13.3.2；種入違反資料庫約束（例如 payload 對應的帳本列不存在） |
+
+### 13.4 端點
+
+| 方法 | 路徑 | 請求 | 回應（200） |
+| --- | --- | --- | --- |
+| GET | `/__test__/clock` | — | `{"controllable": bool, "now": 時間}` |
+| POST | `/__test__/clock` | `{"set": 時間}` 或 `{"advance_seconds": 非負整數}`（剛好一個） | `{"now": 時間}` |
+| GET | `/__test__/rng` | — | `{"seeded": bool, "seed": 整數或 null}` |
+| POST | `/__test__/ledger` | `{"rows": [帳本列, …]}` | `{"ids": [整數, …]}` |
+| POST | `/__test__/payloads` | `{"rows": [內容列, …]}` | `{"ids": [整數, …]}` |
+| POST | `/__test__/cooldowns` | `{"deployment", "until": 時間, "reason"}` | 同請求三欄 |
+| POST | `/__test__/raw/deployment-params` | `{"id", "params": 任意 JSON}` | `{"id"}` |
+| POST | `/__test__/retention/run` | — | `{"deleted": 整數或 null}` |
+| GET | `/__test__/retention` | — | `{"runs": 整數, "next_due": 時間或 null}` |
+| POST | `/__test__/retention/tick` | `{"advance_seconds": 非負整數}` | `{"ran": bool, "deleted": 整數或 null, "runs": 整數, "now": 時間}` |
+| GET | `/__test__/health-cache` | — | `{"entries": [{"deployment", "healthy": bool}, …]}` |
+| GET | `/__test__/cli-slots` | — | `{"slots": [{"deployment", "in_flight", "limit"}, …]}` |
+| POST | `/__test__/cli-slots/acquire` | `{"deployment", "n": 正整數}` | `{"deployment", "in_flight", "limit"}` |
+| POST | `/__test__/cli-slots/release` | `{"deployment", "n": 正整數}` | `{"deployment", "in_flight", "limit"}` |
+| GET | `/__test__/mcp/sessions/{id}` | — | `{"stream_open": bool}` |
+
+13.4.1 時鐘：設定 `SPILLWAY_TEST_START_TIME` 時為可控時鐘，`controllable` 為 true；可控時鐘凍結，只有 `set`（設為該時刻，可往前或往後）與 `advance_seconds`（往後推進）會改變它，真實時間經過不會。未設定時為系統時鐘：`GET` 回 200（`controllable` 為 false、`now` 為目前 UTC 時間），`POST` 回 409 `clock_not_controllable`。body 同時含或都不含 `set`、`advance_seconds` 時回 422。
+
+13.4.2 亂數：`seeded` 表示啟動時是否設定 `SPILLWAY_TEST_RNG_SEED`，`seed` 為該值（未設定為 null）。seed 為不透明值：同一實作以同一 seed 啟動時抽選序列可重現，不同實作之間不保證序列相同。需要「無 seed」的情境以不設定該旋鈕重新啟動 serve 取得；本介面不提供執行中重設亂數。
+
+13.4.3 帳本與內容：
+- 帳本列的欄位為 `id`（選填，正整數）、`ts`（必填）、`status`（必填，字串）與 2.3 `usage_ledger` 的其他欄位（皆選填；`fallback_depth` 預設 0，其餘預設 null）。內容列的欄位為 `ledger_id`（必填，正整數）、`ts`（必填）、`request_json`（必填，字串）、`response_text`（選填）、`bytes`（必填，非負整數）、`truncated`、`redacted`（選填布林，預設 false）。
+- 兩者皆為 upsert：帳本列帶 `id` 且該列已存在、內容列的 `ledger_id` 已存在時，整列取代（未給的欄位回到預設值）；帳本列不帶 `id` 時新增。`ids` 依請求順序列出寫入列的 `id`／`ledger_id`。整批在一個交易內寫入，任一列失敗時全部不寫入。
+- 種入不經遮罩（2.4.4），驗證遮罩的情境不得使用種入。
+
+13.4.4 冷卻：覆寫（upsert）該成員的 `cooldowns` 列，不比較新舊期限（期限可往前）；`reason` 只接受 `quota_exhausted`、`rate_limited`；成員不存在回 404 `not_found`。
+
+13.4.5 損壞狀態：只把該成員 `deployments.params` 欄改為 `params` 的 JSON 序列化結果，不經 9.2 的成員驗證，其他欄位不變；成員不存在回 404 `not_found`。回應只含 `{"id"}`，不回顯 `params`；實作不記錄此端點的 body。測試放入的金鑰樣值一律以 `sk-fake` 開頭。
+
+13.4.6 保存清理（2.4.5）：
+- 保存排程啟動時先清理一次，之後在 `now >= next_due − 2 × poll` 時清理（`now` 為 13.4.1 的時鐘，`next_due` 為上次清理時刻加 1 小時，`poll` 為輪詢間隔）；每次清理後 `next_due` 更新為該次的 `now` 加 1 小時，不論成敗。
+- `retention/run`：立即清理一次（不看到期判斷），`deleted` 為刪除的內容列數，清理失敗時為 null。`GET /__test__/retention` 的 `runs` 為成功的清理次數（含啟動時那一次），`next_due` 尚未排定時為 null。
+- STEPPED 模式（`SPILLWAY_TEST_RETENTION_STEPPED=1`）：排程每一輪的輪詢等待換成一道閘，只有 `retention/tick` 會放行，真實時間經過不會觸發清理。`retention/tick` 依序：① 推進時鐘 `advance_seconds` 秒（系統時鐘模式下大於 0 時回 409 `clock_not_controllable`，不放行）；② 放行排程一輪（該輪照一般輪詢做到期判斷，到期才清理）；③ 等排程回到閘前才回應。`ran` 表示該輪是否清理、`deleted` 為該輪刪除列數（未清理或清理失敗為 null）、`runs` 與 `now` 為回應當下的值。並行的 tick 依序執行。非 STEPPED 模式回 409 `retention_not_stepped`；等待期間排程停止回 409 `retention_not_running`；排程未在時限內（30 秒）回到閘前回 409 `retention_tick_timeout`。
+
+13.4.7 健康快取：列出 local 健康結果快取（4.2）中尚未過期的項目，依 `deployment` 排序；`now − 寫入時刻 ≥ TTL` 的項目視為過期、不列出（`now` 為 13.4.1 的時鐘）。
+
+13.4.8 CLI 名額（4.2.4、NFR-6）：`slots` 列出全部 `kind` 為 `cli` 的成員（依 `id` 排序），`in_flight` 為目前佔用的名額數，`limit` 為該成員的併發上限（`params.max_concurrency`，預設 1）。`acquire` 佔用 `n` 個名額，佔用後會超過 `limit` 時回 409 `cli_slots_exceeded` 且不佔用任何名額；`release` 釋放 `n` 個，多於進行中數量時回 409 `cli_slots_underflow` 且不釋放。以本端點佔用的名額與實際 CLI 呼叫共用，路由篩選視為進行中（`concurrency_full`）。
+
+13.4.9 MCP session：`stream_open` 表示該 session 的 GET 通知串流（8.1）是否已在伺服器端就緒；session 不存在時為 false。
+
+## 14 行程契約
+
+本節為跨實作契約（CHG-20261107-03 AM-7）：黑箱 harness 依本節啟動、等待與停止 spillway。
+
+### 14.1 結束碼
+
+`spillway serve`：
+
+| 結束 | 情況 |
+| --- | --- |
+| 2 | 用法錯誤：命令列參數不合法、`--host` 不是 127.0.0.1、13.1.2 的資料目錄條件不符、13.2 的旋鈕值不合法；不開啟資料庫 |
+| 1 | 開啟資料庫前的前置檢查失敗：埠無法綁定、資料目錄鎖（`spillway.lock`）已被占用或無法建立；不開啟資料庫、不執行 migration |
+| 3 | 啟動失敗：啟動程序失敗（例如 7.6.6 模組衝突、migration 失敗）或開始監聽時綁定失敗 |
+| 130 | 收到 SIGINT（Ctrl-C）：正常關閉後結束，不印 traceback |
+| 以 SIGTERM 結束 | 收到 SIGTERM：正常關閉後，實作必須把 SIGTERM 重新送給自己，以該訊號結束（shell 看到 143，`subprocess` 看到 −15）；不得以 0 結束 |
+
+正常關閉：停止接受新請求，等待進行中的請求至多停機上限（預設 30 秒），停止保存排程，終止仍在執行的 CLI 子行程。停機期間再收到 SIGINT 時立即取消進行中的請求並結束。
+
+`spillway init [--rotate]`：0 成功（含 token 已存在、未變更）；1 資料目錄鎖已被占用（serve 正在執行）、migration 或資料庫失敗；2 用法錯誤。token 明文只印到 stdout（單獨一行），其他訊息走 stderr。
+
+`spillway mcp-stdio`：依 8.1.2。
+
+### 14.2 存取 token 單行（`TOKEN_NOTICE`）
+
+14.2.1 serve 啟動時資料庫沒有存取 token 雜湊（且未設 `SPILLWAY_TEST_NO_TOKEN=1`）時，產生 token、只存雜湊，並在 stderr 寫出**一行**：前綴 `spillway: 已產生存取 token(只顯示這一次,資料庫只存雜湊): `（UTF-8；括號、逗號與冒號為 ASCII 字元，前綴以一個 ASCII 空白結尾），緊接 43 個字元的 token（字元集 `A-Z a-z 0-9 - _`），以 LF（`0x0A`）結尾。前綴的位元組（十六進位）為：
+
+```
+73 70 69 6c 6c 77 61 79 3a 20 e5 b7 b2 e7 94 a2 e7 94 9f e5 ad 98 e5 8f 96 20 74 6f 6b 65 6e 28
+e5 8f aa e9 a1 af e7 a4 ba e9 80 99 e4 b8 80 e6 ac a1 2c e8 b3 87 e6 96 99 e5 ba ab e5 8f aa e5
+ad 98 e9 9b 9c e6 b9 8a 29 3a 20
+```
+
+14.2.2 這一行必須在開始監聽埠之前寫出並 flush；每個資料庫只印一次（之後的啟動不印）。token 不經日誌輸出。
+
+### 14.3 stderr
+
+14.3.1 stderr 只承諾以下四種行（逐行、UTF-8、LF 結尾）；其他內容（伺服器的存取紀錄、錯誤訊息的措辭）不屬於契約，測試不得比對。
+
+14.3.2 14.2 的 token 行。
+
+14.3.3 控制介面開啟時（13.1.3）的警告行，完整內容為 `spillway: 警告:測試控制介面已開啟(SPILLWAY_TEST_CONTROL=1),/__test__/* 可改寫狀態;僅供測試,正式使用請勿設定`（冒號、括號、逗號、分號為 ASCII 字元）；在開始監聽之前寫出。
+
+14.3.4 13.2.1 的「已忽略測試旋鈕」行（前綴 `spillway: 未設 SPILLWAY_TEST_CONTROL=1,已忽略測試旋鈕: `，後接名稱）。
+
+14.3.5 `SPILLWAY_TEST_LOG_LEVEL` 的日誌行：每筆紀錄的第一行為 `SPILLWAY-LOG <等級> <logger 名稱> <訊息>`（等級為 `DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`；訊息已代入參數；以單一 ASCII 空白分隔），訊息、例外 traceback 與 stack 的其餘每一行各自以 `SPILLWAY-LOG-CONT ` 開頭續行。低於設定等級的紀錄不寫出。這些行不經遮罩；logger 名稱與訊息內容屬於實作相依。
+
+### 14.4 就緒與綁定
+
+serve 就緒的判定為 `GET /api/settings/context` 回傳 HTTP 200 且行程仍在執行；只在 127.0.0.1 監聽（NFR-3）。

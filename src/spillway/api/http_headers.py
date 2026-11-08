@@ -8,6 +8,8 @@
   COOP、CORP、`Cache-Control: no-cache`)。
 - (b) 以 `/api/` 開頭 → `API_HEADERS`(`Cache-Control: no-store` 與 nosniff;帳本 payload 等回應不留在
   瀏覽器磁碟快取)。
+- (b') `/__test__` 或以 `/__test__/` 開頭(測試控制介面,CHG-20261107-03 決策 5 ⑤)→ 同 `API_HEADERS`。
+  未開啟控制介面時這些路徑是 404,照樣帶這兩個標頭(body 與其他不存在的路徑相同)。
 - (c) 其他路徑(`/v1`、`/mcp`)不碰。
 
 `create_app` 在 `add_middleware(HostOriginMiddleware, …)` **之前**加入本 middleware,所以 HostOrigin 在
@@ -40,10 +42,10 @@ API_HEADERS: tuple[tuple[str, str], ...] = (
 
 
 def headers_for_path(path: str) -> tuple[tuple[str, str], ...]:
-    """依路徑決定要補的標頭;不在 (a)、(b) 範圍時回空 tuple。"""
+    """依路徑決定要補的標頭;不在 (a)、(b)、(b') 範圍時回空 tuple。"""
     if path in ("/", "/ui") or path.startswith("/ui/"):
         return UI_HEADERS
-    if path.startswith("/api/"):
+    if path.startswith("/api/") or path == "/__test__" or path.startswith("/__test__/"):
         return API_HEADERS
     return ()
 

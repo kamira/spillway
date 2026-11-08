@@ -3,18 +3,22 @@
 拆成 2 個測試函式:
 1. `test_m4a_operation_config`:設定匯出入、帳本 CSV、設定總覽、群組名稱規則與 NFR-4 搜尋。
    - 子行程假 API 上游(`python -m tests.fakes.api_upstream`)與假 CLI(PATH 只含假 claude/codex);
-   - 每個暫存資料目錄先以子行程 `python -m spillway init` 產生 token(serve 看到已有雜湊就不印;
-     明文只存在測試行程記憶體),再起子行程 `python -m spillway serve --port <隨機>`;
+   - 每個暫存資料目錄先以子行程 `SPILLWAY_CMD init`(`run_cli`)產生 token(serve 看到已有雜湊就不印;
+     明文只存在測試行程記憶體),再起子行程 `SPILLWAY_CMD serve --port <隨機>`(`tests.blackbox.harness.Serve`,
+     開啟測試控制介面以種入帳本與冷卻);
    - serve 1:以管理 API 建立 api-a(`credential_ref: env:SPILLWAY_TEST_KEY`,子行程環境帶假值)、
      api-b(無憑證)、claude-sub(claude-cli,假 CLI)、群組 `coding`、task route `review`(手動順序)
      與 chat route `chat-x`;送 3 次請求產生帳本(2 次 task 到 review、1 次 chat 到 chat-x)。
      「其中一列 `error` 以 `=1+1` 開頭」:假上游與假 CLI 的錯誤訊息是固定文字,無法由請求帶出,所以
-     由測試行程以 SQL 把 review 的一列 `error` 改為 `=1+1 …`(只改該欄;其餘列不動)。
+     由測試行程以 `POST /__test__/ledger` upsert 把 review 的一列 `error` 改為 `=1+1 …`(以唯讀連線讀出整列,
+     只改該欄後整列取代;其餘列不動;spec 13.4.3)。
    - 匯出 A → serve 2(空資料目錄)以 replace 匯入 A → 匯出 B;黃金檔(決策 8)serve 3 → serve 4 往返
      (DB 比對為設定表快照:只比 `CONFIG_TABLES` 與 token 雜湊以外的 settings,不含帳本、payload、冷卻);
+     serve 3 的黃金檔資料庫:設定表在 serve 啟動前以 sqlite3 依凍結的 schema 黃金檔建立(CHG-20261107-03 AM-2),
+     token 由 serve 簽發(不再寫固定雜湊),不該出現在匯出檔的冷卻、帳本、payload 經 `/__test__/*` 種入;
      serve 1 上 merge、dry_run、replace(縮小)、不合法檔案、兩個 claude-cli、CSV、總覽、`..` 群組。
 2. `test_m4a_operation_mcp_stdio_max_sessions`:`SPILLWAY_TEST_MCP_MAX_SESSIONS=1` 的 serve 上,第一個
-   MCP session(官方 SDK Streamable HTTP)保持開啟,第二個以子行程 `mcp-stdio`(官方 SDK stdio 用戶端)
+   MCP session(官方 SDK Streamable HTTP)保持開啟,第二個以子行程 `SPILLWAY_CMD mcp-stdio`(官方 SDK stdio 用戶端)
    initialize → 錯誤 `data == {"http_status": 503}`、結束碼 1。
 
 產物(`artifacts/m4a/`,不進版控):
@@ -22,6 +26,7 @@
   `elapsed_ms` 四鍵(httpx event hook);不記 header 與 body。
 - `operation-results.json`:各函式的觀察值(不含任何秘密)。
 模組結束時以假金鑰與全部 token 明文搜尋 `artifacts/m4a/` 每個檔案,命中須為 0。
+本檔不 import spillway(邊界守門);資料庫一律唯讀開啟(`tests.blackbox.db.read_db`)。
 """
 from __future__ import annotations
 
@@ -34,10 +39,10 @@ import os
 import shutil
 import signal
 import sqlite3
-import subprocess
-import sys
 import threading
 import time
+from collections.abc import Iterator
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -45,18 +50,12 @@ import httpx
 import pytest
 import yaml
 
-from spillway import settings
 from tests.acceptance import procs
+from tests.blackbox.db import ACCESS_TOKEN_KEY, build_db, read_db
+from tests.blackbox.harness import Serve, child_env, run_cli
+from tests.blackbox.mask import redact_tokens
+from tests.blackbox.mcp import group_alive, mcp_http_session, stdio_session
 from tests.fakes.cli_upstream import FakeCli, assert_only_fakes, install
-from tests.features.support.mcp_proc import (
-    ServeProc,
-    child_env,
-    group_alive,
-    mcp_http_session,
-    stdio_session,
-)
-from tests.helpers import redact_tokens
-from tests.helpers.config_golden import GOLDEN, seed_golden
 
 pytestmark = [
     pytest.mark.anyio,
@@ -75,6 +74,10 @@ API_A, API_B, CLAUDE, GROUP = "api-a", "api-b", "claude-sub", "coding"
 PROMPT = "m4a-operation-prompt-5151"
 FORMULA_ERROR = "=1+1 injected-by-acceptance"
 CONFIG_TABLES = ("deployments", "deployment_tags", "budgets", "groups", "routes", "route_targets")
+# 設定匯出黃金檔(CHG-20261102-02 決策 8;與 unit 測試共用的資料檔)與資料庫 schema 黃金檔(資料庫為契約,AM-2)
+GOLDEN = REPO_ROOT / "tests" / "unit" / "data" / "config_golden.yaml"
+SCHEMA_GOLDEN = REPO_ROOT / "tests" / "blackbox" / "golden" / "schema_v2.json"
+GOLDEN_NOW = datetime(2026, 11, 2, 12, 0, 0, tzinfo=timezone.utc)
 # 本模組產生過的全部 token 明文(只在測試行程記憶體);斷言訊息與產物掃描用
 TOKENS: list[str] = []
 
@@ -156,35 +159,35 @@ def _safe(text: str) -> str:
 
 
 class Node:
-    """一個資料目錄 + 一個子行程 serve + 一個 httpx client。"""
+    """一個資料目錄 + 一個子行程 serve + 一個 httpx client。
 
-    def __init__(self, env: "Env", name: str, *, seed=None, extra_env: dict[str, str] | None = None) -> None:
+    `control=False`:不開測試控制介面(較接近正式設定);只有要經 `/__test__/*` 種資料的節點才開
+    (施工審議 T3 F5)。"""
+
+    def __init__(self, env: "Env", name: str, *, seed=None, extra_env: dict[str, str] | None = None,
+                 control: bool = True) -> None:
         self.env = env
         self.name = name
         self.home = env.tmp / name
         self.home.mkdir()
         if seed is not None:
-            from spillway.store.db import connect
-            conn = connect(self.home / "spillway.db")
-            try:
-                seed(conn)
-            finally:
-                conn.close()
+            seed(self.home)               # serve 啟動前以 sqlite3 建庫(AM-2);token 由 serve 簽發
         else:
             self._init_token()
-        self.serve = ServeProc(self.home, fake_bin=env.fake_bin, graceful=GRACE,
-                               log_path=env.tmp / f"serve-{name}.log",
-                               extra_env={**env.extra_env, **(extra_env or {})}, secrets=TOKENS)
+        self.serve = Serve(self.home, control=control, fake_bin=env.fake_bin, graceful_timeout=GRACE,
+                           log_path=env.tmp / f"serve-{name}.log",
+                           extra_env={**env.extra_env, **(extra_env or {})})
         env.serves.append(self.serve)
-        self.serve.wait_ready()
-        self.http = httpx.Client(base_url=self.serve.url, trust_env=False, timeout=60,
-                                 event_hooks=HttpLog.sync_hooks())
+        self.serve.start()
+        if seed is not None:
+            assert self.serve.token, "serve 應簽發 token(黃金檔資料庫不含 token 雜湊)"
+            self.token = self.serve.token
+            TOKENS.append(self.token)
+        self.http = self.serve.http(timeout=60, event_hooks=HttpLog.sync_hooks())
         env.clients.append(self.http)
 
     def _init_token(self) -> None:
-        envv = child_env(self.home, fake_bin=self.env.fake_bin, extra=self.env.extra_env)
-        r = subprocess.run([sys.executable, "-m", "spillway", "init"], env=envv, cwd=str(REPO_ROOT),
-                           capture_output=True, text=True, timeout=120)
+        r = run_cli("init", home=self.home, fake_bin=self.env.fake_bin, extra_env=self.env.extra_env, timeout=120)
         self.token = r.stdout.strip()
         if self.token:
             TOKENS.append(self.token)
@@ -217,28 +220,23 @@ class Node:
                                       json={"messages": [{"role": "user", "content": "x"}]}))
         return plan["slots"][0]["entries"][0]["deployment"]
 
-    # -- DB
-    def conn(self) -> sqlite3.Connection:
-        c = sqlite3.connect(str(self.home / "spillway.db"), timeout=30)
-        c.execute("PRAGMA busy_timeout = 30000")
-        return c
+    # -- DB(唯讀)
+    @contextlib.contextmanager
+    def conn(self) -> Iterator[sqlite3.Connection]:
+        with read_db(self.home) as c:
+            c.execute("PRAGMA busy_timeout = 30000")
+            yield c
 
     def dump(self) -> list[str]:
-        c = self.conn()
-        try:
+        with self.conn() as c:
             return list(c.iterdump())
-        finally:
-            c.close()
 
     def config_rows(self) -> dict[str, list[tuple]]:
-        c = self.conn()
-        try:
+        with self.conn() as c:
             out = {t: [tuple(r) for r in c.execute(f"SELECT * FROM {t} ORDER BY 1, 2")] for t in CONFIG_TABLES}
             out["settings"] = [tuple(r) for r in c.execute(
-                "SELECT * FROM settings WHERE key != ? ORDER BY key", (settings.ACCESS_TOKEN_KEY,))]
+                "SELECT * FROM settings WHERE key != ? ORDER BY key", (ACCESS_TOKEN_KEY,))]
             return out
-        finally:
-            c.close()
 
     def backups(self) -> list[Path]:
         d = self.home / "backups"
@@ -254,7 +252,7 @@ class Env:
         self.fake_bin = install(tmp / "fake-cli-bin")
         self.started = time.time()
         self.extra_env = {"SPILLWAY_TEST_KEY": procs.TEST_KEY}
-        self.serves: list[ServeProc] = []
+        self.serves: list[Serve] = []
         self.clients: list[httpx.Client] = []
         self.fakes: list[FakeCli] = []
         envv = child_env(tmp, fake_bin=self.fake_bin)
@@ -269,8 +267,13 @@ class Env:
     def close(self) -> None:
         for c in self.clients:
             c.close()
-        for s in self.serves:
-            s.stop()
+        errors: list[BaseException] = []
+        for s in self.serves:              # stop():結束碼、stderr 沒有 Traceback/ERROR、停機沒有逾時
+            try:
+                s.stop()
+            except BaseException as exc:  # noqa: BLE001 — 全部停完再回報
+                s.kill()
+                errors.append(exc)
         procs.stop(self.fake_proc)
         for fake in self.fakes:
             for rec in fake.records():
@@ -279,9 +282,11 @@ class Env:
                     with contextlib.suppress(ProcessLookupError):
                         os.killpg(rec["pid"], signal.SIGKILL)
             shutil.rmtree(fake.control_dir, ignore_errors=True)
+        if errors:
+            raise errors[0]
 
     def assert_all_stopped(self) -> None:
-        assert all(s.proc.poll() is not None for s in self.serves) and self.fake_proc.poll() is not None
+        assert all(s.returncode is not None for s in self.serves) and self.fake_proc.poll() is not None
 
 
 @pytest.fixture
@@ -317,6 +322,73 @@ def _seed(n: Node, fake_base: str) -> None:
         "name": "chat-x", "mode": "chat", "target": {"tags": {"all": [], "any": [API_A], "none": []}}}), 201)
 
 
+def _j(value: Any) -> str:
+    """設定表的 JSON 欄位(data.md:`json.dumps(..., ensure_ascii=False, sort_keys=True)`)。"""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _seed_golden(home: Path) -> None:
+    """serve 啟動前以 sqlite3 建出黃金檔對應的設定(AM-2 的例外;由凍結的 schema 黃金檔建表)。
+
+    與 `tests/helpers/config_golden.seed_golden` 同一份內容,差別:不寫 token 雜湊(serve 簽發);冷卻、帳本、
+    payload 改由 `_seed_golden_runtime` 經 `/__test__/*` 種入。"""
+    schema = json.loads(SCHEMA_GOLDEN.read_text(encoding="utf-8"))
+    ddl = [f"{sql};" for want in ("table", "index")                       # 先建表再建索引
+           for kind, _name, _tbl, sql in schema["sqlite_master"] if sql and kind == want]
+    deployments = [
+        ("api-a", "gpt-4o-mini", "api", "openai", "gpt-4o-mini", {"api_base": "http://127.0.0.1:9/v1", "timeout": 30},
+         "env:SPILLWAY_TEST_KEY", {"ctx": 128000, "efforts": ["low", "medium", "high"], "tools": True, "vision": False},
+         0, ("coding", "review"), ("usd", 30.0, "monthly", 1)),
+        ("api-b", "gpt-4.1-mini", "api", "openai", "gpt-4.1-mini", {}, "keyring:spillway:api-b", {}, 1,
+         ("cheap", "coding"), ("credit_pool", 100.0, "weekly", None)),
+        ("bare", "bare", "local", "hosted_vllm", "local-model", {}, None, {}, 1, (), None),
+        ("claude-sub", "sonnet", "cli", "claude-cli", "claude-sonnet-4-5",
+         {"cwd": "/tmp/work", "extra_args": ["--verbose"], "nested": {"empty": {}}}, None, {}, 1, ("coding",),
+         ("none", None, "none", None)),
+        ("qwen-local", "qwen-coder", "local", "ollama", "qwen3-coder:30b", {"api_base": "http://127.0.0.1:11434"},
+         None, {"ctx": 32768, "efforts": []}, 1, ("coding", "private-ok"), None),
+    ]
+    groups = [("coding", {"all": ["coding"], "any": [], "none": []}),
+              ("mixed", {"all": ["coding"], "any": ["review", "cheap"], "none": ["private-ok"]}),
+              ("中文群組", {"all": [], "any": [], "none": []})]
+    routes = [("review", {"group": "coding"}, "task", ["daily", "alpha", "daily"], 1, 1),
+              ("quick", {"tags": {"all": ["coding"], "any": [], "none": ["review"]}}, "chat", [], None, 0),
+              ("silent", {"tags": {"all": [], "any": [], "none": []}}, "chat", [], 0, 0)]
+    targets = [("review", "claude-sub", 1, 0, "high", "medium"), ("review", "api-a", 2, 0, "medium", "low"),
+               ("review", "api-b", 2, 1, "none", "high"), ("review", "qwen-local", 3, 0, None, "low")]
+    path = build_db(home, "\n".join(ddl), user_version=schema["user_version"])
+    c = sqlite3.connect(path)   # serve 啟動前(AM-2);之後一律唯讀
+    try:
+        with c:
+            c.executemany("INSERT INTO settings (key, value) VALUES (?, ?)", [
+                ("record_context_default", "0"), ("context_retention_days", "30"), ("context_max_bytes", "1048576")])
+            for dep_id, model_name, kind, provider, model, params, cred, caps, enabled, tags, budget in deployments:
+                c.execute("INSERT INTO deployments (id, model_name, kind, provider, model, params, credential_ref, "
+                          "capabilities, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                          (dep_id, model_name, kind, provider, model, _j(params), cred, _j(caps), enabled))
+                c.executemany("INSERT INTO deployment_tags (deployment_id, tag) VALUES (?, ?)",
+                              [(dep_id, t) for t in sorted(set(tags))])
+                if budget is not None:
+                    c.execute("INSERT INTO budgets (deployment_id, type, limit_amount, window, reset_anchor) "
+                              "VALUES (?, ?, ?, ?, ?)", (dep_id, *budget))
+            c.executemany("INSERT INTO groups (name, selector) VALUES (?, ?)", [(n, _j(sel)) for n, sel in groups])
+            c.executemany("INSERT INTO routes (name, target, mode, tags, record_context, budget_precheck) "
+                          "VALUES (?, ?, ?, ?, ?, ?)",
+                          [(n, _j(t), m, _j(tags), rc, bp) for n, t, m, tags, rc, bp in routes])
+            c.executemany("INSERT INTO route_targets (route_name, deployment_id, slot, position, effort, weight) "
+                          "VALUES (?, ?, ?, ?, ?, ?)", targets)
+    finally:
+        c.close()
+
+
+def _seed_golden_runtime(n: Node) -> None:
+    """不可出現在匯出檔的執行期狀態(冷卻、帳本、payload),經 `/__test__/*` 種入(spec 13.4.3、13.4.4)。"""
+    ctl = n.serve.control
+    ctl.cooldown("api-a", GOLDEN_NOW, "rate_limited")
+    (lid,) = ctl.ledger([{"ts": GOLDEN_NOW, "status": "ok", "deployment_id": "api-a", "error": "ledger-only-text"}])
+    ctl.payloads([{"ledger_id": lid, "ts": GOLDEN_NOW, "request_json": '"payload-only-text"', "bytes": 19}])
+
+
 def _chat(n: Node, model: str, *, task: bool) -> dict[str, Any]:
     body: dict[str, Any] = {"model": model, "messages": [{"role": "user", "content": PROMPT}]}
     if task:
@@ -350,12 +422,14 @@ def test_m4a_operation_config(env: Env):
     assert len(rows) == 3 and [r["status"] for r in rows] == ["ok"] * 3, obs["ledger"]
     review_ids = sorted(r["id"] for r in rows if r["route_name"] == "review")
     assert len(review_ids) == 2 and any(r["deployment_id"] == API_A for r in rows), (rows, served)
-    c = s1.conn()
-    try:
-        with c:
-            c.execute("UPDATE usage_ledger SET error = ? WHERE id = ?", (FORMULA_ERROR, review_ids[0]))
-    finally:
-        c.close()
+    with s1.conn() as c:                 # 讀出整列,只改 error 後經 `/__test__/ledger` upsert(整列取代)
+        c.row_factory = sqlite3.Row
+        full = dict(c.execute("SELECT * FROM usage_ledger WHERE id = ?", (review_ids[0],)).fetchone())
+    assert s1.serve.control.ledger([{**full, "error": FORMULA_ERROR}]) == [review_ids[0]]
+    with s1.conn() as c:
+        c.row_factory = sqlite3.Row
+        assert dict(c.execute("SELECT * FROM usage_ledger WHERE id = ?", (review_ids[0],)).fetchone()) == \
+            {**full, "error": FORMULA_ERROR}
 
     # ---- 匯出 A;serve 2 以 replace 匯入 A → 匯出 B
     a = s1.export()
@@ -366,7 +440,7 @@ def test_m4a_operation_config(env: Env):
                        "api_a_credential_ref": next(d for d in doc_a["deployments"]
                                                     if d["id"] == API_A)["credential_ref"]}
     assert obs["export_a"]["api_a_credential_ref"] == "env:SPILLWAY_TEST_KEY"
-    s2 = env.node("home-2")
+    s2 = env.node("home-2", control=False)
     r = s2.import_(a, "replace")
     obs["import_a_on_serve2"] = {"status": r.status_code, **{k: r.json()[k] for k in ("created", "backup")}}
     assert r.status_code == 200, _safe(r.text)
@@ -378,9 +452,10 @@ def test_m4a_operation_config(env: Env):
     assert obs["dry_run_first"]["serve1"] == obs["dry_run_first"]["serve2"] == CLAUDE, obs["dry_run_first"]
 
     # ---- 黃金檔往返(決策 8):serve 3(種入黃金檔)→ serve 4(空)
-    s3 = env.node("home-3", seed=seed_golden)
+    s3 = env.node("home-3", seed=_seed_golden)
+    _seed_golden_runtime(s3)
     g = s3.export()
-    s4 = env.node("home-4")
+    s4 = env.node("home-4", control=False)
     r = s4.import_(g, "replace")
     assert r.status_code == 200, _safe(r.text)
     g2 = s4.export()
@@ -498,7 +573,7 @@ def test_m4a_operation_config(env: Env):
     assert all(v == [] for v in hits.values()), hits
 
     # ---- 只聽 127.0.0.1
-    obs["listening"] = {n.name: procs.listening(n.serve.proc.pid) for n in (s1, s2, s3, s4)}
+    obs["listening"] = {n.name: procs.listening(n.serve.port) for n in (s1, s2, s3, s4)}
     assert all(v == [f"127.0.0.1:{n.serve.port}"] for n, v in zip((s1, s2, s3, s4), obs["listening"].values()))
     record("config", obs)
 
@@ -507,9 +582,9 @@ def test_m4a_operation_config(env: Env):
 
 
 async def test_m4a_operation_mcp_stdio_max_sessions(env: Env):
-    s = env.node("home-mcp", extra_env={"SPILLWAY_TEST_MCP_MAX_SESSIONS": "1"})
+    s = env.node("home-mcp", control=False, extra_env={"SPILLWAY_TEST_MCP_MAX_SESSIONS": "1"})
     await asyncio.to_thread(_seed, s, env.fake_base)
-    async with mcp_http_session(f"{s.serve.url}/mcp/{GROUP}", s.token,
+    async with mcp_http_session(s.serve.mcp_url(GROUP), s.token,
                                 event_hooks=HttpLog.async_hooks()) as (sess, _init, _sid):
         tools = [t.name for t in (await sess.list_tools()).tools]
         out = await stdio_session(group=GROUP, port=s.serve.port, token=s.token,
@@ -523,7 +598,8 @@ async def test_m4a_operation_mcp_stdio_max_sessions(env: Env):
     assert out.init is None and out.error is not None, (out.error, out.returncode)
     assert out.error.data == {"http_status": 503}, out.error
     assert out.returncode == 1 and obs["stderr_token_free"], (out.returncode, _safe(out.stderr))
-    log = s.serve.log_text()
+    # 原始 stderr 與 stdout(未遮罩;stdout 含 uvicorn access log,施工審議 T3 F1)
+    log = (s.serve.stderr_bytes() + s.serve.stdout_bytes()).decode("utf-8", errors="replace")
     token_in_log = any(t in log for t in TOKENS)
     key_in_log = procs.TEST_KEY in log
     del log

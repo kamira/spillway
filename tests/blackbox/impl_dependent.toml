@@ -1,0 +1,74 @@
+# 實作相依清單(CHG-20261107-03 AM-13;已知限制 5)。
+#
+# Python 版照常全跑;本清單只供日後以 SPILLWAY_CMD 換成其他實作(Rust 版)時參考:列出的測試依賴
+# Python 版的實作細節,換實作時要改夾具或預期,不代表規格不同。不改 feature 文字、不加 behave tag。
+#
+# 欄位:kind = "behave"(id 為 feature 路徑 + "::" + 情境名稱)或 "pytest"(id 為 node ID);
+#       reason 寫明依賴哪個實作細節;scope(選填)說明只有其中一部分相依。
+# 一致性:tests/blackbox/test_harness.py 斷言每個 id 都在 artifacts/m5a/baseline/ 的基準清單裡。
+
+# ---- 固定 seed 的抽選序列(spec 13.4.2:seed 為不透明值,跨實作不保證序列相同)
+[[entry]]
+kind = "behave"
+id = "tests/features/m2_routing.feature::slot 內依優先權重分攤 (AC-4)"
+reason = "固定 SPILLWAY_TEST_RNG_SEED 的 400 次抽選序列;換一個序列約 2% 機率落在 0.70–0.80 之外(決策審議仲裁 #12)"
+
+# ---- SPILLWAY_TEST_ADAPTER_PATHS 載入 Python 模組(Rust 改用 manifest,DIR-5 ①;等改寫 AC-19 的 CHG 再換夾具)
+[[entry]]
+kind = "behave"
+id = "tests/features/m2_adapters.feature::新增模組資料夾後被列出並可被路由 (AC-19)"
+reason = "以 tests/blackbox/fakemods.write_module 寫出的 Python 模組經 SPILLWAY_TEST_ADAPTER_PATHS 載入"
+
+[[entry]]
+kind = "behave"
+id = "tests/features/m2_adapters.feature::single 模組只允許 1 個成員 (7.6.5、9.2.3;AC-12 的 M2 邏輯部分,不計入 M2 閘門)"
+reason = "同上(cardinality single 的 Python 測試模組)"
+
+[[entry]]
+kind = "behave"
+id = "tests/features/m2_adapters.feature::無法載入的模組不影響其他模組 (7.6.7;AC-21 的 M2 邏輯部分,不計入 M2 閘門)"
+reason = "同上(__init__.py 無法 import 的 Python 測試模組)"
+
+[[entry]]
+kind = "behave"
+id = "tests/features/m4b_ui.feature::無法載入的模組在供應商選單停用並顯示原因 (AC-21)"
+reason = "同上(無法 import 的 Python 測試模組)"
+
+[[entry]]
+kind = "pytest"
+id = "tests/ui/test_members.py::test_unavailable_module_disabled_ac21"
+reason = "同上(tests/blackbox/ui/members.broken_adapter_dir)"
+
+[[entry]]
+kind = "pytest"
+id = "tests/ui/test_members.py::test_user_data_rendered_as_text"
+reason = "同上(provider 名稱含標記的 Python 測試模組)"
+
+[[entry]]
+kind = "pytest"
+id = "tests/acceptance/test_m4b_operation.py::test_m4b_operation"
+reason = "同上"
+scope = "步驟 ⑨(AC-21)"
+
+[[entry]]
+kind = "pytest"
+id = "tests/blackbox/test_process_contract.py::test_exit_3_on_adapter_conflict"
+reason = "以 Python 測試模組宣告與內建模組相同的 provider 觸發 7.6.6 啟動失敗"
+
+[[entry]]
+kind = "pytest"
+id = "tests/blackbox/test_control_contract.py::test_cli_subprocess_does_not_inherit_knobs"
+reason = "以 SPILLWAY_TEST_ADAPTER_PATHS 載入 Python 測試模組(harness 斷言它確實載入),證明這個旋鈕也從 CLI 子行程環境移除"
+scope = "SPILLWAY_TEST_ADAPTER_PATHS 那一個旋鈕"
+
+[[entry]]
+kind = "pytest"
+id = "tests/blackbox/test_harness.py::test_adapter_paths_are_verified_loaded"
+reason = "以 Python 測試模組驗證 harness 的 adapter 載入斷言"
+
+# ---- NFR-4 的 LiteLLM 豁免窗口(spec 14.3.5:logger 名稱與訊息屬於實作相依)
+[[entry]]
+kind = "pytest"
+id = "tests/acceptance/test_nfr4_prescan.py::test_nfr4_known_key_prescan"
+reason = "前提斷言「請求窗口內至少一行 SPILLWAY-LOG 的 logger 名稱以 LiteLLM 開頭」與 LiteLLM DEBUG 回顯的豁免窗口(Python 版在 INFO 下限下預期為空)"
+scope = "logger 名稱的斷言與豁免窗口"

@@ -1,0 +1,66 @@
+# 黑箱邊界守門的允許清單(CHG-20261107-03 決策 9 ②③;tests/contract/test_blackbox_boundary.py 讀取)。
+#
+# 守門把下列字面值算違規:指向 `src/spillway/` 的路徑(含 `/ "src"` 的路徑組合)、以 `spillway` 或 `litellm`
+# 為參數的 import_module / __import__ / find_spec / files 呼叫。列在這裡的(檔案, 字面值)例外,必須寫明理由。
+# 本檔由 T2 擁有;wave 3 需要新例外時回報主 session,由 T2 擁有者補上。
+#
+# 欄位:file = 相對於 repo 根目錄的檔案;literal = 被判違規的字面值(完全相同),或 pattern = regex(re.search,
+#       用於多行的程式碼字串);reason = 理由。
+#       以 `/ "src"`、`os.path.join(…)`、`Path("src", "spillway", …)` 組出的路徑,字面值是整個路徑運算式的
+#       `ast.unparse` 輸出(`/` 鏈取最外層那一條,例如 `REPO / 'src' / 'spillway'`),不是單一 `"src"` 片段;
+#       允許一條路徑不會放行同檔的其他路徑(終審 F1)。
+
+[[allow]]
+file = "tests/blackbox/prices.py"
+literal = "litellm"
+reason = "以 importlib.util.find_spec 找 litellm 套件目錄,讀其中的價格 JSON 當資料(檔案讀取,不 import litellm;決策 9 ③、AM-9)"
+
+[[allow]]
+file = "tests/blackbox/harness.py"
+literal = "-m spillway"
+reason = "SPILLWAY_CMD 未設定時的預設命令 [sys.executable, '-m', 'spillway'](決策 8 ①);其他檔案一律經 spillway_cmd()"
+
+[[allow]]
+file = "tests/blackbox/test_harness.py"
+literal = "def test_x():\n    import spillway  # noqa\n"
+reason = "執行期守門的負面樣本:寫進暫存目錄、以子行程 pytest 執行,斷言阻擋器攔下它(施工審議 T2 F2)"
+
+[[allow]]
+file = "tests/blackbox/test_harness.py"
+literal = "def test_x():\n    import litellm  # noqa\n"
+reason = "執行期守門的負面樣本:斷言 session 守門發現 litellm(施工審議 T2 F1、F2)"
+
+[[allow]]
+file = "tests/blackbox/fakemods.py"
+pattern = '(?m)^from spillway\.adapters\.base import '
+reason = "寫到暫存目錄的假 adapter 模組原始碼(文字),由 serve 子行程經 SPILLWAY_TEST_ADAPTER_PATHS 載入;測試行程不執行(實作相依,見 impl_dependent.toml)"
+
+[[allow]]
+file = "tests/blackbox/test_harness.py"
+literal = "-m spillway"
+reason = "斷言 SPILLWAY_CMD 未設定時 spillway_cmd() 的預設值(決策 8 ①);不用來啟動行程"
+
+[[allow]]
+file = "tests/ui/test_members.py"
+literal = "REPO / 'src' / 'spillway' / 'adapters' / 'claude_cli' / 'models.yaml'"
+reason = "讀 src/spillway/adapters/claude_cli/models.yaml 當模型下拉選單的獨立 oracle(檔案讀取,決策 9 ②;T5 回報,主 session 代 T2 擁有者補上)"
+
+[[allow]]
+file = "tests/features/steps/m4b_steps.py"
+literal = "src/spillway/adapters/claude_cli/models.yaml"
+reason = "讀 claude_cli 的 models.yaml 當「與 claude_cli 模組的 models.yaml 一致」的獨立 oracle(檔案讀取,決策 9 ②;T4 回報,主 session 代 T2 擁有者補上)"
+
+[[allow]]
+file = "tests/acceptance/test_m4b_operation.py"
+literal = "REPO_ROOT / 'src' / 'spillway' / 'adapters' / 'claude_cli' / 'models.yaml'"
+reason = "CLAUDE_MODELS 讀 src/spillway/adapters/claude_cli/models.yaml 當模型清單的獨立 oracle(檔案讀取,決策 9 ②;T3 回報,主 session 代 T2 擁有者補上)"
+
+[[allow]]
+file = "tests/features/steps/adapters_steps.py"
+literal = "REPO_ROOT / 'src'"
+reason = "Python 專屬 adapter 合約測試子行程(決策 1),PYTHONPATH 設為 <repo>/src:<repo>,必須測同一棵樹(不能讓 editable .pth 解析到別的 checkout;施工審議 T4 F2,仲裁指定由 T2 補上)"
+
+[[allow]]
+file = "tests/ui/test_shell.py"
+literal = "REPO / 'src'"
+reason = "巢狀 pytest 子行程的後半是 unit 測試(決策 1,Python 專屬),和轉換前一樣把 PYTHONPATH 覆寫成 <repo>/src,必須測同一棵樹(施工審議 T5 F3,仲裁指定由 T2 補上)"

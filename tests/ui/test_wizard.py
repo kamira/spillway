@@ -11,15 +11,16 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
-from tests.helpers import TEST_KEY, TEST_KEY_ENV, dead_base
-from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import CLIP, MakeGw, NewPage, add_route, api, goto, guard_of
-from tests.helpers.ui_members import MemberForm, requests_of, seed_member
-from tests.helpers.ui_settings import open_wizard, wizard_step
+from tests.blackbox.harness import Serve
+from tests.blackbox.mask import TEST_KEY, TEST_KEY_ENV
+from tests.blackbox.ports import dead_base
+from tests.blackbox.ui import CLIP, MakeGw, NewPage, add_route, api, goto, guard_of
+from tests.blackbox.ui.members import MemberForm, requests_of, seed_member
+from tests.blackbox.ui.settings import open_wizard, wizard_step
 
 
 @pytest.fixture
-def gw(make_ui_gateway: MakeGw) -> LiveGateway:
+def gw(make_ui_gateway: MakeGw) -> Serve:
     return make_ui_gateway()
 
 
@@ -45,7 +46,7 @@ def fill_api_member(page: Page, dep_id: str, upstream: str) -> MemberForm:
     return form
 
 
-def test_empty_db_full_flow_ac8(new_page: NewPage, gw: LiveGateway, fake_api) -> None:  # noqa: ANN001
+def test_empty_db_full_flow_ac8(new_page: NewPage, gw: Serve, fake_api) -> None:  # noqa: ANN001
     page = new_page(permissions=CLIP)
     page.goto(gw.url("/ui/"))
     expect(page).to_have_url(gw.url("/ui/wizard.html"))      # first_run → 精靈
@@ -107,7 +108,7 @@ def test_empty_db_full_flow_ac8(new_page: NewPage, gw: LiveGateway, fake_api) ->
     expect(page.locator("main h1")).to_have_text("總覽")
 
 
-def test_tags_required_and_order_and_preview(new_page: NewPage, gw: LiveGateway) -> None:
+def test_tags_required_and_order_and_preview(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_wizard(page, gw)
     wait_step(page, 1)
@@ -143,7 +144,7 @@ def test_tags_required_and_order_and_preview(new_page: NewPage, gw: LiveGateway)
     assert rt["target"]["tags"]["any"] == ["alpha"] and not rt["target"]["tags"].get("all")
 
 
-def reach_step4_with_existing_chat(page: Page, gw: LiveGateway, dep_id: str) -> None:
+def reach_step4_with_existing_chat(page: Page, gw: Serve, dep_id: str) -> None:
     open_wizard(page, gw)
     wait_step(page, 1)                                           # 沒有成員 → ①
     fill_api_member(page, dep_id, "http://127.0.0.1:9/v1").submit.click()
@@ -160,7 +161,7 @@ def reach_step4_with_existing_chat(page: Page, gw: LiveGateway, dep_id: str) -> 
 
 
 @pytest.mark.expect_http_errors(409)
-def test_existing_chat_route_without_member_warns(new_page: NewPage, gw: LiveGateway) -> None:
+def test_existing_chat_route_without_member_warns(new_page: NewPage, gw: Serve) -> None:
     add_route(gw, "chat", "x")
     page = new_page()
     reach_step4_with_existing_chat(page, gw, "w2")
@@ -179,7 +180,7 @@ def test_existing_chat_route_without_member_warns(new_page: NewPage, gw: LiveGat
 
 
 @pytest.mark.expect_http_errors(409)
-def test_existing_chat_route_with_member_reused_quietly(new_page: NewPage, gw: LiveGateway) -> None:
+def test_existing_chat_route_with_member_reused_quietly(new_page: NewPage, gw: Serve) -> None:
     add_route(gw, "chat", "default")
     page = new_page()
     reach_step4_with_existing_chat(page, gw, "w5")
@@ -188,7 +189,7 @@ def test_existing_chat_route_with_member_reused_quietly(new_page: NewPage, gw: L
     expect(page.locator("#done-warn")).to_be_hidden()
 
 
-def test_back_double_click_one_form_and_tag_order_kept(new_page: NewPage, gw: LiveGateway) -> None:
+def test_back_double_click_one_form_and_tag_order_kept(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_wizard(page, gw)
     form = fill_api_member(page, "w6", "http://127.0.0.1:9/v1")
@@ -211,7 +212,7 @@ def test_back_double_click_one_form_and_tag_order_kept(new_page: NewPage, gw: Li
     expect(page.locator("#route-tag")).to_have_value("zeta")
 
 
-def test_cli_member_defaults_task_mode(new_page: NewPage, gw: LiveGateway) -> None:
+def test_cli_member_defaults_task_mode(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_wizard(page, gw)
     form = MemberForm(page, page.locator("#member-form-host"))
@@ -230,7 +231,7 @@ def test_cli_member_defaults_task_mode(new_page: NewPage, gw: LiveGateway) -> No
     expect(page.locator("#route-cli-note")).to_have_text("chat route 不使用 CLI 成員")
 
 
-def test_test_call_failure_then_back_and_fix(new_page: NewPage, gw: LiveGateway, fake_api) -> None:  # noqa: ANN001
+def test_test_call_failure_then_back_and_fix(new_page: NewPage, gw: Serve, fake_api) -> None:  # noqa: ANN001
     page = new_page()
     open_wizard(page, gw)
     fill_api_member(page, "w3", dead_base()).submit.click()
@@ -258,7 +259,7 @@ def test_test_call_failure_then_back_and_fix(new_page: NewPage, gw: LiveGateway,
     assert api(gw, "GET", "/api/deployments/w3").json()["params"]["api_base"] == f"{fake_api.base_url}/v1"
 
 
-def test_resume_from_step3_via_overview_banner(new_page: NewPage, gw: LiveGateway) -> None:
+def test_resume_from_step3_via_overview_banner(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_wizard(page, gw)
     form = fill_api_member(page, "w4", "http://127.0.0.1:9/v1")
@@ -280,7 +281,7 @@ def test_resume_from_step3_via_overview_banner(new_page: NewPage, gw: LiveGatewa
 
 
 @pytest.mark.expect_http_errors(409)
-def test_resume_step3_reused_route_without_member_warns(new_page: NewPage, gw: LiveGateway) -> None:
+def test_resume_step3_reused_route_without_member_warns(new_page: NewPage, gw: Serve) -> None:
     """續作路徑(有成員無 route 直接開精靈到 ③)遇 409 沿用時,同樣檢查 route 是否包含帶所選 tag 的成員
     (ACC-20261103-01 發現 1;迴歸 R55)。"""
     seed_member(gw, "r1", tags=["alpha"])
@@ -296,7 +297,7 @@ def test_resume_step3_reused_route_without_member_warns(new_page: NewPage, gw: L
     expect(warn).to_contain_text("route「chat」不包含剛加入的成員 r1")
 
 
-def test_resume_step4_when_member_and_route_exist(new_page: NewPage, gw: LiveGateway) -> None:
+def test_resume_step4_when_member_and_route_exist(new_page: NewPage, gw: Serve) -> None:
     seed_member(gw, "m1")
     add_route(gw, "review", "chat")
     page = new_page()
@@ -306,7 +307,7 @@ def test_resume_step4_when_member_and_route_exist(new_page: NewPage, gw: LiveGat
     assert {m for m, _ in guard_of(page).requests} == {"GET"}
 
 
-def test_skip_link(new_page: NewPage, gw: LiveGateway) -> None:
+def test_skip_link(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_wizard(page, gw)
     skip = page.locator("#wizard-skip")

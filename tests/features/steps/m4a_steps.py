@@ -1,14 +1,14 @@
 """m4a_config.feature 專用步驟(CHG-20261102-02 T6;使用者故事 1–6;AC-10;NFR-4;spec 3、9.2;決策 20)。
 
-驅動方式:
-- 一律經 `context.gw`(create_app + lifespan + httpx ASGITransport)打管理 API;匯出、匯入、CSV、總覽
-  都是真實 HTTP 介面。
+驅動方式(CHG-20261107-03 T4 改為黑箱):
+- 一律經 `context.gw`(serve 子行程,真實 HTTP)打管理 API;匯出、匯入、CSV、總覽都是真實 HTTP 介面;
+  資料庫只以唯讀連線讀取(`gw.db()`),資料目錄的 `backups/` 以檔案系統讀取(資料目錄配置為契約)。
 - 「另一個空的閘道資料目錄」:在同一個情境暫存目錄下另開 `spillway-home-2`,以同一個 `Gateway` 類別
-  (同一個假上游)建第二個閘道,存於 `context.m4a_other`;收尾登記到 `context.scenario_teardown`
-  (environment.py 在刪除暫存目錄之前執行)。之後的「匯入回應…」「再次匯出…」「dry-run…」步驟作用在
-  最近一次匯入的閘道(`_target`)。
-- 存取 token:匯出、總覽前若尚未產生,直接在資料庫 rotate;明文只存在 `context.m4a_token`(行程記憶體),
-  用於「不含存取 token 明文」的搜尋。
+  (另一個 serve 子行程,同一個假上游)建第二個閘道,存於 `context.m4a_other`;收尾登記到
+  `context.scenario_teardown`(environment.py 在刪除暫存目錄之前執行)。之後的「匯入回應…」「再次匯出…」
+  「dry-run…」步驟作用在最近一次匯入的閘道(`_target`)。
+- 存取 token:匯出、總覽前若尚未產生(serve 以 NO_TOKEN 啟動),經 `POST /api/settings/token/rotate` 產生;
+  明文只存在 `context.m4a_token`(行程記憶體),用於「不含存取 token 明文」的搜尋。
 - 「已匯出目前設定為檔案 A」與「備份內容等於匯入前的匯出」共用同一個匯出函式 `_export_text`
   (每個匯入步驟送出前先以它記下目標閘道的匯出 `context.m4a_pre_export`,並記下全表快照
   `context.m4a_pre_dump` 與帳本列數)。
@@ -23,18 +23,17 @@ from __future__ import annotations
 import csv
 import io
 import json
-import os
 from typing import Any
 
 import httpx
 import yaml
 from behave import step, use_step_matcher
 
-from spillway import settings
+from tests.blackbox.db import ACCESS_TOKEN_KEY, setting
+from tests.blackbox.mask import redact_tokens
 from tests.features.steps.common_steps import _parse_slots
 from tests.features.steps.m3a_steps import _cli_body, _ids
 from tests.features.support.gateway import DEFAULT_MESSAGES, TEST_KEY, TEST_KEY_ENV, Gateway
-from tests.helpers import redact_tokens
 
 use_step_matcher("re")
 
@@ -81,8 +80,9 @@ def _ensure_token(context, gw: Gateway | None = None) -> str:
     gw = gw or context.gw
     gw.ensure_started()
     with gw.db() as conn:
-        if settings.get_access_token_hash(conn) is None:
-            context.m4a_token = settings.rotate_access_token(conn)
+        issued = setting(conn, ACCESS_TOKEN_KEY) is not None
+    if not issued:
+        context.m4a_token = gw.serve.rotate_token()      # POST /api/settings/token/rotate
     tok = getattr(context, "m4a_token", None)
     assert tok, "前置條件:存取 token 已由本步驟檔產生(明文只在行程記憶體)"
     return tok
@@ -161,7 +161,7 @@ def step_member_credential(context, dep_id, ref):
     if gw.deployment(dep_id).get("credential_ref") != ref:
         gw.update_member(dep_id, credential_ref=ref)
     assert gw.deployment(dep_id)["credential_ref"] == ref
-    assert os.environ.get(TEST_KEY_ENV) == TEST_KEY, "測試假值未設定"
+    assert gw.serve_env().get(TEST_KEY_ENV) == TEST_KEY, "測試假值未設定(serve 的環境)"
 
 
 # ---------------------------------------------------------------- 匯出
@@ -217,7 +217,7 @@ def step_export_no_secret(context):
     hits = [name for name, s in (("env value", TEST_KEY), ("token", tok)) if s.encode() in raw]
     assert hits == [], hits
     with context.gw.db() as conn:
-        token_hash = settings.get_access_token_hash(conn)
+        token_hash = setting(conn, ACCESS_TOKEN_KEY)
     assert token_hash and token_hash.encode() not in raw, "匯出檔含 token 雜湊"
 
 
@@ -444,7 +444,7 @@ def step_overview_shape(context):
     gw = context.gw
     body = context.m4a_overview_resp.json()
     assert {"port", "data_dir", "token_issued", "first_run", "counts"} <= set(body), sorted(body)
-    assert body["port"] == gw.app.state.port
+    assert body["port"] == gw.serve.port
     assert body["data_dir"] == str(gw.db_path.parent)
     assert body["token_issued"] is True and body["first_run"] is False, body
     assert body["counts"]["deployments"] == 2 and body["counts"]["groups"] == 1 \
@@ -455,7 +455,7 @@ def step_overview_shape(context):
 def step_overview_no_token(context):
     raw = context.m4a_overview_resp.text
     with context.gw.db() as conn:
-        token_hash = settings.get_access_token_hash(conn)
+        token_hash = setting(conn, ACCESS_TOKEN_KEY)
     assert context.m4a_token not in raw and token_hash not in raw and TEST_KEY not in raw
 
 

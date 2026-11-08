@@ -1,7 +1,8 @@
 """UI-4 Route 畫面的種資料與頁面操作(CHG-20261103-01 T6;決策 14、22)。
 
-`tests/ui/test_routes.py` 與 T9 的 behave 步驟(情境 6)共用;只用 Playwright **sync** API 與同步 httpx
-(`tests.helpers.ui.api`),DB 寫入只經 `tests.helpers.ui.db_execute`。
+(CHG-20261107-03 T2 由 `tests/helpers/ui_routes.py` 複製改寫成黑箱版;原檔已於 T5 改用本模組後刪除,4e2ce46)
+`tests/ui/test_routes.py` 與 behave 步驟(情境 6)共用;只用 Playwright **sync** API 與同步 httpx
+(`tests.blackbox.ui.api`);冷卻經測試控制介面 `POST /__test__/cooldowns`(覆寫)。
 
 種資料
 - `api_body(dep_id, fake_api, *, tags=("r",), efforts=("low","medium","high"), enabled=True)`、
@@ -27,8 +28,9 @@ from urllib.parse import quote
 
 from playwright.sync_api import Locator, Page, expect
 
-from tests.helpers import TEST_KEY_ENV
-from tests.helpers.ui import add_route, api, db_execute, drag, goto
+from tests.blackbox.control import iso
+from tests.blackbox.mask import TEST_KEY_ENV
+from tests.blackbox.ui import add_route, api, drag, goto
 
 __all__ = ["add_members", "api_body", "card", "create_route", "drag_card", "drag_slot", "editor_slots",
            "effective_slots", "local_body", "new_slot_zone", "open_editor", "put_order", "route_order",
@@ -87,11 +89,11 @@ def set_enabled(gw: Any, dep_id: str, enabled: bool) -> None:
 
 
 def set_cooldown(gw: Any, dep_id: str, until: datetime, reason: str = "rate_limited") -> str:
-    """直接寫 `cooldowns`(沒有設定冷卻的 API);回傳寫入的 ISO 字串(`%Y-%m-%dT%H:%M:%SZ`,UTC)。"""
-    iso = until.strftime("%Y-%m-%dT%H:%M:%SZ")
-    db_execute(gw, "INSERT OR REPLACE INTO cooldowns (deployment_id, exhausted_until, reason) VALUES (?, ?, ?)",
-               (dep_id, iso, reason))
-    return iso
+    """經 `POST /__test__/cooldowns` 覆寫冷卻(沒有設定冷卻的 `/api`);回傳寫入的 ISO 字串
+    (`%Y-%m-%dT%H:%M:%SZ`,UTC)。"""
+    text = iso(until)
+    gw.control.cooldown(dep_id, text, reason)
+    return text
 
 
 def route_order_full(gw: Any, name: str) -> list[list[dict[str, Any]]]:

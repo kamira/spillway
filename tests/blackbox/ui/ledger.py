@@ -1,22 +1,25 @@
 """UI-6 帳本與 UI-1 總覽共用的種資料 helper(CHG-20261103-01 T4;決策 22)。
 
-帳本列與 payload 沒有 `/api` 寫入端點,一律經 `tests/helpers/ui.db_execute`(單一 DB adapter 層)寫入;
-本檔只組 SQL 與參數。時間一律以 `spillway.clock.to_iso` 存成 UTC ISO(與 `repo.insert_ledger` 相同)。
+(CHG-20261107-03 T2 由 `tests/helpers/ui_ledger.py` 複製改寫成黑箱版;原檔已於 T5 改用本模組後刪除,4e2ce46)
+帳本列與 payload 沒有 `/api` 寫入端點,一律經測試控制介面 `POST /__test__/ledger`、`/__test__/payloads`
+(spec 13.4.3;upsert,`id` 已存在時整列取代)寫入。時間以 `YYYY-MM-DDTHH:MM:SSZ` 送出(spec 2.1.2)。
+種入不經遮罩;驗證遮罩的情境不得使用本檔。
 
 - `insert_ledger(gw, ledger_id, ts, *, deployment, route="rt", status="ok", **cols)`:寫入一列帳本(指定 id)。
 - `insert_payload(gw, ledger_id, ts, request_json, response_text=None, *, truncated=False, redacted=False)`。
-- `bulk_ledger(gw, count, ts, *, deployment="bulk", route="rt", status="ok")`:以遞迴 CTE 一次寫入大量列。
-- 網址 query 的 `query_of` 已移到 `tests.helpers.ui`。
+- `bulk_ledger(gw, count, ts, *, deployment="bulk", route="rt", status="ok")`:分批(每批 `BULK_CHUNK` 列)寫入大量列。
+- 網址 query 的 `query_of` 在 `tests.blackbox.ui`。
 """
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-from spillway.clock import to_iso
-from tests.helpers.ui import db_execute
+from tests.blackbox.control import iso
 
-__all__ = ["bulk_ledger", "insert_ledger", "insert_payload"]
+__all__ = ["BULK_CHUNK", "bulk_ledger", "insert_ledger", "insert_payload"]
+
+BULK_CHUNK = 10_000
 
 _COLS = ("route_name", "deployment_id", "effort", "tokens_in", "tokens_out", "cost_usd", "status", "slot",
          "fallback_depth", "latency_ms", "est_tokens_in", "est_tokens_out_p50", "est_tokens_out_p90",
@@ -30,23 +33,24 @@ def insert_ledger(gw: Any, ledger_id: int, ts: datetime, *, deployment: str | No
     for k, v in cols.items():
         assert k in _COLS, k
         values[k] = v
-    names = ["id", "ts", *values]
-    db_execute(gw, f"INSERT INTO usage_ledger ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})",
-               [ledger_id, to_iso(ts), *values.values()])
+    ids = gw.control.ledger([{"id": ledger_id, "ts": iso(ts), **values}])
+    assert ids == [ledger_id], ids
     return ledger_id
 
 
 def insert_payload(gw: Any, ledger_id: int, ts: datetime, request_json: str, response_text: str | None = None,
                    *, truncated: bool = False, redacted: bool = False) -> None:
     size = len(request_json.encode()) + len((response_text or "").encode())
-    db_execute(gw, "INSERT INTO usage_payloads (ledger_id, ts, request_json, response_text, bytes, truncated, "
-                   "redacted) VALUES (?, ?, ?, ?, ?, ?, ?)",
-               [ledger_id, to_iso(ts), request_json, response_text, size, int(truncated), int(redacted)])
+    gw.control.payloads([{"ledger_id": ledger_id, "ts": iso(ts), "request_json": request_json,
+                          "response_text": response_text, "bytes": size, "truncated": truncated,
+                          "redacted": redacted}])
 
 
 def bulk_ledger(gw: Any, count: int, ts: datetime, *, deployment: str = "bulk", route: str = "rt",
                 status: str = "ok") -> None:
-    db_execute(gw, "INSERT INTO usage_ledger (ts, route_name, deployment_id, status, fallback_depth) "
-                   "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < ?) "
-                   "SELECT ?, ?, ?, ?, 0 FROM c",
-               [count, to_iso(ts), route, deployment, status])
+    row = {"ts": iso(ts), "route_name": route, "deployment_id": deployment, "status": status, "fallback_depth": 0}
+    done = 0
+    while done < count:
+        n = min(BULK_CHUNK, count - done)
+        assert len(gw.control.ledger([row] * n)) == n
+        done += n

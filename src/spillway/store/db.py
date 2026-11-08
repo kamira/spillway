@@ -16,6 +16,8 @@ Migration(D3):以 `PRAGMA user_version` 記版本。`MIGRATIONS` 為 `(版本, S
 空庫只建表與索引,不寫入任何資料列(spec 2)。庫的版本比程式新時丟 `SchemaVersionError`。
 
 schema v2(CHG-20261101-03 決策 3、4、5):冷卻移到 `cooldowns` 表,`budgets` 移除 `exhausted_until`。
+v1 的 DDL 是套件內 `store/schema.sql`,v2 是 `store/migrations/0002.sql`(CHG-20261107-03 AM-4 自本檔搬出,
+文字逐字不變);`MIGRATIONS` 在 import 時讀入兩者。
 已有資料的舊版庫(`1 ≤ user_version < SCHEMA_VERSION`)升級前另有前置條件:
 1. 取得資料目錄鎖檔 `spillway.lock`(`fcntl.flock` 非阻塞;同一行程內可重入,serve 啟動時由
    `acquire_data_dir_lock()` 取得並持有到行程結束)。取不到丟 `DataDirLockedError`,不 migrate。
@@ -25,6 +27,10 @@ schema v2(CHG-20261101-03 決策 3、4、5):冷卻移到 `cooldowns` 表,`budget
 4. `BEGIN IMMEDIATE` 後重讀 `user_version`,再套用;完成後 `PRAGMA foreign_key_check` 必須為空。
    失敗回滾(原檔不變),丟 `MigrationError`(訊息含備份位置)。
 空庫(`user_version = 0`)不需要鎖與備份,直接在一個交易內套用 v1、v2。
+
+測試控制介面的種入(CHG-20261107-03 決策 7 ③⑤;只有 `api.test_control` 使用,一般 serve 不會呼叫):
+`seed_ledger_rows`、`seed_payload_rows` 為 upsert(`id`/`ledger_id` 已存在時整列取代),
+`set_deployment_params_raw` 只改 `deployments.params` 一欄、不驗證內容。SQL 依分層規則只能放在 store。
 
 連線來源(CHG-20261101-02 決策 5):`ConnSource` 為 `sqlite3.Connection` 或回傳連線的零參數
 callable;`use_conn(source)` 取得一條連線供 `with` 區塊使用,**一律不關閉**——傳入連線時直接交回,
@@ -64,24 +70,13 @@ def _schema_v1() -> str:
 # v1 → v2(決策 3、4):建 cooldowns;把 budgets.exhausted_until 非 NULL 的列搬過去,reason 取該成員
 # 帳本最近一筆 quota_exhausted / rate_limited(找不到時 quota_exhausted);DROP COLUMN。
 # 不刪除任何 budgets 列(含 CHG-20261030-02 決策 59 的 type=none、window=none 暫行列)。
-_SCHEMA_V2 = """
-CREATE TABLE cooldowns (
-  deployment_id   TEXT PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE,
-  exhausted_until TEXT NOT NULL,    -- 上游回報用完或限流時設定
-  reason          TEXT NOT NULL CHECK (reason IN ('quota_exhausted','rate_limited'))
-);
+# CHG-20261107-03(AM-4):DDL 文字自本檔搬到套件內 `store/migrations/0002.sql`,內容逐字不變。
+def _schema_v2() -> str:
+    return (resources.files("spillway.store").joinpath("migrations").joinpath("0002.sql")
+            .read_text(encoding="utf-8"))
 
-INSERT INTO cooldowns (deployment_id, exhausted_until, reason)
-SELECT b.deployment_id, b.exhausted_until,
-       COALESCE((SELECT l.status FROM usage_ledger l
-                 WHERE l.deployment_id = b.deployment_id
-                   AND l.status IN ('quota_exhausted','rate_limited')
-                 ORDER BY l.ts DESC, l.id DESC LIMIT 1), 'quota_exhausted')
-FROM budgets b
-WHERE b.exhausted_until IS NOT NULL;
 
-ALTER TABLE budgets DROP COLUMN exhausted_until;
-"""
+_SCHEMA_V2 = _schema_v2()
 
 MIGRATIONS: tuple[tuple[int, str], ...] = ((1, _schema_v1()), (2, _SCHEMA_V2))
 SCHEMA_VERSION = MIGRATIONS[-1][0]
@@ -420,3 +415,70 @@ def use_conn(source: ConnSource) -> Iterator[sqlite3.Connection]:
         raise TypeError(
             f"ConnSource 必須是 sqlite3.Connection 或零參數 callable,收到 {type(source).__name__}"
         )
+
+
+# ---------------------------------------------------------------- 測試控制介面的種入(CHG-20261107-03 決策 7)
+# 只有 `api.test_control`(僅 `SPILLWAY_TEST_CONTROL=1` 時掛載)使用。欄名來自固定 tuple,不接受呼叫端欄名。
+
+_SEED_LEDGER_COLS = (
+    "ts", "route_name", "deployment_id", "effort", "tokens_in", "tokens_out", "cost_usd", "status",
+    "slot", "fallback_depth", "latency_ms", "est_tokens_in", "est_tokens_out_p50",
+    "est_tokens_out_p90", "est_cost_usd_p90", "error",
+)
+_SEED_PAYLOAD_COLS = ("ts", "request_json", "response_text", "bytes", "truncated", "redacted")
+
+
+def seed_ledger_rows(conn: sqlite3.Connection, rows: list[dict[str, object]]) -> list[int]:
+    """在一個交易內寫入帳本列,依序回傳 id。列帶 `id` 且已存在時整列取代(未給的欄位為 NULL,
+    `fallback_depth` 為 0);不帶 `id` 時新增。鍵只取 `_SEED_LEDGER_COLS` 與 `id`,其餘鍵丟 `KeyError`。"""
+    cols = ", ".join(_SEED_LEDGER_COLS)
+    marks = ", ".join("?" for _ in _SEED_LEDGER_COLS)
+    updates = ", ".join(f"{c} = excluded.{c}" for c in _SEED_LEDGER_COLS)
+    ids: list[int] = []
+    with transaction(conn):
+        for row in rows:
+            unknown = set(row) - {"id", *_SEED_LEDGER_COLS}
+            if unknown:
+                raise KeyError(sorted(unknown)[0])
+            values = [row.get(c) for c in _SEED_LEDGER_COLS]
+            if values[_SEED_LEDGER_COLS.index("fallback_depth")] is None:
+                values[_SEED_LEDGER_COLS.index("fallback_depth")] = 0
+            if row.get("id") is None:
+                cur = conn.execute(f"INSERT INTO usage_ledger ({cols}) VALUES ({marks})", values)
+                ids.append(int(cur.lastrowid))
+            else:
+                conn.execute(
+                    f"INSERT INTO usage_ledger (id, {cols}) VALUES (?, {marks}) "
+                    f"ON CONFLICT(id) DO UPDATE SET {updates}",
+                    [row["id"], *values],
+                )
+                ids.append(int(row["id"]))   # type: ignore[call-overload]
+    return ids
+
+
+def seed_payload_rows(conn: sqlite3.Connection, rows: list[dict[str, object]]) -> list[int]:
+    """在一個交易內寫入 `usage_payloads` 列(鍵 `ledger_id` 與 `_SEED_PAYLOAD_COLS`),依序回傳 `ledger_id`。
+    `ledger_id` 已存在時整列取代;對應的帳本列不存在時外鍵違反(`sqlite3.IntegrityError`,整批回滾)。"""
+    cols = ", ".join(_SEED_PAYLOAD_COLS)
+    marks = ", ".join("?" for _ in _SEED_PAYLOAD_COLS)
+    updates = ", ".join(f"{c} = excluded.{c}" for c in _SEED_PAYLOAD_COLS)
+    ids: list[int] = []
+    with transaction(conn):
+        for row in rows:
+            unknown = set(row) - {"ledger_id", *_SEED_PAYLOAD_COLS}
+            if unknown:
+                raise KeyError(sorted(unknown)[0])
+            conn.execute(
+                f"INSERT INTO usage_payloads (ledger_id, {cols}) VALUES (?, {marks}) "
+                f"ON CONFLICT(ledger_id) DO UPDATE SET {updates}",
+                [row["ledger_id"], *(row.get(c) for c in _SEED_PAYLOAD_COLS)],
+            )
+            ids.append(int(row["ledger_id"]))   # type: ignore[call-overload]
+    return ids
+
+
+def set_deployment_params_raw(conn: sqlite3.Connection, dep_id: str, params_json: str) -> bool:
+    """只把 `deployments.params` 改為 `params_json`(不驗證內容);回傳成員是否存在。"""
+    with transaction(conn):
+        cur = conn.execute("UPDATE deployments SET params = ? WHERE id = ?", (params_json, dep_id))
+    return cur.rowcount > 0

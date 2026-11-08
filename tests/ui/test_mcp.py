@@ -13,9 +13,9 @@ from urllib.parse import quote
 import pytest
 from playwright.sync_api import Route, expect
 
-from tests.helpers.live_gateway import LiveGateway
-from tests.helpers.ui import CLIP, MakeGw, NewPage, api, goto, guard_of, seed_group
-from tests.helpers.ui_mcp import (BLOB_SPY, DENY_CLIPBOARD, TOOLS, mcp_config, mcp_variants, open_mcp,
+from tests.blackbox.harness import Serve
+from tests.blackbox.ui import CLIP, MakeGw, NewPage, api, goto, guard_of, seed_group
+from tests.blackbox.ui.mcp import (BLOB_SPY, DENY_CLIPBOARD, TOOLS, mcp_config, mcp_variants, open_mcp,
                                   select_mcp)
 
 
@@ -23,7 +23,7 @@ ALLOWED_BLOB_TYPES = {"text/plain;charset=utf-8", "application/octet-stream"}
 
 
 @pytest.fixture
-def gw(make_ui_gateway: MakeGw) -> LiveGateway:
+def gw(make_ui_gateway: MakeGw) -> Serve:
     g = make_ui_gateway()
     seed_group(g, "coding")
     return g
@@ -36,7 +36,7 @@ def _expected(cfg: dict) -> list[dict]:
             for v in cfg["variants"]]
 
 
-def test_variants_match_api_for_every_tool_and_group(new_page: NewPage, gw: LiveGateway) -> None:
+def test_variants_match_api_for_every_tool_and_group(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_mcp(page, gw)
     expect(page.locator("#mcp-group option")).to_have_text(["all(全部 route)", "coding"])
@@ -58,14 +58,14 @@ def test_variants_match_api_for_every_tool_and_group(new_page: NewPage, gw: Live
     guard_of(page).assert_clean()
 
 
-def test_query_selects_initial_group_and_tool(new_page: NewPage, gw: LiveGateway) -> None:
+def test_query_selects_initial_group_and_tool(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_mcp(page, gw, group="coding", tool="gemini")
     expect(page.locator("#mcp-group")).to_have_value("coding")
     assert mcp_variants(page) == _expected(mcp_config(gw, "coding", "gemini"))
 
 
-def test_copy_writes_variant_content_to_clipboard(new_page: NewPage, gw: LiveGateway) -> None:
+def test_copy_writes_variant_content_to_clipboard(new_page: NewPage, gw: Serve) -> None:
     page = new_page(permissions=CLIP)
     open_mcp(page, gw, group="coding", tool="codex")
     cfg = mcp_config(gw, "coding", "codex")
@@ -76,7 +76,7 @@ def test_copy_writes_variant_content_to_clipboard(new_page: NewPage, gw: LiveGat
         expect(page.locator(".mcp-variant").nth(i).locator("[data-role=copy-hint]")).to_be_hidden()
 
 
-def test_copy_denied_selects_text_and_shows_hint(new_page: NewPage, gw: LiveGateway) -> None:
+def test_copy_denied_selects_text_and_shows_hint(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     page.add_init_script(script=DENY_CLIPBOARD)
     open_mcp(page, gw, tool="claude-code")
@@ -91,7 +91,7 @@ def test_copy_denied_selects_text_and_shows_hint(new_page: NewPage, gw: LiveGate
     expect(page.locator("#msgbar")).to_be_hidden()
 
 
-def test_download_uses_filename_and_plain_blob(new_page: NewPage, gw: LiveGateway, tmp_path: Path) -> None:
+def test_download_uses_filename_and_plain_blob(new_page: NewPage, gw: Serve, tmp_path: Path) -> None:
     page = new_page()
     page.add_init_script(script=BLOB_SPY)
     open_mcp(page, gw, group="coding", tool="cursor")
@@ -118,7 +118,7 @@ def test_download_uses_filename_and_plain_blob(new_page: NewPage, gw: LiveGatewa
     assert sorted(revoked) == sorted(b["url"] for b in blobs)
 
 
-def test_command_variant_has_no_download(new_page: NewPage, gw: LiveGateway) -> None:
+def test_command_variant_has_no_download(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_mcp(page, gw, tool="claude-code")
     cards = page.locator(".mcp-variant")
@@ -127,7 +127,7 @@ def test_command_variant_has_no_download(new_page: NewPage, gw: LiveGateway) -> 
     expect(cards.nth(1).locator("[data-role=download]")).to_have_count(0)
 
 
-def test_download_strips_slashes_from_filename(new_page: NewPage, gw: LiveGateway, tmp_path: Path) -> None:
+def test_download_strips_slashes_from_filename(new_page: NewPage, gw: Serve, tmp_path: Path) -> None:
     page = new_page()
     page.add_init_script(script=BLOB_SPY)
 
@@ -148,7 +148,7 @@ def test_download_strips_slashes_from_filename(new_page: NewPage, gw: LiveGatewa
 
 
 @pytest.mark.expect_http_errors(404)
-def test_unknown_group_shows_error_as_text(new_page: NewPage, gw: LiveGateway) -> None:
+def test_unknown_group_shows_error_as_text(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     name = '<img src=x onerror="window.__xss=1">'
     goto(page, gw, f"/ui/mcp.html?group={quote(name, safe='')}")
@@ -158,7 +158,7 @@ def test_unknown_group_shows_error_as_text(new_page: NewPage, gw: LiveGateway) -
 
 
 @pytest.mark.expect_http_errors(404)
-def test_failed_load_clears_previous_content(new_page: NewPage, gw: LiveGateway) -> None:
+def test_failed_load_clears_previous_content(new_page: NewPage, gw: Serve) -> None:
     page = new_page()
     open_mcp(page, gw, group="coding", tool="gemini")
     expect(page.locator("#mcp-notes li")).not_to_have_count(0)

@@ -1,9 +1,21 @@
 # 資料結構 — Spillway
 
-- 專案:spillway · 分支:main · 版本:v1.5(2026-11-03,CHG-20261103-01:無 schema 變更、無資料遷移;畫面只經 `/api` 讀寫;帳本查詢與 CSV 加篩選 `min_depth`(`usage_ledger.fallback_depth >= min_depth`);讀交易 `repo.read_tx`(已在交易內時沿用外層,否則 BEGIN … ROLLBACK);使用者於 CHG 確認閘確認,2026-11-03) · 前版 v1.4 已確認(2026-11-02,CHG-20261102-02:無 schema 變更;資料目錄 `backups/`;設定匯入匯出涵蓋與不含的表、replace 的刪除範圍與保留項;使用者於 CHG 確認閘確認,2026-11-02) · 前版 v1.3 已確認(2026-11-02,CHG-20261102-01:無 schema 變更;`access_token_sha256` 的讀取方補 `/mcp/*` 的 Bearer 驗證;使用者於 CHG 確認閘確認,2026-11-02) · 前版 v1.2 已確認(2026-11-01,CHG-20261101-03:schema v2——冷卻獨立成 `cooldowns` 表、`budgets` 移除 `exhausted_until`;v1→v2 migration 的前置條件、備份與回滾;`access_token_sha256` 由 `spillway init`、serve 首次啟動、rotate 寫入;使用者於 CHG 確認閘確認,2026-11-01) · 前前版 v1.1 已確認(2026-10-30,CHG-20261030-02:`access_token_sha256` 產生時機改 M3 起、`bind_host`/`port` 鍵 M2 不讀取;使用者於 CHG 確認閘確認,2026-10-30) · v1.0 已確認(2026-10-29,使用者) · 日期:2026-11-02(UTC+0)
+- 專案:spillway · 分支:main · 版本:v1.6(2026-11-08,CHG-20261107-03:無 schema 變更、無資料遷移;資料庫與資料目錄配置宣告為跨語言契約(對象為 serve 在空資料目錄建出的資料庫的正規化快照,AM-2);v2 DDL 由 `store/db.py` 搬到 `store/migrations/0002.sql`(內容逐字不變);資料目錄鎖為 `flock(2)` `LOCK_EX|LOCK_NB`;`access_token_sha256` 鍵名列為契約;不定義日誌檔;使用者於 CHG 確認閘確認,2026-11-07) · 前版 v1.5 已確認(2026-11-03,CHG-20261103-01:無 schema 變更、無資料遷移;畫面只經 `/api` 讀寫;帳本查詢與 CSV 加篩選 `min_depth`(`usage_ledger.fallback_depth >= min_depth`);讀交易 `repo.read_tx`(已在交易內時沿用外層,否則 BEGIN … ROLLBACK);使用者於 CHG 確認閘確認,2026-11-03) · 前版 v1.4 已確認(2026-11-02,CHG-20261102-02:無 schema 變更;資料目錄 `backups/`;設定匯入匯出涵蓋與不含的表、replace 的刪除範圍與保留項;使用者於 CHG 確認閘確認,2026-11-02) · 前版 v1.3 已確認(2026-11-02,CHG-20261102-01:無 schema 變更;`access_token_sha256` 的讀取方補 `/mcp/*` 的 Bearer 驗證;使用者於 CHG 確認閘確認,2026-11-02) · 前版 v1.2 已確認(2026-11-01,CHG-20261101-03:schema v2——冷卻獨立成 `cooldowns` 表、`budgets` 移除 `exhausted_until`;v1→v2 migration 的前置條件、備份與回滾;`access_token_sha256` 由 `spillway init`、serve 首次啟動、rotate 寫入;使用者於 CHG 確認閘確認,2026-11-01) · 前前版 v1.1 已確認(2026-10-30,CHG-20261030-02:`access_token_sha256` 產生時機改 M3 起、`bind_host`/`port` 鍵 M2 不讀取;使用者於 CHG 確認閘確認,2026-10-30) · v1.0 已確認(2026-10-29,使用者) · 日期:2026-11-08(UTC+0)
 - 依據:docs/spec.md 第 2 節(DDL 正本)、第 3 節(YAML);sdlc_docs/structure/design.md D2、D3
 
-**DDL 正本是 `docs/spec.md` 2.3**,本文件不重抄欄位;只記關聯、約束、列舉、設定鍵與本設計新增的部分。實作的 `store/schema.sql` 是 schema v1 基線;v2(`cooldowns` 表、`budgets` 移除 `exhausted_until`)由 `store/db.py` 的 migration `_SCHEMA_V2` 套用,migration 後的結果必須與 spec 2.3 一致,差異走 CHG。
+**DDL 正本是 `docs/spec.md` 2.3**,本文件不重抄欄位;只記關聯、約束、列舉、設定鍵與本設計新增的部分。實作的 `store/schema.sql` 是 schema v1 基線;v2(`cooldowns` 表、`budgets` 移除 `exhausted_until`)的 DDL 在 `store/migrations/0002.sql`(CHG-20261107-03 AM-4 自 `store/db.py` 搬出,內容逐字不變),由 `store/db.py` 讀入為 `_SCHEMA_V2`、經 `MIGRATIONS` 套用,migration 後的結果必須與 spec 2.3 一致,差異走 CHG。
+
+## 資料庫為跨語言契約(CHG-20261107-03 決策 3)
+
+資料庫 schema 與資料目錄配置是跨語言契約:任何 spillway 實作(Python 版、Rust 版)都必須建出同一個 schema,並能直接開啟擁有者現有的資料目錄,不需要遷移。
+
+- **契約對象**(AM-2):serve 在**空資料目錄**建出的資料庫,經正規化後的快照——`PRAGMA user_version`、`PRAGMA journal_mode`、`sqlite_master`(type、name、tbl_name;sql 去註解並合併空白)、每張表的 `PRAGMA table_info`、`index_list`(與各索引的 `index_info`)、`foreign_key_list`。凍結黃金檔為 `tests/blackbox/golden/schema_v2.json`;`tests/blackbox/test_schema_contract.py` 以黑箱方式比對,並核對表名集合與本文件「實體 / 資料表」、spec 2.2 一致,欄、索引、外鍵與 spec 2.3 DDL 的執行結果一致;Python 版另以 `tests/contract/test_schema_python.py` 核對 `MIGRATIONS`。schema 變更必須走 CHG,並同步更新黃金檔。
+- **migration**:v1 DDL 為 `store/schema.sql`(與 schema v1 的基線 commit d89118c 相同;黑箱測試用的凍結副本為 `tests/blackbox/golden/schema_v1.sql`),v2 為 `store/migrations/0002.sql`;v1 → v2 的行為(含 `spillway.db.v1.bak`)依下方「Schema 版本與 migration」,黑箱測試以 serve 啟動前用 sqlite3 建出的 v1 舊庫驗證。
+- **資料目錄配置**:檔名與用途依 directory.md「資料目錄」(`spillway.db` 與 WAL 檔、`spillway.lock`、`spillway.db.v1.bak`、`backups/`、`work/`)。
+- **資料目錄鎖**:`spillway.lock` 以 `flock(2)` 取得,旗標為 `LOCK_EX|LOCK_NB`(非阻塞;取不到即失敗,不等待);serve 持有到行程結束,init 只在執行期間持有。其他實作必須用同一種鎖,兩個實作之間才會互斥。
+- **設定鍵名**:`settings` 的鍵名(下方「`settings` 鍵」)屬於契約;黑箱測試以字面值 `access_token_sha256` 經唯讀連線讀取 token 雜湊(決策 11)。
+- **不定義日誌檔**:serve 不在資料目錄寫日誌;輸出只到 stdout、stderr,stderr 承諾的行見 spec 14.3(其他內容不屬於契約)。
+- **黑箱測試的存取方式**:只可唯讀開啟資料庫檔案(`sqlite3` URI `file:…?mode=ro`,`tests/blackbox/db.read_db`);所有寫入一律經 `/api` 或測試控制介面 `/__test__/*`(spec 13)。例外(AM-2):遷移類案例可在 serve 啟動**之前**以 sqlite3 從 SQL 檔建立測試資料庫(例如 v1 舊庫、設定匯出黃金檔的種入資料;`tests/blackbox/db.build_db`)。
 
 ## 實體 / 資料表
 
@@ -67,7 +79,7 @@ erDiagram
 
 | 鍵 | 型別 | 初始值 | 來源 |
 |----|------|--------|------|
-| `access_token_sha256` | hex 字串(SHA-256,64 個小寫字元) | 不預設。寫入時機:`spillway init`(已存在時不變更,`--rotate` 才覆寫)、`spillway serve` 首次啟動且鍵不存在時(`create_app(issue_token=True)`)、`POST /api/settings/token/rotate`(覆寫)。token 為 `secrets.token_urlsafe(32)`,明文不入庫。讀取方:`/mcp/*` 的 Bearer 驗證(M3b,`api.mcp.auth`)**每次請求**以 `settings.get_access_token_hash(conn)` 讀取並以 `hmac.compare_digest` 比對(rotate 立即生效;鍵不存在時一律 401);`/v1`、`/api` 不比對 | spec 8.1.3;design D9、D30(CHG-20261101-03 決策 14);CHG-20261102-01 決策 10 |
+| `access_token_sha256` | hex 字串(SHA-256,64 個小寫字元) | 不預設;鍵名為跨語言契約(CHG-20261107-03)。寫入時機:`spillway init`(已存在時不變更,`--rotate` 才覆寫)、`spillway serve` 首次啟動且鍵不存在時(`create_app(issue_token=True)`;測試旋鈕 `SPILLWAY_TEST_NO_TOKEN=1` 時不寫入,spec 13.2)、`POST /api/settings/token/rotate`(覆寫)。token 為 `secrets.token_urlsafe(32)`,明文不入庫。讀取方:`/mcp/*` 的 Bearer 驗證(M3b,`api.mcp.auth`)**每次請求**以 `settings.get_access_token_hash(conn)` 讀取並以 `hmac.compare_digest` 比對(rotate 立即生效;鍵不存在時一律 401);`/v1`、`/api` 不比對 | spec 8.1.3;design D9、D30(CHG-20261101-03 決策 14);CHG-20261102-01 決策 10 |
 | `bind_host` | 字串 | `127.0.0.1`;**M2 不讀取**,綁定位址唯一來源為 `serve --host` 旗標與 settings.py 常數(design D16) | spec 9.1.1、NFR-3 |
 | `port` | 整數 | `8787`;**M2 不讀取**,唯一來源為 `serve --port` 旗標與 settings.py 常數(design D16) | design D9 |
 | `record_context_default` | `0`/`1` | `1` | spec 2.4.1 |
@@ -90,7 +102,7 @@ v1 → v2 的內容(單一交易,CHG-20261101-03 決策 4):① 建 `cooldowns`;�
 升級前置條件與順序(決策 5;`store.db`、`cli._preflight`):
 
 1. `spillway serve` 先以暫時 socket 試綁埠後關閉;失敗則不開資料庫、不 migrate,以非 0 退出(`spillway init` 不做埠檢查)。
-2. 取得資料目錄鎖檔 `spillway.lock`(`fcntl.flock` 非阻塞;serve 持有到行程結束,init 只在執行期間持有);取不到則不 migrate、提示已有 serve 在執行,以非 0 退出。舊版程式不使用此鎖,所以升級前必須先停止舊版 serve。
+2. 取得資料目錄鎖檔 `spillway.lock`(`fcntl.flock`,即 `flock(2)` `LOCK_EX|LOCK_NB`,非阻塞;serve 持有到行程結束,init 只在執行期間持有);取不到則不 migrate、提示已有 serve 在執行,以非 0 退出。舊版程式不使用此鎖,所以升級前必須先停止舊版 serve。
 3. 唯讀 `PRAGMA foreign_key_check`:舊庫已有外鍵違反時不備份、不升級(錯誤訊息列出「子表→父表 N 列」),避免每次啟動都多一份必然失敗的備份。
 4. 以 SQLite backup API 複製為 `spillway.db.v1.bak`(含尚未 checkpoint 的 WAL 內容;複製後設 `journal_mode=DELETE`,備份為單一自足檔案);已存在時加 UTC 時間戳記後綴 `.YYYYMMDDTHHMMSSZ`(同秒再加序號),一律不覆寫。備份失敗:刪除殘檔(含 `-journal`、`-wal`、`-shm`)、不 migrate、非 0 退出。
 5. `BEGIN IMMEDIATE` 後重讀 `user_version`,仍為 1 才套用;失敗回滾、原檔不變,錯誤訊息含備份位置,非 0 退出。

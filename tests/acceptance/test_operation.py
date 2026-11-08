@@ -1,7 +1,7 @@
 """L4 操作驗收(CHG-20261030-02「### Acceptance operation」;macOS)。
 
 operate:暫存 `SPILLWAY_HOME`;子行程啟動假上游(`python -m tests.fakes.api_upstream --port 0`)與
-`python -m spillway serve --port <隨機埠>`;經 HTTP 管理 API 建兩個 api 成員(slot 1、slot 2)與一個
+`SPILLWAY_CMD serve --port <隨機埠>`(`tests.blackbox.harness.Serve`,未開啟測試控制介面);經 HTTP 管理 API 建兩個 api 成員(slot 1、slot 2)與一個
 local 成員(provider `hosted_vllm`,`api_base` 指向假上游)、一個 target 只含這三者的 route;以假上游
 控制端點讓 slot 1 成員回 429,送一次請求使其進入冷卻,再送一次;`model=local/<id>`;含 `sk-test-0000`
 的 prompt;dry-run;`stream: true`;`lsof -nP -iTCP -sTCP:LISTEN`。
@@ -11,7 +11,8 @@ observe(逐項斷言):冷卻後那次的 Served-By 為 slot 2 成員、Slot 為 
 帳本列數不變;`stream: true` 回 400 `streaming_unsupported`;只有 127.0.0.1:<埠> 在監聽。
 
 產物:`artifacts/m2/http-log.jsonl`——每行一筆對閘道的 HTTP 請求,只含 method、path(不含 query)、
-status、耗時(ms),整行寫入前經 Redactor。測試結束(含失敗)終止全部子行程。
+status、耗時(ms),整行寫入前經測試端遮罩函式(`tests.blackbox.mask.mask_secrets`;黑箱不 import
+`spillway.redact`,CHG-20261107-03 AM-9)。測試結束(含失敗)終止全部子行程。
 各項觀察結果另記入 `artifacts/m2/acceptance-results.json` 的 `operation`。
 """
 from __future__ import annotations
@@ -24,9 +25,9 @@ from typing import Any
 import httpx
 import pytest
 
-from spillway.redact import Redactor
 from tests.acceptance import procs
 from tests.acceptance.results import ARTIFACTS, record_result
+from tests.blackbox.mask import mask_secrets
 
 pytestmark = pytest.mark.skipif(not procs.HAS_LSOF, reason="需要 lsof(macOS 驗收平台)")
 
@@ -40,12 +41,11 @@ HTTP_LOG = ARTIFACTS / "http-log.jsonl"
 
 
 class LoggedClient:
-    """對閘道的 httpx client;每次請求記 method、path、status、耗時(經 Redactor 後寫入)。"""
+    """對閘道的 httpx client;每次請求記 method、path、status、耗時(經測試端遮罩函式後寫入)。"""
 
     def __init__(self, base_url: str) -> None:
-        self.client = httpx.Client(base_url=base_url, timeout=60)
+        self.client = httpx.Client(base_url=base_url, timeout=60, trust_env=False)
         self.lines: list[str] = []
-        self._redactor = Redactor()
 
     def request(self, method: str, path: str, **kw: Any) -> httpx.Response:
         t0 = time.perf_counter()
@@ -53,7 +53,7 @@ class LoggedClient:
         ms = round((time.perf_counter() - t0) * 1000, 2)
         line = json.dumps({"method": method, "path": r.request.url.path, "status": r.status_code,
                            "elapsed_ms": ms}, ensure_ascii=False)
-        self.lines.append(self._redactor.redact(line)[0])
+        self.lines.append(mask_secrets(line))
         return r
 
     def chat(self, model: str, content: str = "hello", **extra: Any) -> httpx.Response:
@@ -81,7 +81,7 @@ def _member(dep_id: str, kind: str, provider: str, model: str, fake_base: str) -
 
 
 def _fake_requests(fake_base: str, model: str) -> int:
-    rows = httpx.get(fake_base + "/_fake/requests", timeout=10).json()
+    rows = httpx.get(fake_base + "/_fake/requests", timeout=10, trust_env=False).json()
     return sum(1 for r in rows if r["path"] == "/v1/chat/completions" and r["model"] == model)
 
 
@@ -120,7 +120,8 @@ def test_acceptance_operation(tmp_path):
         assert sorted(d["id"] for d in r.json()["deployments"]) == sorted([SLOT1, SLOT2, LOCAL])
 
         # ---- slot 1 回 429 → 冷卻
-        r = httpx.post(fake_base + "/_fake/mode", json={"model": MODEL1, "mode": "http_429"}, timeout=10)
+        r = httpx.post(fake_base + "/_fake/mode", json={"model": MODEL1, "mode": "http_429"}, timeout=10,
+                       trust_env=False)
         assert r.status_code == 200
         r1 = gw.chat(ROUTE)
         assert r1.status_code == 200, r1.text
@@ -184,7 +185,7 @@ def test_acceptance_operation(tmp_path):
         assert _ledger(gw)["total"] == after
 
         # ---- 監聽位址
-        addrs = procs.listening(serve.pid)
+        addrs = procs.listening(port)
         obs["listening"] = addrs
         assert addrs == [f"127.0.0.1:{port}"], addrs
     finally:
@@ -195,7 +196,7 @@ def test_acceptance_operation(tmp_path):
             procs.stop(serve)
         procs.stop(fake_proc)
 
-    assert serve.poll() is not None and fake_proc.poll() is not None
+    assert serve.returncode is not None and fake_proc.poll() is not None
     log_text = HTTP_LOG.read_text(encoding="utf-8")
     assert KEY not in log_text and CRED not in log_text
     for line in log_text.splitlines():

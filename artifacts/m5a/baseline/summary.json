@@ -1,0 +1,14 @@
+{
+  "asserts_total": 1126,
+  "behave_features": 10,
+  "behave_scenarios": 60,
+  "behave_steps": 570,
+  "commit": "7fadd841fddb1016e8d6ca4c27091073e8aa2090",
+  "expects_total": 705,
+  "functions": 599,
+  "pytest_nodeids": {
+    "tests/acceptance": 20,
+    "tests/ui": 190
+  },
+  "step_functions": 231
+}
