@@ -5,3 +5,4 @@
 tests/acceptance
 tests/features
 tests/ui
+tests/parity

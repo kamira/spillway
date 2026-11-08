@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 import threading
 from dataclasses import dataclass, field
@@ -53,9 +54,21 @@ class ModeSpec:
         return cls(mode=mode, seconds=float(kw.get("seconds", 0.0)), status=int(kw.get("status", 400)))
 
 
+def _reject_constant(name: str) -> None:
+    raise ValueError(f"非標準的 JSON 數值:{name}")
+
+
+AUTH_HEADER_NAMES = ("authorization", "x-api-key", "api-key", "x-goog-api-key")
+
+
 @dataclass
 class RecordedRequest:
-    """收到的請求。不保存 Authorization / x-api-key 的值,只記錄有無與來源 header 名稱。"""
+    """收到的請求。不保存 Authorization / x-api-key 的值,只記錄有無與來源 header 名稱。
+
+    擷取形狀(CHG-20261108-01 T3;AM-7;spec 15.3):`header_names` 是全部 header 名稱的小寫排序清單,`query_names` 只有參數名,
+    `auth_headers` 是出現的驗證 header 名稱;不保存任何 header 或 query 的值。`has_json`、`json_body` 記錄任何可解析的 JSON
+    (含非 dict,解析拒絕 NaN、Infinity);不是 JSON 時只有 `body_length`。`body` 維持原語意(只有 dict)。
+    """
 
     method: str
     path: str
@@ -63,6 +76,12 @@ class RecordedRequest:
     has_auth: bool
     auth_header: str | None  # "authorization" | "x-api-key" | None
     body: dict[str, Any] | None = None
+    header_names: tuple[str, ...] = ()
+    query_names: tuple[str, ...] = ()
+    auth_headers: tuple[str, ...] = ()
+    has_json: bool = False
+    json_body: Any = None
+    body_length: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +91,12 @@ class RecordedRequest:
             "has_auth": self.has_auth,
             "auth_header": self.auth_header,
             "body": self.body,
+            "header_names": list(self.header_names),
+            "query_names": list(self.query_names),
+            "auth_headers": list(self.auth_headers),
+            "has_json": self.has_json,
+            "json_body": self.json_body,
+            "body_length": self.body_length,
         }
 
 
@@ -155,6 +180,27 @@ async def _read_json(request: Request) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+async def _capture_fields(request: Request) -> dict[str, Any]:
+    """AM-7 的擷取欄位:只有名稱,不含任何 header 或 query 的值。"""
+    raw = await request.body()
+    names = sorted({k.lower() for k in request.headers.keys()})
+    has_json, value = False, None
+    if raw:
+        try:
+            value = json.loads(raw, parse_constant=_reject_constant)
+            has_json = True
+        except ValueError:
+            value = None
+    return {
+        "header_names": tuple(names),
+        "query_names": tuple(sorted(set(request.query_params.keys()))),
+        "auth_headers": tuple(n for n in names if n in AUTH_HEADER_NAMES),
+        "has_json": has_json,
+        "json_body": value,
+        "body_length": len(raw),
+    }
+
+
 async def _handle(request: Request, protocol: str) -> JSONResponse:
     state: FakeState = request.app.state.fake
     body = await _read_json(request)
@@ -168,6 +214,7 @@ async def _handle(request: Request, protocol: str) -> JSONResponse:
             has_auth=auth is not None,
             auth_header=header_name,
             body=body,
+            **await _capture_fields(request),
         )
     )
     if body is None or not isinstance(model, str):
@@ -238,7 +285,8 @@ async def messages(request: Request) -> JSONResponse:
 
 async def list_models(request: Request) -> JSONResponse:
     state: FakeState = request.app.state.fake
-    state.record(RecordedRequest("GET", request.url.path, None, _auth_value(request)[1] is not None, _auth_value(request)[0]))
+    state.record(RecordedRequest("GET", request.url.path, None, _auth_value(request)[1] is not None, _auth_value(request)[0],
+                                 **await _capture_fields(request)))
     with state.lock:
         names = list(DEFAULT_MODELS) + [m for m in state.modes if m != "*" and m not in DEFAULT_MODELS]
     return JSONResponse(
